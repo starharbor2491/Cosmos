@@ -1,0 +1,6 @@
+# Never commit Arc itself or personal exports
+*.app/
+arc-export*.json
+Storable*.json
+.DS_Store
+__pycache__/
