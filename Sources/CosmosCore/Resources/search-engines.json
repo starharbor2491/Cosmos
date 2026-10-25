@@ -1,0 +1,36 @@
+{
+  "defaultEngine": "google",
+  "engines": [
+    { "id": "google", "name": "Google", "keyword": "g", "search": "https://www.google.com/search?q=%s", "suggest": "https://suggestqueries.google.com/complete/search?client=firefox&q=%s" },
+    { "id": "duckduckgo", "name": "DuckDuckGo", "keyword": "ddg", "search": "https://duckduckgo.com/?q=%s", "suggest": "https://duckduckgo.com/ac/?type=list&q=%s" },
+    { "id": "bing", "name": "Bing", "keyword": "bing", "search": "https://www.bing.com/search?q=%s", "suggest": "https://api.bing.com/osjson.aspx?query=%s" },
+    { "id": "brave", "name": "Brave Search", "keyword": "brave", "search": "https://search.brave.com/search?q=%s", "suggest": "https://search.brave.com/api/suggest?q=%s" },
+    { "id": "kagi", "name": "Kagi", "keyword": "kagi", "search": "https://kagi.com/search?q=%s", "suggest": null },
+    { "id": "ecosia", "name": "Ecosia", "keyword": "ecosia", "search": "https://www.ecosia.org/search?q=%s", "suggest": null },
+    { "id": "startpage", "name": "Startpage", "keyword": "sp", "search": "https://www.startpage.com/do/search?q=%s", "suggest": null },
+    { "id": "perplexity", "name": "Perplexity", "keyword": "pplx", "search": "https://www.perplexity.ai/search?q=%s", "suggest": null }
+  ],
+  "siteSearches": [
+    { "id": "youtube", "name": "YouTube", "names": ["youtube", "yt"], "search": "https://www.youtube.com/results?search_query=%s", "domain": "youtube.com" },
+    { "id": "github", "name": "GitHub", "names": ["github", "gh"], "search": "https://github.com/search?q=%s", "domain": "github.com" },
+    { "id": "wikipedia", "name": "Wikipedia", "names": ["wikipedia", "wiki"], "search": "https://en.wikipedia.org/wiki/Special:Search?search=%s", "domain": "wikipedia.org" },
+    { "id": "amazon", "name": "Amazon", "names": ["amazon"], "search": "https://www.amazon.com/s?k=%s", "domain": "amazon.com" },
+    { "id": "reddit", "name": "Reddit", "names": ["reddit"], "search": "https://www.reddit.com/search/?q=%s", "domain": "reddit.com" },
+    { "id": "maps", "name": "Google Maps", "names": ["maps", "gmaps"], "search": "https://www.google.com/maps/search/%s", "domain": "google.com" },
+    { "id": "hackernews", "name": "Hacker News", "names": ["hn", "hackernews"], "search": "https://hn.algolia.com/?q=%s", "domain": "news.ycombinator.com" },
+    { "id": "stackoverflow", "name": "Stack Overflow", "names": ["stackoverflow", "so"], "search": "https://stackoverflow.com/search?q=%s", "domain": "stackoverflow.com" },
+    { "id": "mdn", "name": "MDN", "names": ["mdn"], "search": "https://developer.mozilla.org/en-US/search?q=%s", "domain": "developer.mozilla.org" },
+    { "id": "npm", "name": "npm", "names": ["npm"], "search": "https://www.npmjs.com/search?q=%s", "domain": "npmjs.com" },
+    { "id": "x", "name": "X", "names": ["x", "twitter"], "search": "https://x.com/search?q=%s", "domain": "x.com" },
+    { "id": "imdb", "name": "IMDb", "names": ["imdb"], "search": "https://www.imdb.com/find/?q=%s", "domain": "imdb.com" },
+    { "id": "spotify", "name": "Spotify", "names": ["spotify"], "search": "https://open.spotify.com/search/%s", "domain": "spotify.com" },
+    { "id": "ebay", "name": "eBay", "names": ["ebay"], "search": "https://www.ebay.com/sch/i.html?_nkw=%s", "domain": "ebay.com" },
+    { "id": "wolfram", "name": "Wolfram Alpha", "names": ["wolfram", "wa"], "search": "https://www.wolframalpha.com/input?i=%s", "domain": "wolframalpha.com" },
+    { "id": "translate", "name": "Google Translate", "names": ["translate"], "search": "https://translate.google.com/?sl=auto&tl=en&text=%s", "domain": "translate.google.com" },
+    { "id": "pypi", "name": "PyPI", "names": ["pypi"], "search": "https://pypi.org/search/?q=%s", "domain": "pypi.org" },
+    { "id": "crates", "name": "crates.io", "names": ["crates"], "search": "https://crates.io/search?q=%s", "domain": "crates.io" },
+    { "id": "appledev", "name": "Apple Developer", "names": ["apple", "appledev"], "search": "https://developer.apple.com/search/?q=%s", "domain": "developer.apple.com" },
+    { "id": "arxiv", "name": "arXiv", "names": ["arxiv"], "search": "https://arxiv.org/search/?query=%s", "domain": "arxiv.org" },
+    { "id": "nasa", "name": "NASA", "names": ["nasa"], "search": "https://www.nasa.gov/?s=%s", "domain": "nasa.gov" }
+  ]
+}
