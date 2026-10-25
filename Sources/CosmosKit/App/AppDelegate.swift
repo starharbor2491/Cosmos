@@ -38,6 +38,9 @@ struct LaunchOptions {
 @MainActor
 public func runCosmos() {
     let app = NSApplication.shared
+    if let i = CommandLine.arguments.firstIndex(of: "--render-icon"), i + 1 < CommandLine.arguments.count {
+        exit(renderAppIcon(to: CommandLine.arguments[i + 1]) ? 0 : 1)
+    }
     let delegate = CosmosAppDelegate(options: LaunchOptions.parse(CommandLine.arguments, env: ProcessInfo.processInfo.environment))
     retainedDelegate = delegate
     app.delegate = delegate
@@ -53,6 +56,7 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
     private(set) var store: BrowserStore!
     private(set) var controllers: [BrowserWindowController] = []
     private var probes: [ProbeWindowController] = []
+    var probeCount: Int { probes.count }
     private var settingsController: NSWindowController?
     private var automation: Automation?
     private var pendingURLs: [URL] = []
@@ -70,6 +74,7 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
         wire(store)
         NSApp.appearance = store.settings.appearance.nsAppearance
         NSApp.mainMenu = makeMainMenu()
+        installKeyChords()
         if options.demo { DemoSeed.populate(store) }
 
         let saved = store.savedSession?.windows.count ?? 0
@@ -92,6 +97,8 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         store.saveSession()
         store.saveNow()
+        store.isTerminating = true
+        for c in controllers { c.store.isTerminating = true }
         return .terminateNow
     }
 
@@ -116,6 +123,32 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
 
     @objc private func dockNewWindow() { newWindow() }
     @objc private func dockNewIncognito() { newIncognitoWindow() }
+
+    // MARK: Key chords
+
+    private var chordMonitor: Any?
+
+    /// Chords that menu key equivalents can't express reliably (shifted symbols, Tab, arrows with ⌥⌘) or that web
+    /// pages would otherwise swallow. Arc lets its shortcuts win over websites, so these run before any responder.
+    private func installKeyChords() {
+        chordMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, let c = self.active, (event.window ?? NSApp.keyWindow) === c.window else { return event }
+            let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
+            let state = c.state, store = c.store
+            switch (event.keyCode, flags) {
+            case (24, [.control, .shift]): store.perform(.addSplit, in: state)
+            case (27, [.control, .shift]): store.perform(.closeSplitPane, in: state)
+            case (48, [.control]): store.selectRecent(1, in: state)
+            case (48, [.control, .shift]): store.selectRecent(2, in: state)
+            case (124, [.command, .option]): store.cycleSpace(1, in: state)
+            case (123, [.command, .option]): store.cycleSpace(-1, in: state)
+            case (125, [.command, .option]): store.selectAdjacentTab(1, in: state)
+            case (126, [.command, .option]): store.selectAdjacentTab(-1, in: state)
+            default: return event
+            }
+            return nil
+        }
+    }
 
     // MARK: Wiring
 

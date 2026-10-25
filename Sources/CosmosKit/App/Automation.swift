@@ -99,6 +99,21 @@ final class Automation {
             state?.sidebarVisible = (step["visible"] as? Bool) ?? true
         case "peek":
             if let url, let s = store, let st = state { s.openPeek(url, from: st.selectedItemID, in: st) }
+        case "external":
+            if let url { delegate?.openExternal(url) }
+        case "chord":
+            if let combo = step["combo"] as? String { sendChord(combo) }
+        case "boost":
+            if let s = store, let host = step["host"] as? String {
+                var f: ColorFilter?
+                if let hue = step["hue"] as? Double { f = ColorFilter(hue: hue, invert: step["invert"] as? Bool ?? false) }
+                s.boosts.boosts.append(Boost(name: "auto", hostPatterns: [host], css: step["css"] as? String ?? "", js: step["js"] as? String ?? "",
+                                             zapSelectors: step["zap"] as? [String] ?? [], colorFilter: f, fontFamily: step["font"] as? String, zoom: step["zoom"] as? Double))
+            }
+        case "downloadsDir":
+            if let s = store, let path = step["path"] as? String { s.downloads.directory = URL(fileURLWithPath: path) }
+        case "reload":
+            if let s = store, let st = state { s.currentRuntime(in: st)?.reload() }
         case "closePeek":
             if let s = store, let st = state { s.closePeek(in: st) }
         case "split":
@@ -125,16 +140,70 @@ final class Automation {
         case "state":
             if let s = store, let st = state {
                 let rt = s.currentRuntime(in: st)
-                note("  space=\(s.workspace.space(st.focusedSpaceID)?.title ?? "?") overlay=\(String(describing: st.overlay)) tab=\(rt?.title ?? "-") url=\(rt?.url?.host ?? "-") loading=\(rt?.isLoading ?? false) tabs=\(s.workspace.allTabs().count)")
+                let section: String = {
+                    guard let id = st.selectedItemID, let sec = s.workspace.section(of: id) else { return "none" }
+                    switch sec { case .favorites: return "favorites"; case .pinned: return "pinned"; case .unpinned: return "today" }
+                }()
+                let split = st.selectedItemID.flatMap { s.workspace.item($0) }?.isSplit == true
+                note("  space=\(s.workspace.space(st.focusedSpaceID)?.title ?? "?") overlay=\(Self.describe(st.overlay)) section=\(section) split=\(split) sidebar=\(st.sidebarVisible) tab=\(rt?.title.prefix(24) ?? "-") url=\(rt?.url?.host ?? "-") tabs=\(s.workspace.allTabs().count) archived=\(s.archive.entries.count) windows=\(delegate?.controllers.count ?? 0) probes=\(delegate?.probeCount ?? 0)")
             }
         case "snapshot":
-            if let path = step["path"] as? String { await snapshot(to: path) }
+            if let path = step["path"] as? String { await snapshot(to: path, window: step["window"] as? String) }
         case "log":
             note("  " + (step["text"] as? String ?? ""))
         case "quit":
             NSApp.terminate(nil)
         default:
             note("  unknown verb \(verb)")
+        }
+    }
+
+    /// Sends a synthetic key-down such as "cmd+t" or "ctrl+shift+=" through the normal event path.
+    private func sendChord(_ combo: String) {
+        guard let window = controller?.window else { note("  chord: no window"); return }
+        var flags: NSEvent.ModifierFlags = []
+        var key = ""
+        for part in combo.lowercased().split(separator: "+", omittingEmptySubsequences: false).map(String.init) {
+            switch part {
+            case "cmd", "command": flags.insert(.command)
+            case "ctrl", "control": flags.insert(.control)
+            case "opt", "alt", "option": flags.insert(.option)
+            case "shift": flags.insert(.shift)
+            case "": key = "+"
+            default: key = part
+            }
+        }
+        let codes: [String: (UInt16, String)] = [
+            "left": (123, String(UnicodeScalar(NSLeftArrowFunctionKey)!)), "right": (124, String(UnicodeScalar(NSRightArrowFunctionKey)!)),
+            "down": (125, String(UnicodeScalar(NSDownArrowFunctionKey)!)), "up": (126, String(UnicodeScalar(NSUpArrowFunctionKey)!)),
+            "tab": (48, "\t"), "return": (36, "\r"), "esc": (53, "\u{1b}"), "space": (49, " "),
+            "=": (24, "="), "+": (24, "="), "-": (27, "-"), "[": (33, "["), "]": (30, "]"), ",": (43, ","), ".": (47, "."), "/": (44, "/"),
+            "0": (29, "0"), "1": (18, "1"), "2": (19, "2"), "3": (20, "3"), "4": (21, "4"), "5": (23, "5"), "6": (22, "6"), "7": (26, "7"), "8": (28, "8"), "9": (25, "9"),
+            "a": (0, "a"), "b": (11, "b"), "c": (8, "c"), "d": (2, "d"), "e": (14, "e"), "f": (3, "f"), "g": (5, "g"), "h": (4, "h"), "i": (34, "i"), "j": (38, "j"),
+            "k": (40, "k"), "l": (37, "l"), "m": (46, "m"), "n": (45, "n"), "o": (31, "o"), "p": (35, "p"), "q": (12, "q"), "r": (15, "r"), "s": (1, "s"),
+            "t": (17, "t"), "u": (32, "u"), "v": (9, "v"), "w": (13, "w"), "x": (7, "x"), "y": (16, "y"), "z": (6, "z"),
+        ]
+        guard let (code, _) = codes[key] else { note("  chord: unknown key \(key)"); return }
+        // Build the event the way the system would (from a CGEvent), so `characters` / `charactersIgnoringModifiers`
+        // come from the real keyboard layout rather than from what this script claims.
+        guard let cg = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(code), keyDown: true) else { return }
+        var cgFlags: CGEventFlags = []
+        if flags.contains(.command) { cgFlags.insert(.maskCommand) }
+        if flags.contains(.control) { cgFlags.insert(.maskControl) }
+        if flags.contains(.option) { cgFlags.insert(.maskAlternate) }
+        if flags.contains(.shift) { cgFlags.insert(.maskShift) }
+        cg.flags = cgFlags
+        guard let event = NSEvent(cgEvent: cg) else { return }
+        note("  chord \(combo): chars=\(event.charactersIgnoringModifiers ?? "nil") flags=\(event.modifierFlags.intersection([.command, .control, .option, .shift]).rawValue)")
+        NSApp.sendEvent(event)
+    }
+
+    private static func describe(_ o: Overlay?) -> String {
+        guard let o else { return "none" }
+        switch o {
+        case .commandBar(let m): return m == .newTab ? "commandBar(new)" : "commandBar(current)"
+        case .themeEditor: return "themeEditor"
+        default: return "\(o)"
         }
     }
 
@@ -155,8 +224,9 @@ final class Automation {
     /// Renders the front window with `cacheDisplay`. Web content is drawn out of process and would come out blank, so
     /// each visible web view is first snapshotted and swapped for an image view of itself in the same slot, which keeps
     /// SwiftUI overlays (Command Bar, panels, Peek) layered above it as on screen.
-    private func snapshot(to path: String) async {
-        guard let window = controller?.window ?? NSApp.windows.first(where: { $0.isVisible }), let content = window.contentView else {
+    private func snapshot(to path: String, window which: String? = nil) async {
+        let target: NSWindow? = which == "probe" ? NSApp.windows.first(where: { $0 is NSPanel && $0.isVisible }) : (controller?.window ?? NSApp.windows.first(where: { $0.isVisible }))
+        guard let window = target, let content = window.contentView else {
             note("  snapshot: no window"); return
         }
         var webViews: [WKWebView] = []

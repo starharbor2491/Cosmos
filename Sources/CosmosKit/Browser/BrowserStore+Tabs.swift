@@ -203,9 +203,11 @@ extension BrowserStore {
     func archiveItems(_ ids: [UUID], reason: ArchiveReason, in window: WindowState?) {
         let toRemove = ids.filter { workspace.item($0) != nil }
         for id in toRemove { discardRuntimes(under: id) }
-        let entries = edit { $0.archive(toRemove, reason: reason) }
-        guard !entries.isEmpty else { return }
+        let removed = edit { $0.archive(toRemove, reason: reason) }
+        guard !removed.isEmpty else { return }
         if isIncognito { return }
+        // A blank "New Tab" that never loaded anything isn't worth keeping.
+        let entries = removed.filter { !($0.root?.isTab == true && $0.url == nil) }
         for e in entries.reversed() { archive.add(e) }
         if reason == .closed { recentlyClosed.insert(contentsOf: entries.map(\.id), at: 0) }
         // Selection that vanished with its item.
@@ -224,7 +226,7 @@ extension BrowserStore {
     }
 
     func reopenLastClosed(in window: WindowState) {
-        guard let entry = archive.entries.first(where: { $0.reason == .closed }) else {
+        guard let entry = archive.entries.first(where: { $0.reason == .closed }) ?? archive.entries.first(where: { $0.reason != .imported }) else {
             window.showToast("No recently closed tabs", symbol: "clock.arrow.circlepath"); return
         }
         restore(entry, in: window)
@@ -359,7 +361,9 @@ extension BrowserStore {
         guard let id = currentTabItemID(in: window), let pid = workspace.item(id)?.parentID, workspace.item(pid)?.isSplit == true else { return }
         let neighbour = workspace.item(pid)?.childIDs.first { $0 != id }
         archiveItems([id], reason: .closed, in: window)
-        if let n = neighbour, let sid = workspace.item(n)?.parentID ?? Optional(n) { select(sid, in: window) }
+        guard let n = neighbour, let item = workspace.item(n) else { return }
+        // Still a split (three or four panes before) -> select the split, else the lone remaining tab.
+        if let pid = item.parentID, workspace.item(pid)?.isSplit == true { select(pid, in: window) } else { select(n, in: window) }
     }
 
     func separateFromSplit(_ id: UUID, in window: WindowState) {

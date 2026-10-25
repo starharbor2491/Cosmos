@@ -61,6 +61,8 @@ public final class BrowserStore: TabHost {
     @ObservationIgnored private let sessionFile: JSONFileStore<SessionState>?
     @ObservationIgnored public private(set) var isFirstLaunch = false
     @ObservationIgnored var savedSession: SessionState?
+    /// Set once the app is quitting: windows closing then must not overwrite the session they were saved in.
+    @ObservationIgnored var isTerminating = false
 
     /// Opens (or creates) the browser's data in `directory`; pass `nil` for a throwaway in-memory (incognito) store.
     public init(directory: URL?, incognito: Bool = false) {
@@ -163,7 +165,7 @@ public final class BrowserStore: TabHost {
     func unregister(_ window: WindowState) {
         windows.removeAll { $0 === window }
         if activeWindow === window { activeWindow = windows.last }
-        saveSession()
+        if !isTerminating { saveSession() }
     }
 
     /// A window for the saved session (or a default one) on its first space.
