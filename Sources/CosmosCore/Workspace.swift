@@ -444,6 +444,38 @@ public struct Workspace: Codable, Equatable, Sendable {
         return changed
     }
 
+    // MARK: Merging
+
+    /// True for a workspace nothing has happened in yet: one space, no tabs, no favorites.
+    public var isPristine: Bool {
+        spaces.count <= 1 && allTabs().isEmpty && !items.values.contains(where: \.isFolder)
+    }
+
+    /// Brings another workspace's profiles, spaces and tabs in alongside this one's (an import into a browser that
+    /// already has content). The other workspace's default profile folds into ours, its Favorites are appended to
+    /// ours, and anything whose id we already hold is left alone, so merging the same import twice changes nothing.
+    public mutating func merge(_ other: Workspace) {
+        var profileMap: [UUID: UUID] = [:]
+        for p in other.profiles {
+            if let same = profiles.first(where: { $0.id == p.id }) { profileMap[p.id] = same.id }
+            else if p.isDefault, let mine = profiles.first(where: \.isDefault) { profileMap[p.id] = mine.id }
+            else { profiles.append(p); profileMap[p.id] = p.id }
+        }
+        for var s in other.spaces where !spaces.contains(where: { $0.id == s.id }) {
+            s.profileID = profileMap[s.profileID] ?? profiles[0].id
+            spaces.append(s)
+        }
+        for (id, var item) in other.items where id != other.favoritesRootID && items[id] == nil {
+            if item.parentID == other.favoritesRootID { item.parentID = favoritesRootID }
+            items[id] = item
+        }
+        let incoming = (other.items[other.favoritesRootID]?.childIDs ?? []).filter { items[$0]?.parentID == favoritesRootID }
+        if var root = items[favoritesRootID] {
+            root.childIDs += incoming.filter { !root.childIDs.contains($0) }
+            items[favoritesRootID] = root
+        }
+    }
+
     // MARK: Integrity
 
     /// Human-readable violations of the tree invariants. Empty means healthy.

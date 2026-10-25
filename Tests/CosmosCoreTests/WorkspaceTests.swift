@@ -253,3 +253,38 @@ import Testing
         #expect(try store.load() != nil)
     }
 }
+
+@Suite struct WorkspaceMergeTests {
+    @Test func mergeBringsSpacesTabsAndFavoritesAndIsIdempotent() throws {
+        var mine = Workspace.fresh()
+        let myTabOpt = mine.addTab(url: URL(string: "https://mine.example"), under: mine.spaces[0].unpinnedRootID)
+        let myTab = try #require(myTabOpt)
+        #expect(!mine.isPristine)
+
+        var theirs = Workspace.fresh()
+        let workID = theirs.addSpace(title: "Work", icon: .symbol("sparkles"), theme: .aurora, profileID: theirs.profiles[0].id)
+        let work = try #require(theirs.space(workID))
+        let pinnedOpt = theirs.addTab(url: URL(string: "https://work.example"), under: work.pinnedRootID)
+        let pinned = try #require(pinnedOpt)
+        let favOpt = theirs.addTab(url: URL(string: "https://fav.example"), under: work.unpinnedRootID)
+        let fav = try #require(favOpt)
+        let favorited = theirs.favorite(fav)
+        #expect(favorited)
+
+        mine.merge(theirs)
+        #expect(mine.problems().isEmpty)
+        #expect(mine.spaces.count == 3)
+        #expect(mine.profiles.count == 1)
+        #expect(mine.item(myTab) != nil)
+        #expect(mine.item(pinned)?.parentID == work.pinnedRootID)
+        #expect(mine.favorites.map(\.id) == [fav])
+
+        let snapshot = mine
+        mine.merge(theirs)
+        #expect(mine == snapshot)
+    }
+
+    @Test func freshWorkspaceIsPristine() {
+        #expect(Workspace.fresh().isPristine)
+    }
+}
