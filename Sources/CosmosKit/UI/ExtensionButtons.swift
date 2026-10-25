@@ -22,11 +22,10 @@ struct ExtensionButtons: View {
             let runtime = store.currentRuntime(in: window)
             let actions = center.actions(for: runtime)
             if !actions.isEmpty {
-                HStack(spacing: 2) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 28, maximum: 28), spacing: 2)], alignment: .leading, spacing: 2) {
                     ForEach(actions) { action in
                         ExtensionActionButton(center: center, display: action, runtime: runtime)
                     }
-                    Spacer(minLength: 0)
                 }
                 .padding(.horizontal, 10)
                 .padding(.bottom, 8)

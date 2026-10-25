@@ -17,7 +17,10 @@ public struct DiscoveredExtension: Identifiable, Hashable, Sendable {
     public var hostAccess: [String]
 
     /// "Arc" or "Google Chrome (Profile 1)".
-    public var source: String { profileName.isEmpty || profileName == "Default" ? browser.displayName : "\(browser.displayName) (\(profileName))" }
+    public var source: String {
+        // Arc keeps a single profile that Chromium names "Your Chromium"; there is nothing to tell apart.
+        browser == .arc || profileName.isEmpty || profileName == "Default" ? browser.displayName : "\(browser.displayName) (\(profileName))"
+    }
 }
 
 /// Reads the extensions a Chromium browser has installed, without touching the browser's files.

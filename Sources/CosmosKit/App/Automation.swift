@@ -147,6 +147,27 @@ final class Automation {
                 let split = st.selectedItemID.flatMap { s.workspace.item($0) }?.isSplit == true
                 note("  space=\(s.workspace.space(st.focusedSpaceID)?.title ?? "?") overlay=\(Self.describe(st.overlay)) section=\(section) split=\(split) sidebar=\(st.sidebarVisible) tab=\(rt?.title.prefix(24) ?? "-") url=\(rt?.url?.host ?? "-") tabs=\(s.workspace.allTabs().count) archived=\(s.archive.entries.count) windows=\(delegate?.controllers.count ?? 0) probes=\(delegate?.probeCount ?? 0) blocker=\(s.blocker.map { "\($0.installedRuleCount) rules\($0.isUpdating ? ", updating" : "")" } ?? "off")")
             }
+        case "extensions":
+            // Adds extensions without prompting: from "arc"/other browsers on this Mac, or from a folder path.
+            guard let center = store?.extensionCenter else { note("  extensions: unavailable"); break }
+            var added = 0, failed: [String] = []
+            if let folder = step["folder"] as? String {
+                do { try await center.install(from: URL(fileURLWithPath: folder), origin: "a folder") { _ in true }; added += 1 }
+                catch { failed.append(error.localizedDescription) }
+            } else {
+                for ext in await center.discoverable() {
+                    do { try await center.install(from: ext.directory, origin: ext.source, webStoreID: ext.id) { _ in true }; added += 1 }
+                    catch { failed.append(error.localizedDescription) }
+                }
+            }
+            note("  extensions: added \(added), failed \(failed.count) \(failed.prefix(3))")
+        case "extensionAction":
+            if let center = store?.extensionCenter, let s = store, let st = state {
+                let enabled = center.items.filter(\.enabled)
+                let index = step["index"] as? Int ?? 0
+                if enabled.indices.contains(index) { center.performAction(enabled[index].id, runtime: s.currentRuntime(in: st), anchor: nil) }
+                note("  extensionAction \(index) of \(enabled.count)")
+            }
         case "allowlist":
             if let host = step["host"] as? String, let s = store {
                 if step["off"] as? Bool == true { s.settings.adBlockAllowlist.removeAll { $0 == host } }
