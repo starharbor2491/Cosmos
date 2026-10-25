@@ -1,0 +1,116 @@
+[Adblock Plus 2.0]
+! Title: Cosmos built-in fallback
+! Description: A small hand-written list that protects the first launch and offline starts, until the full lists
+!   (EasyList, EasyPrivacy, ...) have been downloaded. Original content, written for Cosmos.
+! Scope: dedicated third-party ad networks and cross-site trackers only. Nothing here blocks a site's own
+!   first-party requests, tag managers or analytics that pages call directly, so logins and checkouts keep working.
+
+! --- Ad networks and exchanges -------------------------------------------------------------------------------
+||doubleclick.net^$third-party
+||googlesyndication.com^$third-party
+||googleadservices.com^$third-party
+||adservice.google.com^$third-party
+||2mdn.net^$third-party
+||adnxs.com^$third-party
+||adsrvr.org^$third-party
+||advertising.com^$third-party
+||adform.net^$third-party
+||criteo.com^$third-party
+||criteo.net^$third-party
+||taboola.com^$third-party
+||outbrain.com^$third-party
+||amazon-adsystem.com^$third-party
+||rubiconproject.com^$third-party
+||pubmatic.com^$third-party
+||openx.net^$third-party
+||casalemedia.com^$third-party
+||smartadserver.com^$third-party
+||moatads.com^$third-party
+||adsafeprotected.com^$third-party
+||doubleverify.com^$third-party
+||serving-sys.com^$third-party
+||yieldmo.com^$third-party
+||media.net^$third-party
+||revcontent.com^$third-party
+||mgid.com^$third-party
+||teads.tv^$third-party
+||sharethrough.com^$third-party
+||triplelift.com^$third-party
+||indexww.com^$third-party
+||bidswitch.net^$third-party
+||sovrn.com^$third-party
+||lijit.com^$third-party
+||gumgum.com^$third-party
+||33across.com^$third-party
+||spotxchange.com^$third-party
+||springserve.com^$third-party
+||undertone.com^$third-party
+||contextweb.com^$third-party
+||adtechus.com^$third-party
+||zedo.com^$third-party
+||adskeeper.com^$third-party
+||smaato.net^$third-party
+||inmobi.com^$third-party
+||adcolony.com^$third-party
+||applovin.com^$third-party
+||unityads.unity3d.com^$third-party
+
+! --- Pop-up, pop-under and adult ad networks -------------------------------------------------------------------
+||popads.net^$third-party
+||popcash.net^$third-party
+||propellerads.com^$third-party
+||exoclick.com^$third-party
+||juicyads.com^$third-party
+||trafficjunky.net^$third-party
+||clickadu.com^$third-party
+||adsterra.com^$third-party
+
+! --- Cross-site trackers and data brokers ----------------------------------------------------------------------
+||scorecardresearch.com^$third-party
+||quantserve.com^$third-party
+||krxd.net^$third-party
+||demdex.net^$third-party
+||everesttech.net^$third-party
+||bluekai.com^$third-party
+||exelator.com^$third-party
+||rlcdn.com^$third-party
+||agkn.com^$third-party
+||mathtag.com^$third-party
+||tapad.com^$third-party
+||liadm.com^$third-party
+||id5-sync.com^$third-party
+||bounceexchange.com^$third-party
+||mouseflow.com^$third-party
+||crazyegg.com^$third-party
+||adsymptotic.com^$third-party
+||360yield.com^$third-party
+
+! --- Social and ad-platform pixels (scripts and beacons only) ---------------------------------------------------
+||connect.facebook.net/*/fbevents.js
+||facebook.com/tr/$image,third-party
+||facebook.com/tr?$image,third-party
+||ads-twitter.com^$third-party
+||analytics.twitter.com^$third-party
+||ads.linkedin.com^$third-party
+||px.ads.linkedin.com^$third-party
+||snap.licdn.com^$third-party
+||analytics.tiktok.com^$third-party
+||bat.bing.com^$third-party
+||ct.pinterest.com^$third-party
+||s.pinimg.com/ct/core.js$script,third-party
+||sc-static.net/scevent.min.js$script,third-party
+||tr.snapchat.com^$third-party
+
+! --- Generic ad containers --------------------------------------------------------------------------------------
+##.adsbygoogle
+##ins.adsbygoogle[data-ad-client]
+##[id^="google_ads_iframe"]
+##[id^="div-gpt-ad"]
+##[data-google-query-id]
+##.google-auto-placed
+##iframe[src*="doubleclick.net"]
+##iframe[src*="googlesyndication.com"]
+##[id^="taboola-"]
+##.OUTBRAIN
+##.ob-widget
+##[id^="ad-slot-"]

@@ -23,7 +23,7 @@ let package = Package(
             resources: [.process("Resources")]
         ),
         .target(name: "CosmosImport", dependencies: ["CosmosCore"]),
-        .target(name: "CosmosBlocking", dependencies: ["CosmosCore"]),
+        .target(name: "CosmosBlocking", dependencies: ["CosmosCore"], resources: [.process("Resources")]),
         .target(
             name: "CosmosKit",
             dependencies: ["CosmosCore", "CosmosImport", "CosmosBlocking"],
