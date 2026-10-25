@@ -1,0 +1,174 @@
+Google|google.com
+YouTube|youtube.com
+Gmail|mail.google.com
+Google Maps|maps.google.com
+Google Drive|drive.google.com
+Google Docs|docs.google.com
+Google Calendar|calendar.google.com
+Google Photos|photos.google.com
+Google Translate|translate.google.com
+Facebook|facebook.com
+Instagram|instagram.com
+X|x.com
+Reddit|reddit.com
+LinkedIn|linkedin.com
+Wikipedia|wikipedia.org
+Amazon|amazon.com
+eBay|ebay.com
+Netflix|netflix.com
+Disney+|disneyplus.com
+Hulu|hulu.com
+Max|max.com
+Prime Video|primevideo.com
+Twitch|twitch.tv
+Spotify|open.spotify.com
+Apple Music|music.apple.com
+SoundCloud|soundcloud.com
+Bandcamp|bandcamp.com
+GitHub|github.com
+GitLab|gitlab.com
+Bitbucket|bitbucket.org
+Stack Overflow|stackoverflow.com
+Hacker News|news.ycombinator.com
+npm|npmjs.com
+PyPI|pypi.org
+crates.io|crates.io
+MDN Web Docs|developer.mozilla.org
+Apple Developer|developer.apple.com
+Swift.org|swift.org
+Rust|rust-lang.org
+Python|python.org
+Node.js|nodejs.org
+TypeScript|typescriptlang.org
+React|react.dev
+Vercel|vercel.com
+Netlify|netlify.com
+Cloudflare|cloudflare.com
+AWS|aws.amazon.com
+Google Cloud|cloud.google.com
+Azure|portal.azure.com
+Docker Hub|hub.docker.com
+Notion|notion.so
+Linear|linear.app
+Figma|figma.com
+Miro|miro.com
+Slack|app.slack.com
+Discord|discord.com
+Zoom|zoom.us
+Google Meet|meet.google.com
+Microsoft Teams|teams.microsoft.com
+Outlook|outlook.live.com
+Office|office.com
+OneDrive|onedrive.live.com
+Dropbox|dropbox.com
+iCloud|icloud.com
+Apple|apple.com
+Microsoft|microsoft.com
+Adobe|adobe.com
+Canva|canva.com
+Trello|trello.com
+Asana|asana.com
+Jira|atlassian.com
+Confluence|atlassian.net
+Airtable|airtable.com
+Medium|medium.com
+Substack|substack.com
+Pinterest|pinterest.com
+Tumblr|tumblr.com
+TikTok|tiktok.com
+Snapchat|snapchat.com
+WhatsApp|web.whatsapp.com
+Telegram|web.telegram.org
+Signal|signal.org
+Messenger|messenger.com
+Quora|quora.com
+Yelp|yelp.com
+Tripadvisor|tripadvisor.com
+Airbnb|airbnb.com
+Booking.com|booking.com
+Expedia|expedia.com
+Uber|uber.com
+Lyft|lyft.com
+DoorDash|doordash.com
+PayPal|paypal.com
+Stripe|stripe.com
+Wise|wise.com
+Coinbase|coinbase.com
+Chase|chase.com
+Bank of America|bankofamerica.com
+Wells Fargo|wellsfargo.com
+Etsy|etsy.com
+Walmart|walmart.com
+Target|target.com
+Best Buy|bestbuy.com
+Costco|costco.com
+IKEA|ikea.com
+Home Depot|homedepot.com
+AliExpress|aliexpress.com
+Shopify|shopify.com
+The New York Times|nytimes.com
+The Washington Post|washingtonpost.com
+The Guardian|theguardian.com
+BBC|bbc.com
+CNN|cnn.com
+Reuters|reuters.com
+Bloomberg|bloomberg.com
+The Verge|theverge.com
+Ars Technica|arstechnica.com
+Wired|wired.com
+TechCrunch|techcrunch.com
+Engadget|engadget.com
+Product Hunt|producthunt.com
+Behance|behance.net
+Dribbble|dribbble.com
+Unsplash|unsplash.com
+Pexels|pexels.com
+Imgur|imgur.com
+Giphy|giphy.com
+IMDb|imdb.com
+Rotten Tomatoes|rottentomatoes.com
+Letterboxd|letterboxd.com
+Goodreads|goodreads.com
+Steam|store.steampowered.com
+Epic Games|epicgames.com
+Roblox|roblox.com
+Wolfram Alpha|wolframalpha.com
+Khan Academy|khanacademy.org
+Coursera|coursera.org
+edX|edx.org
+Udemy|udemy.com
+Duolingo|duolingo.com
+Quizlet|quizlet.com
+arXiv|arxiv.org
+Google Scholar|scholar.google.com
+JSTOR|jstor.org
+NASA|nasa.gov
+ESA|esa.int
+SpaceX|spacex.com
+Space.com|space.com
+Stellarium|stellarium-web.org
+Slooh|slooh.com
+Hubble|hubblesite.org
+ChatGPT|chatgpt.com
+Claude|claude.ai
+Gemini|gemini.google.com
+Perplexity|perplexity.ai
+Hugging Face|huggingface.co
+DuckDuckGo|duckduckgo.com
+Bing|bing.com
+Brave Search|search.brave.com
+Kagi|kagi.com
+Proton Mail|mail.proton.me
+Fastmail|fastmail.com
+1Password|1password.com
+Bitwarden|bitwarden.com
+Speedtest|speedtest.net
+Archive.org|archive.org
+Wayback Machine|web.archive.org
+Craigslist|craigslist.org
+Zillow|zillow.com
+Redfin|redfin.com
+Weather|weather.com
+Google Flights|google.com/travel/flights
+Apple Maps|maps.apple.com
+OpenStreetMap|openstreetmap.org

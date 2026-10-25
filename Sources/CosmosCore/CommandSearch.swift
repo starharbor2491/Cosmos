@@ -208,7 +208,7 @@ public enum CommandRanker {
         switch k { case .openTab, .sidebarItem, .archived: return "tab"; default: return "page" }
     }
 
-    static func dedupeKey(_ u: URL) -> String {
+    public static func dedupeKey(_ u: URL) -> String {
         var s = u.absoluteString
         if let i = s.firstIndex(of: "#") { s = String(s[..<i]) }
         while s.hasSuffix("/") { s.removeLast() }
