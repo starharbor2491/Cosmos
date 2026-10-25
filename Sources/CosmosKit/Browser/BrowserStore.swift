@@ -40,10 +40,13 @@ public final class BrowserStore: TabHost {
     /// Ids restorable with ⇧⌘T, newest first.
     var recentlyClosed: [UUID] = []
     @ObservationIgnored var blocker: ContentBlockerController?
+    /// Browser extensions (macOS 15.4+ runs them); `nil` in incognito windows, which never load extensions.
+    @ObservationIgnored var extensionCenter: ExtensionCenter?
     @ObservationIgnored var onOpenProbe: ((URL) -> Void)?
     @ObservationIgnored var onNewWindow: (() -> Void)?
     @ObservationIgnored var onOpenIncognito: (() -> Void)?
     @ObservationIgnored var onShowSettings: (() -> Void)?
+    @ObservationIgnored var onShowSettingsTab: ((SettingsTab) -> Void)?
     @ObservationIgnored var onPopupWindow: ((TabRuntime, WKWindowFeatures) -> Void)?
 
     // MARK: Persistence plumbing
@@ -160,10 +163,12 @@ public final class BrowserStore: TabHost {
     func register(_ window: WindowState) {
         windows.append(window)
         if activeWindow == nil { activeWindow = window }
+        extensionCenter?.windowOpened(window)
     }
 
     func unregister(_ window: WindowState) {
         windows.removeAll { $0 === window }
+        extensionCenter?.windowClosed(window)
         if activeWindow === window { activeWindow = windows.last }
         if !isTerminating { saveSession() }
     }
@@ -198,6 +203,7 @@ public final class BrowserStore: TabHost {
         let profile = workspace.profile(pid) ?? workspace.profiles[0]
         let e = ProfileEnvironment(profile: profile, isDefault: profile.isDefault)
         e.installBoosts(boosts)
+        e.extensionController = extensionCenter?.controllerObject
         if let blocker { blocker.attach(to: e) }
         environments[pid] = e
         return e

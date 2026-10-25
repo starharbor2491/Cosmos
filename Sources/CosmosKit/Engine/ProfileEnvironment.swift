@@ -16,6 +16,8 @@ final class ProfileEnvironment {
     let contentController = WKUserContentController()
     private let router = AgentMessageRouter()
     private(set) var ruleLists: [WKContentRuleList] = []
+    /// The `WKWebExtensionController` (macOS 15.4+) web views of this profile are configured with, when extensions are on.
+    var extensionController: AnyObject?
 
     init(profile: Profile?, isDefault: Bool) {
         profileID = profile?.id
@@ -43,6 +45,9 @@ final class ProfileEnvironment {
         c.upgradeKnownHostsToHTTPS = true
         c.allowsAirPlayForMediaPlayback = true
         c.defaultWebpagePreferences.allowsContentJavaScript = true
+        if #available(macOS 15.4, *), let controller = extensionController as? WKWebExtensionController {
+            c.webExtensionController = controller
+        }
         return c
     }
 

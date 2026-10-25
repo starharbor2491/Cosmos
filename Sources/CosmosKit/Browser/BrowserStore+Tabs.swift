@@ -20,12 +20,14 @@ extension BrowserStore {
         let rt = TabRuntime(itemID: id, profileID: pid, configuration: configuration ?? env.makeConfiguration(), host: self)
         runtimes[key] = rt
         runtimeRevision += 1
+        extensionCenter?.tabOpened(rt)
         if configuration == nil, load, let url = item.tab?.url { rt.load(url) }
         return rt
     }
 
     func discardRuntime(forItem id: UUID) {
         for key in runtimes.keys where key.item == id {
+            if let rt = runtimes[key] { extensionCenter?.tabClosed(rt) }
             runtimes[key]?.tearDown()
             runtimes[key] = nil
         }
@@ -87,6 +89,7 @@ extension BrowserStore {
         if let sid = workspace.spaceID(of: target), sid != window.focusedSpaceID { switchSpace(to: sid, in: window) }
 
         let previousTabs = window.selectedItemID.map { workspace.tabs(under: $0).map(\.id) } ?? []
+        let previousRuntime = extensionCenter == nil ? nil : currentRuntime(in: window)
         window.selectedItemID = target
         window.noteSelected(target)
         if case .commandBar = window.overlay { window.overlay = nil }
@@ -99,6 +102,9 @@ extension BrowserStore {
             edit { $0.updateTab(focused) { $0.lastActiveAt = now } }
             runtime(forItem: focused, in: window)?.lastActivity = now
             runtime(forItem: focused, in: window)?.exitPictureInPicture()
+            if let center = extensionCenter, let now = runtime(forItem: focused, in: window), now !== previousRuntime {
+                center.tabActivated(now, previous: previousRuntime)
+            }
         }
         // Leaving a tab that is playing video: float it (Auto Picture-in-Picture).
         if settings.autoPictureInPicture {
@@ -475,6 +481,7 @@ extension BrowserStore {
         let urlChanged = url != nil && url != data.url && url?.scheme != "about" && !(tab.loadFailed && url == data.url)
         let title = tab.title
         let titleChanged = !title.isEmpty && title != data.pageTitle
+        if urlChanged || titleChanged { extensionCenter?.tabChanged(tab) }
         guard urlChanged || titleChanged || (tab.isMuted != data.isMuted && tab.isMuted) else { return }
         edit { ws in
             ws.updateTab(tab.itemID) {
@@ -485,6 +492,7 @@ extension BrowserStore {
     }
 
     public func tabDidFinishLoading(_ tab: TabRuntime) {
+        extensionCenter?.tabChanged(tab, loading: true)
         guard !isIncognito, let url = tab.url else { return }
         let w = window(showing: tab.itemID)
         let typed = w?.pendingTypedNavigation ?? false
