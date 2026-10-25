@@ -1,22 +1,32 @@
+import CryptoKit
 import Foundation
 
 /// One WebKit rule list ready for `WKContentRuleListStore.compileContentRuleList(forIdentifier:encodedContentRuleList:)`.
 public struct CompiledRuleList: Sendable, Equatable, Codable, Identifiable {
     public enum Kind: String, Sendable, Codable { case network, cosmetic }
 
-    /// Unique, stable identifier (`<list id>.network.1`): use it as the store identifier.
+    /// Stable name of this list (`<list id>.network.1`).
     public let name: String
     /// JSON array of rules.
     public let json: String
     public let ruleCount: Int
     public let kind: Kind
+    /// First 12 hex digits of the SHA-256 of `json`: changes whenever the rules do.
+    public let digest: String
     public var id: String { name }
+
+    /// Identifier to use with `WKContentRuleListStore`. WebKit keeps compiled lists on disk under their identifier, so
+    /// the browser can `lookUpContentRuleList(forIdentifier:)` first and compile only when it is missing; because the
+    /// digest is part of the identifier, a hit means the installed rules are current. Remove store identifiers that
+    /// start with `cosmos.` and are no longer in the current set.
+    public var storeIdentifier: String { "cosmos.\(name).\(digest)" }
 
     public init(name: String, json: String, ruleCount: Int, kind: Kind = .network) {
         self.name = name
         self.json = json
         self.ruleCount = ruleCount
         self.kind = kind
+        self.digest = String(SHA256.hash(data: Data(json.utf8)).map { String(format: "%02x", $0) }.joined().prefix(12))
     }
 }
 
@@ -128,6 +138,7 @@ public struct ContentRuleCompiler: Sendable {
         for n in network where n.badfilter { badfiltered.insert(n.withoutBadfilter) }
 
         var rules = NetworkRules()
+        let exceptionBudget = max(0, options.maxRulesPerList / 4)
         var genericExempt = Set<String>()
         var specificExempt = Set<String>()
         for n in network {
@@ -143,15 +154,23 @@ public struct ContentRuleCompiler: Sendable {
             }
             switch compileNetwork(n) {
             case .success(let staged):
-                var any = false
-                for (stage, rule) in staged { rules.add(rule, stage: stage); any = true }
-                if any { report.networkCompiled += 1 } else { report.skip(.malformed) }
+                var any = false, overLimit = false
+                for (stage, rule) in staged {
+                    // Every list part repeats the exceptions, so they only get a bounded share of a part's budget.
+                    if (stage == .exception && rules.exceptions.count >= exceptionBudget)
+                        || (stage == .importantException && rules.importantExceptions.count >= exceptionBudget) {
+                        overLimit = true
+                        continue
+                    }
+                    rules.add(rule, stage: stage)
+                    any = true
+                }
+                if any { report.networkCompiled += 1 } else { report.skip(overLimit ? .overLimit : .malformed) }
             case .failure(let reason):
                 report.skip(reason)
             }
         }
 
-        limitExceptions(&rules, report: &report)
         var output = Output()
         output.networkLists = networkChunks(rules)
 
@@ -348,19 +367,6 @@ public struct ContentRuleCompiler: Sendable {
             index = end
         }
         return lists
-    }
-
-    /// A list can spend at most half its budget on repeated exceptions; the rest are dropped (and reported).
-    func limitExceptions(_ rules: inout NetworkRules, report: inout CompileReport) {
-        let allowed = max(0, options.maxRulesPerList / 4)
-        if rules.exceptions.count > allowed {
-            report.skip(.overLimit, count: rules.exceptions.count - allowed)
-            rules.exceptions.removeSubrange(allowed...)
-        }
-        if rules.importantExceptions.count > allowed {
-            report.skip(.overLimit, count: rules.importantExceptions.count - allowed)
-            rules.importantExceptions.removeSubrange(allowed...)
-        }
     }
 
     // MARK: Cosmetic filters

@@ -14,9 +14,8 @@ import WebKit
 @Suite(.enabled(if: ProcessInfo.processInfo.environment["COSMOS_VERIFY_WEBKIT"] == "1"))
 @MainActor
 struct WebKitCompileTests {
-    private func makeStore() throws -> WKContentRuleListStore {
-        let dir = makeTempDirectory("wk-store")
-        return try #require(WKContentRuleListStore(url: dir))
+    private func makeStore() -> WKContentRuleListStore {
+        WKContentRuleListStore(url: makeTempDirectory("wk-store"))
     }
 
     private func compile(_ list: CompiledRuleList, in store: WKContentRuleListStore) async throws {
@@ -61,19 +60,19 @@ struct WebKitCompileTests {
         """
         let result = ContentBlocker.compile(name: "shapes", text: ContentBlocker.fallbackListText + "\n" + text)
         #expect(result.lists.count >= 2)
-        let store = try makeStore()
+        let store = makeStore()
         for list in result.lists { try await compile(list, in: store) }
     }
 
     @Test func webKitAcceptsTheBundledFallback() async throws {
         let result = ContentBlocker.compile(name: "fallback", text: ContentBlocker.fallbackListText)
         #expect(result.lists.count == 2)
-        let store = try makeStore()
+        let store = makeStore()
         for list in result.lists { try await compile(list, in: store) }
     }
 
     @Test func webKitRejectsWhatTheValidatorRejects() async throws {
-        let store = try makeStore()
+        let store = makeStore()
         let bad = CompiledRuleList(name: "bad", json: #"[{"trigger":{"url-filter":"a|b"},"action":{"type":"block"}}]"#, ruleCount: 1)
         #expect(!RuleListValidator.validate(json: bad.json).isEmpty)
         await #expect(throws: (any Error).self) { try await self.compile(bad, in: store) }
@@ -85,7 +84,7 @@ struct WebKitCompileTests {
             try Test.cancel("EasyList could not be downloaded (offline?)")
         }
         let result = ContentBlocker.compile(lists: [("easylist", easylist), ("easyprivacy", easyprivacy)])
-        let store = try makeStore()
+        let store = makeStore()
         for list in result.lists {
             let start = Date()
             try await compile(list, in: store)
