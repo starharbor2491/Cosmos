@@ -3,18 +3,28 @@ import AppKit
 import WebKit
 import CosmosCore
 
+enum SettingsTab: String, CaseIterable {
+    case general, sidebar, blocking, privacy, links, about
+}
+
 /// The Settings window (⌘,). Plain system controls: it's a settings window, not a place for theming.
 struct SettingsView: View {
     let store: BrowserStore
+    @Local private var tab: SettingsTab
+
+    init(store: BrowserStore, tab: SettingsTab = .general) {
+        self.store = store
+        _tab = Local(wrappedValue: tab)
+    }
 
     var body: some View {
-        TabView {
-            GeneralSettings(store: store).tabItem { Label("General", systemImage: "gearshape") }
-            SidebarSettings(store: store).tabItem { Label("Sidebar", systemImage: "sidebar.left") }
-            BlockingSettings(store: store).tabItem { Label("Blocking", systemImage: "shield.lefthalf.filled") }
-            PrivacySettings(store: store).tabItem { Label("Privacy", systemImage: "hand.raised") }
-            LinkSettings(store: store).tabItem { Label("Links", systemImage: "arrow.triangle.branch") }
-            AboutSettings(store: store).tabItem { Label("About", systemImage: "sparkles") }
+        TabView(selection: $tab) {
+            GeneralSettings(store: store).tabItem { Label("General", systemImage: "gearshape") }.tag(SettingsTab.general)
+            SidebarSettings(store: store).tabItem { Label("Sidebar", systemImage: "sidebar.left") }.tag(SettingsTab.sidebar)
+            BlockingSettings(store: store).tabItem { Label("Blocking", systemImage: "shield.lefthalf.filled") }.tag(SettingsTab.blocking)
+            PrivacySettings(store: store).tabItem { Label("Privacy", systemImage: "hand.raised") }.tag(SettingsTab.privacy)
+            LinkSettings(store: store).tabItem { Label("Links", systemImage: "arrow.triangle.branch") }.tag(SettingsTab.links)
+            AboutSettings(store: store).tabItem { Label("About", systemImage: "sparkles") }.tag(SettingsTab.about)
         }
         .frame(width: 560, height: 460)
     }

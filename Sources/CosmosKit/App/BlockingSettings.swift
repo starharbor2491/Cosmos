@@ -31,6 +31,7 @@ struct BlockingSettings: View {
                 }
             } footer: {
                 Text("Blocks ads, trackers and cookie banners before they load. You can switch it off for one site from the shield in the Site Controls panel.")
+                    .frame(maxWidth: .infinity, alignment: .leading).multilineTextAlignment(.leading)
             }
 
             Section("Filter lists") {
@@ -89,6 +90,7 @@ struct BlockingSettings: View {
                 EmptyView()
             } footer: {
                 Text("Lists are downloaded from their publishers when they are on, then checked about once a day. EasyList, EasyPrivacy and the cookie list are by the EasyList authors (easylist.to) and the Fanboy project; uBlock Origin's lists are by Raymond Hill and contributors. Hover a list to see its license.")
+                    .frame(maxWidth: .infinity, alignment: .leading).multilineTextAlignment(.leading)
             }
         }
         .formStyle(.grouped)

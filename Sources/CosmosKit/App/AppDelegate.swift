@@ -224,12 +224,17 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
         probe.show()
     }
 
-    func showSettings() {
-        if let c = settingsController, c.window?.isVisible == true { c.window?.makeKeyAndOrderFront(nil); return }
+    var settingsWindow: NSWindow? { settingsController?.window }
+
+    func showSettings(tab: SettingsTab? = nil) {
+        if let c = settingsController, c.window?.isVisible == true {
+            if tab == nil { c.window?.makeKeyAndOrderFront(nil); return }
+            c.close()
+        }
         let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 460), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         win.title = "Cosmos Settings"
         win.isReleasedWhenClosed = false
-        win.contentView = NSHostingView(rootView: SettingsView(store: store))
+        win.contentView = NSHostingView(rootView: SettingsView(store: store, tab: tab ?? .general))
         win.center()
         let c = NSWindowController(window: win)
         settingsController = c
