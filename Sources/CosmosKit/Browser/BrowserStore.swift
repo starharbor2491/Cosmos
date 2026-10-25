@@ -189,6 +189,7 @@ public final class BrowserStore: TabHost {
             if let e = incognitoEnvironment { return e }
             let e = ProfileEnvironment(profile: nil, isDefault: false)
             e.installBoosts(BoostLibrary())
+            blocker?.attach(to: e)
             incognitoEnvironment = e
             return e
         }
@@ -236,6 +237,7 @@ public final class BrowserStore: TabHost {
     func periodicMaintenance() {
         runAutoArchive()
         discardIdleRuntimes()
+        blocker?.refreshIfStale()
     }
 }
 

@@ -7,6 +7,8 @@ import CosmosCore
 struct LaunchOptions {
     var dataDirectory: URL?
     var demo = false
+    /// Never download filter lists (demos and automated runs use the cached or bundled ones).
+    var offline = false
     var automationScript: URL?
 
     static func parse(_ args: [String], env: [String: String]) -> LaunchOptions {
@@ -16,6 +18,7 @@ struct LaunchOptions {
             switch args[i] {
             case "--data-dir": if i + 1 < args.count { o.dataDirectory = URL(fileURLWithPath: args[i + 1]); i += 1 }
             case "--demo": o.demo = true
+            case "--offline": o.offline = true
             case "--automation": if i + 1 < args.count { o.automationScript = URL(fileURLWithPath: args[i + 1]); i += 1 }
             default: break
             }
@@ -24,6 +27,7 @@ struct LaunchOptions {
         if o.dataDirectory == nil, let d = env["COSMOS_DATA_DIR"] { o.dataDirectory = URL(fileURLWithPath: d) }
         if o.automationScript == nil, let a = env["COSMOS_AUTOMATION"] { o.automationScript = URL(fileURLWithPath: a) }
         if env["COSMOS_DEMO"] == "1" { o.demo = true }
+        if env["COSMOS_OFFLINE"] == "1" { o.offline = true }
         return o
     }
 
@@ -72,6 +76,11 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
     func applicationDidFinishLaunching(_ notification: Notification) {
         store = BrowserStore(directory: options.resolvedDataDirectory)
         wire(store)
+        if let dir = store.dataDirectory {
+            let blocker = ContentBlockerController(store: store, directory: dir, offline: options.offline || options.demo)
+            store.blocker = blocker
+            blocker.start()
+        }
         NSApp.appearance = store.settings.appearance.nsAppearance
         NSApp.mainMenu = makeMainMenu()
         installKeyChords()
@@ -199,6 +208,7 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
     func newIncognitoWindow() {
         let incognito = BrowserStore(directory: nil, incognito: true)
         wire(incognito)
+        incognito.blocker = store.blocker
         let state = incognito.makeWindowState()
         let c = openWindow(state: state, store: incognito)
         state.overlay = .commandBar(.newTab)
