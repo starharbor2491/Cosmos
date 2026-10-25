@@ -93,3 +93,22 @@ import Testing
         #expect(ChromiumExtensionScanner.scan(extensionsDirectory: nowhere, browser: .arc, profileName: "").isEmpty)
     }
 }
+
+@Suite struct ArcBoostNoteTests {
+    @Test func aBoostImageCacheWithoutDefinitionsIsExplainedNotIgnored() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-boost-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cache = root.appendingPathComponent("BoostsImageCache", isDirectory: true)
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+
+        let none = ImportNotes()
+        #expect(ArcBoosts.load(directory: root, notes: none).isEmpty)
+        #expect(none.warnings.isEmpty)                      // an empty cache says nothing
+
+        try Data([1]).write(to: cache.appendingPathComponent("abc"))
+        let some = ImportNotes()
+        #expect(ArcBoosts.load(directory: root, notes: some).isEmpty)
+        #expect(some.warnings.count == 1)
+        #expect(some.warnings.first?.contains("Arc account") == true)
+    }
+}

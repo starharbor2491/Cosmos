@@ -20,6 +20,7 @@ extension CosmosAppDelegate {
             m.addItem(withTitle: "About Cosmos", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
             m.addItem(.separator())
             add(m, "Settings…", ",", [.command], global: { $0.showSettings() })
+            add(m, "Extensions…", "", [], global: { $0.showSettings(tab: .extensions) })
             m.addItem(.separator())
             add(m, "Import from Arc or Another Browser…", "", [], { $0.state.overlay = .welcome })
             add(m, "Set Cosmos as Default Browser", "", [], global: { d in
