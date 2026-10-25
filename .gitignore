@@ -1,0 +1,5 @@
+# Keep Arc's app bundle and personal exports out of the repo
+*.app/
+arc-export*.json
+.DS_Store
+__pycache__/
