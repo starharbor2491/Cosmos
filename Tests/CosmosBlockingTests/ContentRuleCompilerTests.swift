@@ -299,6 +299,16 @@ import Testing
         #expect(result.report.networkCompiled == 100_000)
     }
 
+    @Test func storeIdentifiersChangeWithTheRules() {
+        let a = ContentBlocker.compile(name: "x", text: "||a.test^").lists[0]
+        let again = ContentBlocker.compile(name: "x", text: "||a.test^").lists[0]
+        let b = ContentBlocker.compile(name: "x", text: "||b.test^").lists[0]
+        #expect(a.storeIdentifier == again.storeIdentifier)
+        #expect(a.storeIdentifier != b.storeIdentifier)
+        #expect(a.storeIdentifier == "cosmos.x.network.1.\(a.digest)")
+        #expect(a.digest.count == 12)
+    }
+
     // MARK: Report
 
     @Test func reportCountsEveryOutcome() {

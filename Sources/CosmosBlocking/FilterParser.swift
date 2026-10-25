@@ -264,7 +264,11 @@ public enum FilterParser {
                 if !valid { reason = .entityDomain; ok = false; break }
                 lowered.append(c)
             }
-            if ok, lowered.last == UInt8(ascii: ".") || lowered.first == UInt8(ascii: ".") { ok = false; reason = .malformed }
+            if ok {
+                // WebKit wants hostnames: a letter or digit at both ends.
+                func alnum(_ c: UInt8?) -> Bool { c.map { ($0 >= 0x61 && $0 <= 0x7A) || ($0 >= 0x30 && $0 <= 0x39) } ?? false }
+                if !alnum(lowered.first) || !alnum(lowered.last) { ok = false; reason = .malformed }
+            }
             if !negated { includeCount += 1 }
             if !ok {
                 if negated { return (list, reason ?? .entityDomain) }
@@ -300,20 +304,24 @@ public enum FilterParser {
         var patternEnd = hi
         var optionsStart = hi
         let isRegexShape = hi - p >= 2 && b[p] == UInt8(ascii: "/") && b[hi - 1] == UInt8(ascii: "/")
-        var lastDollar = -1
+        var dollars: [Int] = []
         var k = p
         while k < hi {
             if b[k] == UInt8(ascii: "$") {
-                lastDollar = k
+                dollars.append(k)
                 if k + 1 < hi, b[k + 1] == UInt8(ascii: "$") || (b[k + 1] == UInt8(ascii: "@") && k + 2 < hi && b[k + 2] == UInt8(ascii: "$")) {
                     return .skipped(.htmlFilter)
                 }
             }
             k += 1
         }
-        if !isRegexShape, lastDollar >= p, looksLikeOptions(b, from: lastDollar + 1, to: hi) {
-            patternEnd = lastDollar
-            optionsStart = lastDollar + 1
+        if !isRegexShape {
+            // Usually the last "$"; an option value may itself contain one (`urlskip=/x$/`), so look further back.
+            for d in dollars.reversed() where looksLikeOptions(b, from: d + 1, to: hi) {
+                patternEnd = d
+                optionsStart = d + 1
+                break
+            }
         }
 
         var f: NetworkFilter
@@ -392,6 +400,9 @@ public enum FilterParser {
         "elemhide": .hide(.all), "ehide": .hide(.all),
     ]
 
+    /// Request types WebKit has no equivalent for: excluding them (`$~object`) changes nothing.
+    private static let ignorableNegatedTypes: Set<String> = ["object", "object-subrequest", "xbl", "dtd", "webrtc", "inline-script", "inline-font"]
+
     private static func applyOptions(_ options: String, to f: inout NetworkFilter) -> SkipReason? {
         var positives = Set<ResourceType>()
         var negatives = Set<ResourceType>()
@@ -421,6 +432,7 @@ public enum FilterParser {
                 value = String(t[t.index(after: eq)...])
             }
             name = name.lowercased()
+            if negated, ignorableNegatedTypes.contains(name) { continue }
             guard let action = optionTable[name] else { return .unsupportedOption(name) }
             switch action {
             case .type(let type):
