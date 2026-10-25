@@ -142,4 +142,26 @@ final class Rig {
         #expect(incognito.archive.entries.isEmpty)
         #expect(incognito.dataDirectory == nil)
     }
+
+    @Test func permissionAnswersAreRememberedPerSiteAndCanBeReset() throws {
+        let rig = Rig()
+        _ = try #require(rig.store.newTab(url: URL(string: "about:blank?perm"), in: rig.window))
+        let runtime = try #require(rig.store.currentRuntime(in: rig.window))
+        rig.store.tab(runtime, remember: true, forPermission: "meet.example|camera")
+        rig.store.tab(runtime, remember: false, forPermission: "meet.example|microphone")
+        #expect(rig.store.settings.permissionDecisions["meet.example|camera"] == true)
+        #expect(rig.store.settings.permissionDecisions["meet.example|microphone"] == false)
+        rig.store.tab(runtime, remember: nil, forPermission: "meet.example|camera")
+        #expect(rig.store.settings.permissionDecisions["meet.example|camera"] == nil)
+    }
+
+    @Test func incognitoNeverRemembersPermissions() throws {
+        let incognito = BrowserStore(directory: nil, incognito: true)
+        let window = incognito.makeWindowState()
+        incognito.register(window)
+        _ = try #require(incognito.newTab(url: URL(string: "about:blank?perm"), in: window))
+        let runtime = try #require(incognito.currentRuntime(in: window))
+        incognito.tab(runtime, remember: true, forPermission: "meet.example|camera")
+        #expect(incognito.settings.permissionDecisions.isEmpty)
+    }
 }

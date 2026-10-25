@@ -554,6 +554,11 @@ extension BrowserStore {
     public func tab(_ tab: TabRuntime, boostZoomFor host: String) -> Double? {
         boosts.boosts(for: host, profileID: tab.profileID).compactMap(\.zoom).first
     }
+
+    public func tab(_ tab: TabRuntime, remember allowed: Bool?, forPermission key: String) {
+        guard !isIncognito else { return }
+        settings.permissionDecisions[key] = allowed
+    }
 }
 
 // MARK: - Peek
