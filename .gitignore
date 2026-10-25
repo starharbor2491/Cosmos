@@ -3,3 +3,7 @@
 arc-export*.json
 .DS_Store
 __pycache__/
+.build/
+*.xcodeproj
+build/
+Cosmos.app/
