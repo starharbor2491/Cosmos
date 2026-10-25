@@ -145,8 +145,17 @@ final class Automation {
                     switch sec { case .favorites: return "favorites"; case .pinned: return "pinned"; case .unpinned: return "today" }
                 }()
                 let split = st.selectedItemID.flatMap { s.workspace.item($0) }?.isSplit == true
-                note("  space=\(s.workspace.space(st.focusedSpaceID)?.title ?? "?") overlay=\(Self.describe(st.overlay)) section=\(section) split=\(split) sidebar=\(st.sidebarVisible) tab=\(rt?.title.prefix(24) ?? "-") url=\(rt?.url?.host ?? "-") tabs=\(s.workspace.allTabs().count) archived=\(s.archive.entries.count) windows=\(delegate?.controllers.count ?? 0) probes=\(delegate?.probeCount ?? 0)")
+                note("  space=\(s.workspace.space(st.focusedSpaceID)?.title ?? "?") overlay=\(Self.describe(st.overlay)) section=\(section) split=\(split) sidebar=\(st.sidebarVisible) tab=\(rt?.title.prefix(24) ?? "-") url=\(rt?.url?.host ?? "-") tabs=\(s.workspace.allTabs().count) archived=\(s.archive.entries.count) windows=\(delegate?.controllers.count ?? 0) probes=\(delegate?.probeCount ?? 0) blocker=\(s.blocker.map { "\($0.installedRuleCount) rules\($0.isUpdating ? ", updating" : "")" } ?? "off")")
             }
+        case "allowlist":
+            if let host = step["host"] as? String, let s = store {
+                if step["off"] as? Bool == true { s.settings.adBlockAllowlist.removeAll { $0 == host } }
+                else if !s.settings.adBlockAllowlist.contains(host) { s.settings.adBlockAllowlist.append(host) }
+            }
+        case "settings":
+            delegate?.showSettings(tab: (step["tab"] as? String).flatMap(SettingsTab.init(rawValue:)) ?? .general)
+        case "closeSettings":
+            delegate?.settingsWindow?.close()
         case "snapshot":
             if let path = step["path"] as? String { await snapshot(to: path, window: step["window"] as? String) }
         case "log":
@@ -225,7 +234,12 @@ final class Automation {
     /// each visible web view is first snapshotted and swapped for an image view of itself in the same slot, which keeps
     /// SwiftUI overlays (Command Bar, panels, Peek) layered above it as on screen.
     private func snapshot(to path: String, window which: String? = nil) async {
-        let target: NSWindow? = which == "probe" ? NSApp.windows.first(where: { $0 is NSPanel && $0.isVisible }) : (controller?.window ?? NSApp.windows.first(where: { $0.isVisible }))
+        let target: NSWindow?
+        switch which {
+        case "probe": target = NSApp.windows.first(where: { $0 is NSPanel && $0.isVisible })
+        case "settings": target = delegate?.settingsWindow
+        default: target = controller?.window ?? NSApp.windows.first(where: { $0.isVisible })
+        }
         guard let window = target, let content = window.contentView else {
             note("  snapshot: no window"); return
         }
