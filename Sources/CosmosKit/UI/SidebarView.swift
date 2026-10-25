@@ -106,9 +106,18 @@ struct URLPill: View {
         } label: {
             ZStack {
                 HStack(spacing: 6) {
-                    Image(systemName: Self.symbol(for: url, rt: rt))
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(palette.tertiary)
+                    Button {
+                        window.overlay = .siteControls
+                    } label: {
+                        Image(systemName: Self.symbol(for: url, rt: rt))
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(palette.tertiary)
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(url == nil)
+                    .help("Site Controls")
                     Spacer(minLength: 0)
                 }
                 Text(url == nil ? "Search or enter address" : URLInput.hostForDisplay(url))
