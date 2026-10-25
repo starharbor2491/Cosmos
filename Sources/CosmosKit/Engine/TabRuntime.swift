@@ -245,7 +245,7 @@ public final class TabRuntime: NSObject {
 // MARK: - Navigation
 
 extension TabRuntime: WKNavigationDelegate {
-    private static let webSchemes: Set<String> = ["http", "https", "about", "data", "blob", "file", "cosmos", "view-source", "javascript"]
+    private static let webSchemes: Set<String> = ["http", "https", "about", "data", "blob", "file", "cosmos", "view-source", "javascript", "webkit-extension"]
 
     public func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, preferences: WKWebpagePreferences,
                         decisionHandler: @escaping @MainActor (WKNavigationActionPolicy, WKWebpagePreferences) -> Void) {

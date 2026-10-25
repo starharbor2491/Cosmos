@@ -12,7 +12,7 @@ enum BrowserCommand: String, CaseIterable {
     case showArchive, showHistory, showDownloads, showBoosts, showSettings, showShortcuts, showWelcome
     case newWindow, newIncognito, newProbe
     case resetPinned, collapseFolders, expandFolders, resetTab
-    case setDefaultBrowser, importFromArc, toggleDeveloperTools, openInDefaultBrowser
+    case setDefaultBrowser, importFromArc, toggleDeveloperTools, openInDefaultBrowser, manageExtensions
 
     var title: String {
         switch self {
@@ -63,6 +63,7 @@ enum BrowserCommand: String, CaseIterable {
         case .importFromArc: return "Import from Arc or Another Browser"
         case .toggleDeveloperTools: return "Toggle Developer Tools"
         case .openInDefaultBrowser: return "Open Page in Another Browser"
+        case .manageExtensions: return "Manage Extensions"
         }
     }
 
@@ -98,6 +99,7 @@ enum BrowserCommand: String, CaseIterable {
         case .collapseFolders, .expandFolders: return "folder"
         case .setDefaultBrowser: return "checkmark.seal"
         case .importFromArc: return "square.and.arrow.down"
+        case .manageExtensions: return "puzzlepiece.extension"
         case .openInDefaultBrowser: return "arrow.up.forward.app"
         }
     }
@@ -116,6 +118,7 @@ enum BrowserCommand: String, CaseIterable {
         case .newProbe: return ["little arc", "mini window", "little"]
         case .importFromArc: return ["import", "chrome", "safari", "firefox", "bookmarks", "history", "migrate"]
         case .setDefaultBrowser: return ["default"]
+        case .manageExtensions: return ["extension", "add-on", "addon", "plugin", "chrome web store", "ublock", "1password"]
         case .find: return ["search page", "find in page"]
         case .toggleDeveloperTools: return ["devtools", "inspect", "console"]
         case .viewSource: return ["source"]
@@ -205,6 +208,7 @@ extension BrowserStore {
         case .showDownloads: window.overlay = .downloads
         case .showBoosts: window.overlay = .boosts
         case .showSettings: onShowSettings?()
+        case .manageExtensions: onShowSettingsTab?(.extensions)
         case .showShortcuts: window.overlay = .shortcuts
         case .showWelcome, .importFromArc: window.overlay = .welcome
         case .newWindow: onNewWindow?()

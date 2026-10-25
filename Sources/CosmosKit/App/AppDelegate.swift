@@ -77,6 +77,9 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
         store = BrowserStore(directory: options.resolvedDataDirectory)
         wire(store)
         if let dir = store.dataDirectory {
+            let extensions = ExtensionCenter(store: store, directory: dir, persistentStorage: !options.demo)
+            store.extensionCenter = extensions
+            extensions.start()
             let blocker = ContentBlockerController(store: store, directory: dir, offline: options.offline || options.demo)
             store.blocker = blocker
             blocker.start()
@@ -165,6 +168,7 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
         store.onNewWindow = { [weak self] in self?.newWindow() }
         store.onOpenIncognito = { [weak self] in self?.newIncognitoWindow() }
         store.onShowSettings = { [weak self] in self?.showSettings() }
+        store.onShowSettingsTab = { [weak self] tab in self?.showSettings(tab: tab) }
         store.onOpenProbe = { [weak self, weak store] url in
             guard let self, let store else { return }
             self.openProbe(url, store: store)

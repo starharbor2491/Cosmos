@@ -20,6 +20,7 @@ struct SidebarView: View {
             URLPill(store: store, window: window)
                 .padding(.horizontal, 10)
                 .padding(.bottom, 10)
+            ExtensionButtons(store: store, window: window)
 
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 8) {

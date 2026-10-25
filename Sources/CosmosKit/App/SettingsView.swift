@@ -4,7 +4,7 @@ import WebKit
 import CosmosCore
 
 enum SettingsTab: String, CaseIterable {
-    case general, sidebar, blocking, privacy, links, about
+    case general, sidebar, blocking, extensions, privacy, links, about
 }
 
 /// The Settings window (⌘,). Plain system controls: it's a settings window, not a place for theming.
@@ -22,6 +22,7 @@ struct SettingsView: View {
             GeneralSettings(store: store).tabItem { Label("General", systemImage: "gearshape") }.tag(SettingsTab.general)
             SidebarSettings(store: store).tabItem { Label("Sidebar", systemImage: "sidebar.left") }.tag(SettingsTab.sidebar)
             BlockingSettings(store: store).tabItem { Label("Blocking", systemImage: "shield.lefthalf.filled") }.tag(SettingsTab.blocking)
+            ExtensionsSettings(store: store).tabItem { Label("Extensions", systemImage: "puzzlepiece.extension") }.tag(SettingsTab.extensions)
             PrivacySettings(store: store).tabItem { Label("Privacy", systemImage: "hand.raised") }.tag(SettingsTab.privacy)
             LinkSettings(store: store).tabItem { Label("Links", systemImage: "arrow.triangle.branch") }.tag(SettingsTab.links)
             AboutSettings(store: store).tabItem { Label("About", systemImage: "sparkles") }.tag(SettingsTab.about)
