@@ -76,7 +76,14 @@ enum ImportCoordinator {
             }
         }
         store.applyArcImport(result, replacing: replace, in: window)
-        return ImportOutcome(summary: result.report.summary)
+        var summary = result.report.summary
+        if ExtensionCenter.isSupported, store.extensionCenter != nil {
+            let extensions = await Task.detached(priority: .utility) { ChromiumExtensionScanner.scanAll(browsers: [.arc]).count }.value
+            if extensions > 0 {
+                summary += "\n\nArc also has \(extensions) extension\(extensions == 1 ? "" : "s"). To bring them over, open Settings ▸ Extensions and choose Find in Arc and Other Browsers."
+            }
+        }
+        return ImportOutcome(summary: summary)
     }
 
     private enum Choice { case merge, replace, cancel }
