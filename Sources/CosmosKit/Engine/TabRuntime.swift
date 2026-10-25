@@ -111,8 +111,8 @@ public final class TabRuntime: NSObject {
     public func resetZoom() { webView.pageZoom = 1 }
     public var zoom: Double { webView.pageZoom }
 
-    public func evaluate(_ js: String, in world: WKContentWorld = .page) {
-        webView.evaluateJavaScript(js, in: nil, in: world) { _ in }
+    public func evaluate(_ js: String, in world: WKContentWorld? = nil) {
+        webView.evaluateJavaScript(js, in: nil, in: world ?? .page) { _ in }
     }
 
     public func find(_ text: String, backwards: Bool = false, completion: @escaping (Bool) -> Void) {
@@ -276,6 +276,9 @@ extension TabRuntime: WKNavigationDelegate {
                 host.tab(self, open: url, as: .peek)
                 decisionHandler(.cancel, preferences); return
             }
+        }
+        if navigationAction.targetFrame?.isMainFrame ?? true, let host {
+            ContentBlockerController.configure(preferences, for: url, settings: host.settings)
         }
         decisionHandler(.allow, preferences)
     }

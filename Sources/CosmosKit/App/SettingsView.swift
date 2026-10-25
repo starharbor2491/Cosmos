@@ -11,6 +11,7 @@ struct SettingsView: View {
         TabView {
             GeneralSettings(store: store).tabItem { Label("General", systemImage: "gearshape") }
             SidebarSettings(store: store).tabItem { Label("Sidebar", systemImage: "sidebar.left") }
+            BlockingSettings(store: store).tabItem { Label("Blocking", systemImage: "shield.lefthalf.filled") }
             PrivacySettings(store: store).tabItem { Label("Privacy", systemImage: "hand.raised") }
             LinkSettings(store: store).tabItem { Label("Links", systemImage: "arrow.triangle.branch") }
             AboutSettings(store: store).tabItem { Label("About", systemImage: "sparkles") }
@@ -91,34 +92,6 @@ private struct PrivacySettings: View {
     var body: some View {
         @Bindable var store = store
         Form {
-            Section("Content blocking") {
-                Toggle("Block ads and trackers", isOn: $store.settings.adBlockingEnabled)
-                ForEach(FilterListCatalog.all, id: \.id) { list in
-                    Toggle(isOn: Binding(
-                        get: { store.settings.enabledFilterLists.contains(list.id) },
-                        set: { on in
-                            if on { if !store.settings.enabledFilterLists.contains(list.id) { store.settings.enabledFilterLists.append(list.id) } }
-                            else { store.settings.enabledFilterLists.removeAll { $0 == list.id } }
-                        })) {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(list.name)
-                            Text(list.detail).font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                    .disabled(!store.settings.adBlockingEnabled)
-                }
-                if !store.settings.adBlockAllowlist.isEmpty {
-                    DisclosureGroup("Sites where blocking is off (\(store.settings.adBlockAllowlist.count))") {
-                        ForEach(store.settings.adBlockAllowlist, id: \.self) { host in
-                            HStack {
-                                Text(host)
-                                Spacer()
-                                Button("Remove") { store.settings.adBlockAllowlist.removeAll { $0 == host } }
-                            }
-                        }
-                    }
-                }
-            }
             Section("Browsing data") {
                 HStack {
                     Text("History")
@@ -236,15 +209,4 @@ private struct AboutSettings: View {
         .padding(28)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-}
-
-/// The filter lists offered in Settings. Ids match what the blocking engine downloads.
-enum FilterListCatalog {
-    struct List { let id: String; let name: String; let detail: String }
-    static let all: [List] = [
-        List(id: "easylist", name: "EasyList", detail: "Ads"),
-        List(id: "easyprivacy", name: "EasyPrivacy", detail: "Trackers"),
-        List(id: "fanboy-cookiemonster", name: "Cookie notices", detail: "Hides most cookie banners"),
-        List(id: "ublock-filters", name: "uBlock filters", detail: "Extra ad and annoyance rules"),
-    ]
 }
