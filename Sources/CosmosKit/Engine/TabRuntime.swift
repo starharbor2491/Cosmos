@@ -20,6 +20,8 @@ public protocol TabHost: AnyObject {
     func tabRequestsClose(_ tab: TabRuntime)
     func tabRequestsEscape(_ tab: TabRuntime)
     func tab(_ tab: TabRuntime, boostZoomFor host: String) -> Double?
+    /// Remembers (or, with `nil`, forgets) what the user answered when a site asked for a permission. `key` is `host|kind`.
+    func tab(_ tab: TabRuntime, remember allowed: Bool?, forPermission key: String)
 }
 
 /// One live page: owns the `WKWebView`, mirrors its state into observable properties and implements the WebKit
@@ -418,7 +420,30 @@ extension TabRuntime: WKUIDelegate {
 
     public func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo,
                         type: WKMediaCaptureType, decisionHandler: @escaping @MainActor (WKPermissionDecision) -> Void) {
-        decisionHandler(.prompt)
+        let (kind, noun): (String, String) = {
+            switch type {
+            case .camera: return ("camera", "camera")
+            case .microphone: return ("microphone", "microphone")
+            case .cameraAndMicrophone: return ("cameraAndMicrophone", "camera and microphone")
+            @unknown default: return ("media", "camera or microphone")
+            }
+        }()
+        let site = origin.host
+        let key = "\(site)|\(kind)"
+        if !site.isEmpty, let known = host?.settings.permissionDecisions[key] {
+            decisionHandler(known ? .grant : .deny)
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = site.isEmpty ? "This page wants to use your \(noun)" : "“\(site)” wants to use your \(noun)"
+        alert.informativeText = site.isEmpty ? "" : "Cosmos remembers your answer for this site. You can change it from the Site Controls panel."
+        alert.addButton(withTitle: "Allow")
+        alert.addButton(withTitle: "Don't Allow")
+        present(alert) { [weak self] response in
+            let allowed = response == .alertFirstButtonReturn
+            if !site.isEmpty, let self { self.host?.tab(self, remember: allowed, forPermission: key) }
+            decisionHandler(allowed ? .grant : .deny)
+        }
     }
 
     private func dialog(message: String, frame: WKFrameInfo, buttons: [String]) -> NSAlert {
