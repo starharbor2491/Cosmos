@@ -157,7 +157,7 @@ enum BrowserCommand: String, CaseIterable {
     }
 
     var candidate: CommandCandidate {
-        CommandCandidate(id: "cmd:\(rawValue)", kind: .command(rawValue), title: title, subtitle: shortcut, symbol: symbol, keywords: keywords)
+        CommandCandidate(id: "cmd:\(rawValue)", kind: .command(rawValue), title: title, subtitle: shortcut, symbol: symbol, frecency: 1, keywords: keywords)
     }
 }
 

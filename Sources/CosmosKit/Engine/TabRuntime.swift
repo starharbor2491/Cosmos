@@ -126,6 +126,9 @@ public final class TabRuntime: NSObject {
 
     public func clearFind() {
         evaluate("window.getSelection().removeAllRanges()")
+        // WebKit keeps the yellow find indicator until told to hide it.
+        let hide = NSSelectorFromString("_hideFindUI")
+        if webView.responds(to: hide) { _ = webView.perform(hide) }
     }
 
     private func applyMute() {

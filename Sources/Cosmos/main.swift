@@ -1,2 +1,3 @@
 import CosmosKit
-print("Cosmos", CosmosKitInfo.name)
+
+MainActor.assumeIsolated { runCosmos() }
