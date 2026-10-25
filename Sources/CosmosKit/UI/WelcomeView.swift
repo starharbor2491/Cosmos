@@ -8,6 +8,7 @@ struct WelcomeView: View {
     let window: WindowState
     @Environment(\.palette) private var palette
     @Local private var sources: [ImportSource] = []
+    @Local private var loaded = false
     @Local private var running: String?
     @Local private var results: [String: String] = [:]
     @Local private var failures: [String: String] = [:]
@@ -24,7 +25,9 @@ struct WelcomeView: View {
             .padding(.top, 30).padding(.bottom, 18)
 
             VStack(spacing: 8) {
-                if sources.isEmpty {
+                if !loaded {
+                    ProgressView().controlSize(.small).padding(.vertical, 14)
+                } else if sources.isEmpty {
                     Text("No other browsers found on this Mac. You can import later from the Cosmos menu.")
                         .font(.system(size: 12.5)).foregroundStyle(palette.tertiary).padding(.vertical, 14)
                 }
@@ -64,7 +67,7 @@ struct WelcomeView: View {
         .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(palette.panel))
         .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(palette.stroke, lineWidth: 0.8))
         .shadow(color: palette.shadow, radius: 40, y: 16)
-        .onAppear { sources = ImportCoordinator.sources(for: store) }
+        .task { sources = await ImportCoordinator.sources(for: store); loaded = true }
     }
 
     private func run(_ source: ImportSource) {
@@ -74,6 +77,7 @@ struct WelcomeView: View {
             do {
                 let outcome = try await source.run(store, window)
                 results[source.id] = outcome.summary
+            } catch is CancellationError {
             } catch {
                 failures[source.id] = error.localizedDescription
             }

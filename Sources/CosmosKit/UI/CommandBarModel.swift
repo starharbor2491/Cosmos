@@ -93,7 +93,7 @@ final class CommandBarModel {
             }
             for c in BrowserCommand.allCases { out.append(c.candidate) }
             for s in ws.spaces where s.id != window.focusedSpaceID {
-                out.append(CommandCandidate(id: "space:\(s.id)", kind: .space(s.id), title: "Go to \(s.title)", subtitle: "Space", symbol: "moon.stars"))
+                out.append(CommandCandidate(id: "space:\(s.id)", kind: .space(s.id), title: "Go to \(s.title)", subtitle: "Space", symbol: "moon.stars", frecency: 0.8))
             }
         }
         return out

@@ -110,7 +110,11 @@ public enum CommandRanker {
         var matched = 0, firstHit: String.Index?, lastHit = hay.startIndex
         for ch in needle {
             guard let found = hay[hi...].firstIndex(of: ch) else { return 0 }
-            if firstHit == nil { firstHit = found }
+            if firstHit == nil {
+                // An abbreviation starts at the start of a word ("nspc" -> "new space"), never mid-word.
+                if found != hay.startIndex, hay[hay.index(before: found)].isLetter || hay[hay.index(before: found)].isNumber { return 0 }
+                firstHit = found
+            }
             lastHit = found; matched += 1
             hi = hay.index(after: found)
         }
@@ -197,15 +201,11 @@ public enum CommandRanker {
         scored.sort { $0.score > $1.score }
         var seen = Set<String>(), out: [Scored] = []
         for s in scored {
-            let key = s.candidate.url.map { dedupeKey($0) + "|" + kindClass(s.candidate.kind) } ?? s.candidate.id
+            let key = s.candidate.url.map { dedupeKey($0) } ?? s.candidate.id
             if seen.insert(key).inserted { out.append(s) }
             if out.count >= limit { break }
         }
         return out
-    }
-
-    private static func kindClass(_ k: CommandCandidate.Kind) -> String {
-        switch k { case .openTab, .sidebarItem, .archived: return "tab"; default: return "page" }
     }
 
     public static func dedupeKey(_ u: URL) -> String {
