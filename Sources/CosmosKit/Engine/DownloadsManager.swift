@@ -77,8 +77,7 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
 
     public func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String,
                          completionHandler: @escaping @MainActor (URL?) -> Void) {
-        let name = suggestedFilename.isEmpty ? "Download" : suggestedFilename
-        let url = uniqueURL(for: name)
+        let url = uniqueURL(for: Self.safeFilename(suggestedFilename))
         byDownload[ObjectIdentifier(download)]?.set(filename: url.lastPathComponent, destination: url)
         completionHandler(url)
     }
@@ -96,6 +95,12 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
         guard let item = byDownload.removeValue(forKey: ObjectIdentifier(download)) else { return }
         item.fail(error.localizedDescription)
         onEvent?(item)
+    }
+
+    /// The name a server suggests is its opinion, not ours: it never gets to choose a folder.
+    nonisolated static func safeFilename(_ suggested: String) -> String {
+        let name = (suggested.replacingOccurrences(of: "\\", with: "/") as NSString).lastPathComponent
+        return name.isEmpty || name == "." || name == ".." ? "Download" : name
     }
 
     private func uniqueURL(for name: String) -> URL {

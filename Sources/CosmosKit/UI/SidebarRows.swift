@@ -92,7 +92,7 @@ struct PinnedSection: View {
     var body: some View {
         let rows = SidebarRows.flatten(store.workspace, root: space.pinnedRootID, expandedOnly: true)
         let dragging = store.draggingItemID != nil
-        VStack(spacing: Metrics.Space.hair) {
+        LazyVStack(spacing: Metrics.Space.hair) {
             if rows.isEmpty {
                 if dragging {
                     RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous)
@@ -123,7 +123,7 @@ struct TodaySection: View {
 
     var body: some View {
         let rows = store.workspace.unpinned(in: space)
-        VStack(spacing: Metrics.Space.hair) {
+        LazyVStack(spacing: Metrics.Space.hair) {
             SectionDivider(title: "Today", trailing: "Archive All") { store.clearUnpinned(in: window) }
             NewTabRow(store: store, window: window)
             ForEach(rows) { item in

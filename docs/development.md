@@ -16,7 +16,7 @@ The script runs `swift build`, then assembles the bundle by hand: it copies the 
 ## Test
 
 ```bash
-scripts/test.sh                              # everything, about 260 tests
+scripts/test.sh                              # everything, about 340 tests
 scripts/test.sh --filter ContentBlockerTests # a suite
 ```
 
@@ -30,6 +30,29 @@ Use the script rather than `swift test`: with only the command line tools, `swif
 | CosmosKitTests | the store (tabs, archive, spaces, persistence, incognito, permissions), the Command Bar model, Boost injection, content blocking against real pages, extensions against real pages. Tests that load pages serve them from a throwaway server on 127.0.0.1 |
 
 Tests that touch WebKit are `@MainActor`; WebKit cannot be set up on a background thread.
+
+## Crash testing
+
+Beyond the unit tests, seeded random testing hammers everything that reads outside input. Each case prints its seed, so a failure reproduces exactly; to look harder, raise the `Array(1...N)` of a suite's `arguments`.
+
+| Suite | What it throws at the code |
+|---|---|
+| `WorkspaceFuzzTests` | 400 random structural operations per seed (add, move, pin, favorite, split, restore, remove spaces…): the tree stays healthy, an operation that says no changes nothing, split weights and focus agree with the panes, a saved copy reloads. Also random damage to a saved workspace, which `repair()` must always turn into something the app can open |
+| `CorruptDataTests` | every file in the data folder (workspace, archive, boosts, settings, session, history…) empty, garbage, truncated, 8 MB, nested 200 000 deep, or decodable but impossible (no spaces, no profiles, cycles); the store must still open and be usable |
+| `StoreFuzzTests` | 250 random store operations across two windows (open, close, reopen, pin, drag, split, switch and delete spaces, Peek…): the tree stays healthy and no window selects a tab or space that is gone. It yields to the run loop now and then; without that, web views pile up faster than WebKit can release them |
+| `InputFuzzTests`, `FaviconTests` | random text through URL input, calculator, title tidying, ranking, link rules; deeply nested arithmetic; page titles and pages built to make a regex backtrack; a PNG that is a few hundred KB and a gigapixel when decoded |
+| `ImporterFuzzTests`, `BrowserImporterFuzzTests` | the Arc profile with random JSON edits and random byte damage; Chromium, Firefox and Safari history and bookmarks, and extension manifests, damaged the same way: an error or a healthy result, never a crash |
+
+Every bug these found has its own named test next to the code it concerns.
+
+Two more ways to look for crashes:
+
+```bash
+scripts/stress.sh 7 400                      # the whole app, a throwaway demo profile, 400 random steps
+swift test --sanitize=address --scratch-path /tmp/cosmos-asan   # all tests under AddressSanitizer, in their own build folder
+```
+
+`scripts/stress.sh` drives the real app through the automation harness (key presses, page loads including hostile ones, overlays, window sizes, Settings tabs, new and closed windows with `STRESS_WINDOWS=1`) and reports an exit code, the last step it ran and the exception if it died. The sanitizer build is slow the first time; it finds memory errors, not logic ones, and its larger stack frames also make deep recursion fail sooner (the Arc importer's folder depth cap is set with that in mind).
 
 ## Run with a throwaway profile
 

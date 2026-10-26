@@ -56,6 +56,7 @@ public final class TabRuntime: NSObject {
     @ObservationIgnored private var context: (link: URL?, image: URL?, selection: String) = (nil, nil, "")
     @ObservationIgnored private var pendingBoostZoom = true
     @ObservationIgnored private var mediaFrames: [String: Bool] = [:]
+    @ObservationIgnored private var crashes = CrashLoopGuard()
 
     public init(itemID: UUID, profileID: UUID?, configuration: WKWebViewConfiguration, host: TabHost?) {
         self.itemID = itemID
@@ -108,6 +109,9 @@ public final class TabRuntime: NSObject {
     public func stop() { webView.stopLoading() }
     public func goBack() { webView.goBack() }
     public func goForward() { webView.goForward() }
+    /// The range ⌘+ and ⌘- keep to; a zoom read from a Boost file is held to it too.
+    static func clampedZoom(_ z: Double) -> Double { z.isFinite ? min(5, max(0.25, z)) : 1 }
+
     public func zoomIn() { webView.pageZoom = min(5, webView.pageZoom + 0.1) }
     public func zoomOut() { webView.pageZoom = max(0.25, webView.pageZoom - 0.1) }
     public func resetZoom() { webView.pageZoom = 1 }
@@ -316,7 +320,7 @@ extension TabRuntime: WKNavigationDelegate {
     public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         lastActivity = Date()
         if pendingBoostZoom, let h = webView.url?.host, let z = host?.tab(self, boostZoomFor: h) {
-            webView.pageZoom = z
+            webView.pageZoom = Self.clampedZoom(z)
         }
         pendingBoostZoom = false
         if isMuted { applyMute() }
@@ -336,8 +340,18 @@ extension TabRuntime: WKNavigationDelegate {
     }
 
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        // The renderer crashed or was killed under memory pressure: bring the page back.
-        webView.reload()
+        // The renderer crashed or was killed under memory pressure: bring the page back, unless it keeps happening.
+        switch crashes.decide(at: Date()) {
+        case .reload:
+            webView.reload()
+        case .showError:
+            let failing = webView.url ?? URL(string: "about:blank")!
+            let error = NSError(domain: ErrorPage.crashDomain, code: 1, userInfo: [NSURLErrorFailingURLErrorKey: failing])
+            loadFailed = true
+            webView.loadHTMLString(ErrorPage.html(for: error, url: failing), baseURL: failing)
+        case .ignore:
+            break
+        }
     }
 
     public func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge,
@@ -464,7 +478,34 @@ extension TabRuntime: WKUIDelegate {
 
 // MARK: - Error page
 
+/// Decides what to do when a page's renderer dies: a few times in a short while is bad luck (memory pressure, a
+/// one-off crash) and worth a reload; more than that is the page, which gets one error page, and then nothing more
+/// until the burst is over (loading the error page can itself be reported as a death).
+struct CrashLoopGuard {
+    enum Decision: Equatable { case reload, showError, ignore }
+
+    static let window: TimeInterval = 30
+    static let allowed = 3
+    private var recent: [Date] = []
+    private var gaveUp = false
+
+    mutating func decide(at now: Date) -> Decision {
+        recent = recent.filter { now.timeIntervalSince($0) < Self.window }
+        if recent.count < Self.allowed {
+            recent.append(now)
+            gaveUp = false
+            return .reload
+        }
+        if gaveUp { return .ignore }
+        gaveUp = true
+        return .showError
+    }
+}
+
 enum ErrorPage {
+    /// The domain of the error shown when a page's renderer keeps dying.
+    static let crashDomain = "CosmosPageCrash"
+
     static func html(for error: NSError, url: URL) -> String {
         let (headline, detail): (String, String) = {
             switch (error.domain, error.code) {
@@ -474,6 +515,8 @@ enum ErrorPage {
                 return ("Lost in space", "We couldn't find a server at “\(url.host ?? url.absoluteString)”. Check the address for typos.")
             case (NSURLErrorDomain, NSURLErrorTimedOut):
                 return ("Signal lost", "The server took too long to answer.")
+            case (crashDomain, _):
+                return ("This page keeps crashing", "It stopped responding several times in a row, so Cosmos stopped reloading it. Try again in a moment.")
             case (NSURLErrorDomain, NSURLErrorCannotConnectToHost), (NSURLErrorDomain, NSURLErrorNetworkConnectionLost):
                 return ("Connection lost", "The server isn't accepting connections right now.")
             case (NSURLErrorDomain, NSURLErrorServerCertificateUntrusted), (NSURLErrorDomain, NSURLErrorServerCertificateHasBadDate),

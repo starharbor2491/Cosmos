@@ -278,7 +278,7 @@ struct SidebarResizeHandle: View {
                 DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { value in
                         if startWidth == nil { startWidth = window.sidebarWidth }
-                        window.sidebarWidth = min(420, max(190, (startWidth ?? 248) + value.translation.width))
+                        window.sidebarWidth = min(WindowState.sidebarWidthRange.upperBound, max(WindowState.sidebarWidthRange.lowerBound, (startWidth ?? 248) + value.translation.width))
                     }
                     .onEnded { _ in startWidth = nil; store.settings.sidebarWidth = window.sidebarWidth }
             )

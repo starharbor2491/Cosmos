@@ -27,7 +27,8 @@ struct SidebarView: View {
             ExtensionButtons(store: store, window: window)
 
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: Metrics.Space.s) {
+                // Lazy: a space with thousands of tabs builds the rows on screen, not all of them.
+                LazyVStack(alignment: .leading, spacing: Metrics.Space.s) {
                     FavoritesGrid(store: store, window: window, indicator: $indicator)
                     SpaceHeader(store: store, window: window, space: space)
                     PinnedSection(store: store, window: window, space: space, renaming: $renaming, indicator: $indicator)

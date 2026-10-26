@@ -546,8 +546,12 @@ extension BrowserStore {
             onPopupWindow?(rt, features)
             return rt.webView
         }
-        guard let id = newTab(url: nil, in: w, activate: true),
+        // The page must be made from WebKit's configuration, so its runtime has to exist before selecting the tab
+        // (selecting creates one from the profile's own configuration otherwise).
+        guard let space = workspace.space(w.focusedSpaceID),
+              let id = edit({ $0.addTab(url: nil, under: space.unpinnedRootID, at: 0) }),
               let rt = ensureRuntime(forItem: id, in: w, configuration: configuration, load: false) else { return nil }
+        select(id, in: w)
         return rt.webView
     }
 

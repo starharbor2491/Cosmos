@@ -210,6 +210,10 @@ public final class FaviconStore {
     nonisolated static func iconLinks(inHTML html: String, base: URL) -> [Candidate] {
         var head = html
         if let end = html.range(of: "</head", options: .caseInsensitive) { head = String(html[..<end.lowerBound]) }
+        // A tag that never closes cannot match, but the pattern would still scan to the end from every "<link"; past the
+        // last ">" there is nothing it could match, so leave that part out.
+        guard let lastClose = head.lastIndex(of: ">") else { return [] }
+        head = String(head[...lastClose])
         let whole = NSRange(head.startIndex..., in: head)
         var out: [Candidate] = []
         for tag in linkTag.matches(in: head, range: whole) {
@@ -245,6 +249,8 @@ public final class FaviconStore {
             width = Int((s.width * k).rounded()); height = Int((s.height * k).rounded())
         }
         guard width >= 8, height >= 8 else { return nil }
+        // A few hundred KB of PNG can claim a gigapixel canvas; no logo needs more than 16 megapixels.
+        guard width * height <= 16_000_000 else { return nil }
         let k = min(1, Double(maxSide) / Double(max(width, height)))
         let outW = max(1, Int((Double(width) * k).rounded())), outH = max(1, Int((Double(height) * k).rounded()))
         guard let rep = bitmap(width: outW, height: outH), let ctx = NSGraphicsContext(bitmapImageRep: rep) else { return nil }

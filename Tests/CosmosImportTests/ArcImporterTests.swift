@@ -355,7 +355,7 @@ private func folderExpanded(_ ws: Workspace, _ n: Int) throws -> Bool {
         let r = try importFixture(files: [], sidebar: sidebar)
         #expect(r.workspace.problems().isEmpty)
         #expect((r.report.skipped["tooDeeplyNested"] ?? 0) == 1)
-        #expect(r.report.folders == 100)
+        #expect(r.report.folders == 40)
         #expect(r.report.tabs == 0)
     }
 

@@ -157,7 +157,16 @@ public final class BrowserStore: TabHost {
     /// Mutates the workspace and schedules a save. Every structural edit goes through here.
     @discardableResult
     func edit<T>(_ body: (inout Workspace) -> T) -> T {
+        // A split dissolves into its last pane when another pane leaves it. A window that had the split selected
+        // follows to that pane instead of being left on an item that no longer exists (a blank page).
+        var panes: [UUID: [UUID]] = [:]
+        for w in windows { for sel in w.selection.values { panes[sel] = workspace.item(sel)?.childIDs } }
         let result = body(&workspace)
+        for w in windows {
+            for (space, sel) in w.selection where workspace.item(sel) == nil {
+                w.selection[space] = panes[sel]?.first { workspace.item($0) != nil }
+            }
+        }
         markDirty(.workspace)
         return result
     }

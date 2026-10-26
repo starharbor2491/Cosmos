@@ -119,7 +119,7 @@ enum BoostInjector {
             out.append(WKUserScript(source: src, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: .page))
         }
         if !boost.js.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let src = "(function(){ \(guardJS) try { \n\(boost.js)\n } catch (e) { console.error('[Cosmos Boost \(boost.name.replacingOccurrences(of: "'", with: ""))]', e); } })();"
+            let src = "(function(){ \(guardJS) try { \n\(boost.js)\n } catch (e) { console.error(\(jsString("[Cosmos Boost \(boost.name)]")), e); } })();"
             out.append(WKUserScript(source: src, injectionTime: .atDocumentEnd, forMainFrameOnly: false, in: .page))
         }
         return out

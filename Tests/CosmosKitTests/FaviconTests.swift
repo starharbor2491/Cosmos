@@ -134,6 +134,43 @@ enum TestIcon {
         #expect(FaviconStore.normalizedPNG(from: Data("not an image, just a long enough string of text to pass the size check".utf8)) == nil)
     }
 
+    /// A 1-bit grey PNG of `side` x `side` pixels: a few hundred KB on the wire, a gigabyte once decoded.
+    static func decompressionBomb(side: Int) -> Data {
+        func crc(_ bytes: [UInt8]) -> UInt32 {
+            var c: UInt32 = 0xFFFF_FFFF
+            for b in bytes { c ^= UInt32(b); for _ in 0..<8 { c = c & 1 == 1 ? (c >> 1) ^ 0xEDB8_8320 : c >> 1 } }
+            return ~c
+        }
+        func chunk(_ type: String, _ body: [UInt8]) -> [UInt8] {
+            let t = Array(type.utf8) + body
+            return withUnsafeBytes(of: UInt32(body.count).bigEndian, Array.init) + t + withUnsafeBytes(of: crc(t).bigEndian, Array.init)
+        }
+        let raw = Data(count: side * (1 + (side + 7) / 8))
+        let deflated = try! (raw as NSData).compressed(using: .zlib) as Data
+        // zlib wrapper: header, the raw deflate stream, then Adler-32 (of all-zero bytes: A = 1, B = length mod 65521).
+        let adler = (UInt32(raw.count % 65521) << 16) | 1
+        let idat: [UInt8] = [0x78, 0xDA] + Array(deflated) + withUnsafeBytes(of: adler.bigEndian, Array.init)
+        let header = withUnsafeBytes(of: UInt32(side).bigEndian, Array.init) + withUnsafeBytes(of: UInt32(side).bigEndian, Array.init) + [1, 0, 0, 0, 0]
+        return Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A] + chunk("IHDR", header) + chunk("IDAT", idat) + chunk("IEND", []))
+    }
+
+    /// Every page we visit is parsed, so a hostile one must not be able to pin a core with a wall of unclosed tags.
+    @Test func aPageOfUnclosedLinkTagsIsParsedQuickly() {
+        let base = URL(string: "https://example.com/")!
+        let start = Date()
+        #expect(FaviconStore.iconLinks(inHTML: String(repeating: "<link ", count: 40_000), base: base).isEmpty)
+        #expect(FaviconStore.iconLinks(inHTML: "<link rel=icon href=/a.png>" + String(repeating: "<link ", count: 40_000), base: base).count == 1)
+        #expect(Date().timeIntervalSince(start) < 2, "took \(Date().timeIntervalSince(start)) s")
+    }
+
+    @Test func aSmallFileThatUnpacksToAHugeImageIsRefused() {
+        let bomb = Self.decompressionBomb(side: 30_000)
+        #expect(bomb.count < 2_000_000)
+        let start = Date()
+        #expect(FaviconStore.normalizedPNG(from: bomb) == nil)
+        #expect(Date().timeIntervalSince(start) < 2)
+    }
+
     @Test func vectorLogosAreRasterized() throws {
         let svg = Data("""
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"><circle cx="12" cy="12" r="10" fill="#e00"/></svg>
