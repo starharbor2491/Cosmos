@@ -78,7 +78,7 @@ Cosmos is a browser, not a clone of everything Arc shipped.
 | `FilterLists/`, `blocking.json` | downloaded filter lists and their compiled form |
 | `Backups/` | dated copies of the JSON files, kept automatically |
 
-Nothing leaves your Mac except what you browse, the filter lists Cosmos downloads, search suggestions (switch off in Settings) and Chrome Web Store downloads you ask for. There is no telemetry.
+Nothing leaves your Mac except what you browse, the filter lists Cosmos downloads, the logos of sites that have a tab in your sidebar (fetched from the site itself, asking only for its home page and icon, never the page you were on), search suggestions (switch off in Settings) and Chrome Web Store downloads you ask for. There is no telemetry.
 
 ## For developers
 

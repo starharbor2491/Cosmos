@@ -58,3 +58,56 @@ final class PageServer: @unchecked Sendable {
     deinit { listener.cancel() }
 }
 
+
+/// Serves fixed responses by path on 127.0.0.1 and records every request line's path (query included), so a test can
+/// check both what a client got and what it asked for.
+final class SiteServer: @unchecked Sendable {
+    struct Route {
+        var type: String
+        var body: Data
+    }
+
+    private final class Recorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var paths: [String] = []
+        func add(_ path: String) { lock.lock(); paths.append(path); lock.unlock() }
+        var all: [String] { lock.lock(); defer { lock.unlock() }; return paths }
+    }
+
+    private let listener: NWListener
+    private let recorder: Recorder
+    let port: UInt16
+    var requests: [String] { recorder.all }
+
+    init(routes: [String: Route]) async throws {
+        let recorder = Recorder()
+        let l = try NWListener(using: .tcp, on: .any)
+        l.newConnectionHandler = { connection in
+            connection.start(queue: .global())
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 16384) { data, _, _, _ in
+                let line = data.flatMap { String(decoding: $0, as: UTF8.self).components(separatedBy: "\r\n").first } ?? ""
+                let path = line.split(separator: " ").dropFirst().first.map(String.init) ?? "/"
+                recorder.add(path)
+                let route = routes[path.components(separatedBy: "?").first ?? path]
+                let body = route?.body ?? Data()
+                let head = "HTTP/1.1 \(route == nil ? "404 Not Found" : "200 OK")\r\nContent-Type: \(route?.type ?? "text/plain")\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
+                connection.send(content: Data(head.utf8) + body, completion: .contentProcessed { _ in connection.cancel() })
+            }
+        }
+        port = try await withCheckedThrowingContinuation { (c: CheckedContinuation<UInt16, Error>) in
+            nonisolated(unsafe) var resumed = false
+            l.stateUpdateHandler = { state in
+                switch state {
+                case .ready: if !resumed { resumed = true; c.resume(returning: l.port?.rawValue ?? 0) }
+                case .failed(let e): if !resumed { resumed = true; c.resume(throwing: e) }
+                default: break
+                }
+            }
+            l.start(queue: .global())
+        }
+        listener = l
+        self.recorder = recorder
+    }
+
+    deinit { listener.cancel() }
+}

@@ -53,7 +53,7 @@ struct FavoriteTile: View {
             store.select(item.id, in: window)
         } label: {
             ZStack(alignment: .topTrailing) {
-                FaviconView(store: store, url: url, size: 24, cornerRadius: 6)
+                FaviconView(store: store, url: url, size: 24, cornerRadius: 6, fetch: true)
                     .opacity(rt == nil && !selected ? 0.82 : 1)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 if let rt {
@@ -245,7 +245,7 @@ struct TabRow: View {
         let url = rt?.url ?? item.tab?.url
 
         HStack(spacing: 8) {
-            FaviconView(store: store, url: url, size: 18)
+            FaviconView(store: store, url: url, size: 18, fetch: true)
                 .opacity(asleep ? 0.65 : 1)
             if renaming == item.id {
                 RenameField(initial: store.title(forItem: item.id, in: window)) { new in

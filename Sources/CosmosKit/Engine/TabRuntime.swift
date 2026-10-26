@@ -185,7 +185,7 @@ public final class TabRuntime: NSObject {
                 guard let href = (d["href"] as? String).flatMap(URL.init(string:)), href.scheme == "https" || href.scheme == "http" || href.scheme == "data" else { return nil }
                 return (href, d["sizes"] as? String ?? "", d["rel"] as? String ?? "")
             }
-            self.host?.favicons.update(host: host, candidates: icons.map { (href: $0.0, sizes: $0.1, rel: $0.2) }, pageURL: pageURL)
+            self.host?.favicons.update(host: host, candidates: icons.map { FaviconStore.Candidate(href: $0.0, sizes: $0.1, rel: $0.2) }, pageURL: pageURL)
             themeColor = (body["themeColor"] as? String).flatMap(Self.parseCSSColor)
         case "media":
             let key = (body["frame"] as? String) == "top" ? "top" : "sub-\(fromMainFrame)"
