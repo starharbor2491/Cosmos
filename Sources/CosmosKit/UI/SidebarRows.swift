@@ -65,21 +65,18 @@ struct FavoriteTile: View {
                 }
             }
             .frame(height: Metrics.Height.tile)
-            .background(
-                RoundedRectangle(cornerRadius: Metrics.Radius.tile, style: .continuous)
-                    .fill(selected ? palette.selected : (hover ? palette.hover.opacity(1.8) : palette.hover))
-                    .shadow(color: selected ? palette.shadow.opacity(0.5) : .clear, radius: 4, y: 1)
-            )
-            .overlay(RoundedRectangle(cornerRadius: Metrics.Radius.tile, style: .continuous).strokeBorder(selected ? palette.stroke : .clear, lineWidth: 0.8))
+            .background(RowBackground(selected: selected, hover: hover, radius: Metrics.Radius.tile, resting: true))
             .overlay(DropMarker(indicator: indicator, id: item.id, axis: .horizontal))
             .contentShape(Rectangle())
             .spatial("tile")
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressableStyle(scale: 0.94))
         .onHover { hover = $0 }
         .help(store.title(forItem: item.id, in: window))
         .contextMenu { ItemContextMenu(store: store, window: window, itemID: item.id) }
-        .onDrag { store.beginDrag(item.id) }
+        .onDrag({ store.beginDrag(item.id) }, preview: {
+            DragPreview(store: store, url: url, title: store.title(forItem: item.id, in: window)).environment(\.palette, palette)
+        })
         .onDrop(of: SidebarDrop.types, delegate: RowDropDelegate(store: store, window: window, targetID: item.id, axis: .horizontal, rowSize: 80, indicator: $indicator))
     }
 }
@@ -106,10 +103,12 @@ struct PinnedSection: View {
             } else {
                 ForEach(rows) { row in
                     SidebarItemView(store: store, window: window, itemID: row.id, depth: row.depth, renaming: $renaming, indicator: $indicator)
+                        .transition(Motion.row)
                 }
             }
             Color.clear.frame(height: dragging ? Metrics.Space.m : Metrics.Space.hair)
         }
+        .animation(Motion.spring, value: rows.map(\.id))
         .onDrop(of: SidebarDrop.types, delegate: ContainerDropDelegate(store: store, window: window, rootID: space.pinnedRootID, indicator: $indicator))
     }
 }
@@ -129,9 +128,11 @@ struct TodaySection: View {
             NewTabRow(store: store, window: window)
             ForEach(rows) { item in
                 SidebarItemView(store: store, window: window, itemID: item.id, depth: 0, renaming: $renaming, indicator: $indicator)
+                    .transition(Motion.row)
             }
             Color.clear.frame(height: Metrics.Space.xl)
         }
+        .animation(Motion.spring, value: rows.map(\.id))
         .onDrop(of: SidebarDrop.types, delegate: ContainerDropDelegate(store: store, window: window, rootID: space.unpinnedRootID, atStart: true, indicator: $indicator))
     }
 }
@@ -157,11 +158,11 @@ struct NewTabRow: View {
             .foregroundStyle(hover ? palette.text : palette.secondary)
             .padding(.horizontal, Metrics.Sidebar.inset)
             .frame(height: Metrics.Height.row)
-            .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(hover ? palette.hover : .clear))
+            .background(RowBackground(selected: false, hover: hover, radius: Metrics.Radius.row))
             .contentShape(Rectangle())
             .spatial("row")
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressableStyle(scale: 0.98))
         .onHover { hover = $0 }
     }
 }
@@ -271,21 +272,19 @@ struct TabRow: View {
         .padding(.leading, Metrics.Sidebar.inset + CGFloat(depth) * Metrics.Sidebar.indent)
         .padding(.trailing, Metrics.Sidebar.inset)
         .frame(height: Metrics.Height.row)
-        .background(
-            RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous)
-                .fill(selected && !inSplit ? palette.selected : (focusedPane ? palette.selected : (hover ? palette.hover : .clear)))
-                .shadow(color: selected && !inSplit ? palette.shadow.opacity(0.4) : .clear, radius: 3, y: 1)
-        )
-        .overlay(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).strokeBorder(selected && !inSplit ? palette.stroke : .clear, lineWidth: 0.8))
+        .background(RowBackground(selected: selected && !inSplit, hover: hover, radius: Metrics.Radius.row, plainSelected: focusedPane))
         .overlay(DropMarker(indicator: indicator, id: item.id, axis: .vertical))
         .contentShape(Rectangle())
         .spatial(inSplit ? "split.row" : "row")
+        .pressEffect()
         .onTapGesture(count: 2) { if pinned { renaming = item.id } }
         .onTapGesture { store.select(item.id, in: window) }
         .onHover { hover = $0 }
         .help(item.tab?.url?.absoluteString ?? "")
         .contextMenu { ItemContextMenu(store: store, window: window, itemID: item.id, renaming: $renaming) }
-        .onDrag { store.beginDrag(item.id) }
+        .onDrag({ store.beginDrag(item.id) }, preview: {
+            DragPreview(store: store, url: url, title: store.title(forItem: item.id, in: window)).environment(\.palette, palette)
+        })
         .onDrop(of: SidebarDrop.types, delegate: RowDropDelegate(store: store, window: window, targetID: item.id, axis: .vertical, rowSize: 32, indicator: $indicator))
     }
 
@@ -322,11 +321,14 @@ struct RowIconButton: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 10, weight: .bold))
+                .contentTransition(.symbolEffect(.replace))
                 .foregroundStyle(hover ? palette.text : palette.secondary)
                 .frame(width: Metrics.Icon.row + 2, height: Metrics.Icon.row + 2)
                 .background(Circle().fill(hover ? palette.hover.opacity(2) : .clear))
+                .animation(Motion.quick, value: hover)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressableStyle(scale: 0.88))
+        .transition(Motion.pop)
         .onHover { hover = $0 }
         .help(help)
     }
@@ -378,14 +380,17 @@ struct FolderRow: View {
         .padding(.leading, Metrics.Sidebar.inset + CGFloat(depth) * Metrics.Sidebar.indent)
         .padding(.trailing, Metrics.Sidebar.inset)
         .frame(height: Metrics.Height.row)
-        .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(hover ? palette.hover : .clear))
+        .background(RowBackground(selected: false, hover: hover, radius: Metrics.Radius.row))
         .overlay(DropMarker(indicator: indicator, id: item.id, axis: .vertical))
         .contentShape(Rectangle())
         .spatial("row")
-        .onTapGesture { withAnimation(.easeOut(duration: 0.16)) { store.folderToggle(item.id) } }
+        .pressEffect()
+        .onTapGesture { withAnimation(Motion.spring) { store.folderToggle(item.id) } }
         .onHover { hover = $0 }
         .contextMenu { ItemContextMenu(store: store, window: window, itemID: item.id, renaming: $renaming) }
-        .onDrag { store.beginDrag(item.id) }
+        .onDrag({ store.beginDrag(item.id) }, preview: {
+            DragPreview(store: store, url: nil, title: item.displayTitle, symbol: "folder.fill").environment(\.palette, palette)
+        })
         .onDrop(of: SidebarDrop.types, delegate: RowDropDelegate(store: store, window: window, targetID: item.id, axis: .vertical, rowSize: 32, indicator: $indicator))
     }
 }
@@ -499,7 +504,6 @@ struct SpacesBar: View {
         }
         .padding(.horizontal, Metrics.Sidebar.gutter)
         .frame(height: Metrics.Height.bar)
-        .background(SwipeCatcher { delta in store.cycleSpace(delta, in: window) })
         .overlay(alignment: .top) { Rectangle().fill(palette.stroke).frame(height: 0.5).padding(.horizontal, Metrics.Sidebar.gutter) }
     }
 }
@@ -517,6 +521,7 @@ struct SpaceButton: View {
             withAnimation(.easeInOut(duration: 0.4)) { store.switchSpace(to: space.id, in: window) }
         } label: {
             SpaceIconView(icon: space.icon, size: 14)
+                .symbolEffect(.bounce, value: selected)
                 .foregroundStyle(selected ? palette.text : palette.secondary)
                 .frame(width: 30, height: Metrics.Height.button)
                 .background(
@@ -524,10 +529,11 @@ struct SpaceButton: View {
                         .fill(selected ? palette.selected : (hover ? palette.hover : .clear))
                 )
                 .overlay(alignment: .bottom) {
-                    if selected { Capsule().fill(Color(space.theme.accent)).frame(width: 10, height: 2.5).offset(y: 5) }
+                    if selected { Capsule().fill(Color(space.theme.accent)).frame(width: 10, height: 2.5).offset(y: 5).transition(.scale.combined(with: .opacity)) }
                 }
+                .animation(Motion.spring, value: selected)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressableStyle(scale: 0.9))
         .onHover { hover = $0 }
         .help(space.title)
         .contextMenu { SpaceMenuItems(store: store, window: window, space: space) }
@@ -542,56 +548,12 @@ struct DownloadsButton: View {
     var body: some View {
         let d = store.downloads
         ZStack {
-            ToolbarButton(symbol: "arrow.down.circle", help: "Downloads (⇧⌘J)") { window.overlay = window.overlay == .downloads ? nil : .downloads }
+            ToolbarButton(symbol: "arrow.down.circle", bounce: d.items.count, help: "Downloads (⇧⌘J)") { window.overlay = window.overlay == .downloads ? nil : .downloads }
             if d.hasActive {
                 Circle().trim(from: 0, to: max(0.05, d.overallFraction)).stroke(palette.accent, style: StrokeStyle(lineWidth: 2, lineCap: .round))
                     .rotationEffect(.degrees(-90)).frame(width: 22, height: 22).allowsHitTesting(false)
             }
         }
         .opacity(d.items.isEmpty ? 0.55 : 1)
-    }
-}
-
-/// Catches horizontal two-finger swipes over its area (swipe the spaces bar to change space).
-struct SwipeCatcher: NSViewRepresentable {
-    let onSwipe: (Int) -> Void
-
-    func makeNSView(context: Context) -> NSView {
-        let v = SwipeView()
-        v.onSwipe = onSwipe
-        v.install()
-        return v
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) { (nsView as? SwipeView)?.onSwipe = onSwipe }
-
-    static func dismantleNSView(_ nsView: NSView, coordinator: ()) { (nsView as? SwipeView)?.uninstall() }
-
-    final class SwipeView: NSView {
-        var onSwipe: ((Int) -> Void)?
-        private var monitor: Any?
-        private var accumulated: CGFloat = 0
-        private var fired = false
-
-        override func hitTest(_ point: NSPoint) -> NSView? { nil }
-
-        func install() {
-            monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
-                guard let self, let window = self.window, event.window === window else { return event }
-                let p = self.convert(event.locationInWindow, from: nil)
-                guard self.bounds.contains(p), abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) else { return event }
-                if event.phase == .began { self.accumulated = 0; self.fired = false }
-                self.accumulated += event.scrollingDeltaX
-                if !self.fired, abs(self.accumulated) > 60 {
-                    self.fired = true
-                    self.onSwipe?(self.accumulated < 0 ? 1 : -1)
-                }
-                if event.phase == .ended || event.momentumPhase == .ended { self.accumulated = 0; self.fired = false }
-                return nil
-            }
-        }
-
-        func uninstall() { if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil }
-        deinit { if let monitor { NSEvent.removeMonitor(monitor) } }
     }
 }

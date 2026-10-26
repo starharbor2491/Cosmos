@@ -171,6 +171,7 @@ extension BrowserStore {
 
     func closeTab(_ id: UUID, in window: WindowState?) {
         guard workspace.item(id) != nil else { return }
+        haptics.generic()
         let selected = window?.selectedItemID
         let neighbour = window.flatMap { neighbourAfterClosing(id, in: $0) }
         switch workspace.section(of: id) {
@@ -228,6 +229,7 @@ extension BrowserStore {
         let ids = workspace.unpinned(in: space).map(\.id).filter { id in workspace.tabs(under: id).allSatisfy { !keep.contains($0.id) } }
         guard !ids.isEmpty else { window.showToast("Nothing to clear", symbol: "tray"); return }
         archiveItems(ids, reason: .cleared, in: window)
+        haptics.levelChange()
         window.showToast("Archived \(ids.count) tab\(ids.count == 1 ? "" : "s")", symbol: "archivebox.fill")
     }
 
@@ -272,10 +274,10 @@ extension BrowserStore {
 
     func togglePin(_ id: UUID, in window: WindowState) {
         switch workspace.section(of: id) {
-        case .pinned: edit { $0.unpin(id) }
-        case .unpinned: edit { $0.pin(id) }
+        case .pinned: edit { $0.unpin(id) }; haptics.levelChange()
+        case .unpinned: edit { $0.pin(id) }; haptics.levelChange()
         case .favorites:
-            if let sid = workspace.spaces.first(where: { $0.id == window.focusedSpaceID })?.id { edit { $0.unfavorite(id, into: sid) } }
+            if let sid = workspace.spaces.first(where: { $0.id == window.focusedSpaceID })?.id { edit { $0.unfavorite(id, into: sid) }; haptics.levelChange() }
         case nil: break
         }
     }
@@ -283,8 +285,10 @@ extension BrowserStore {
     func toggleFavorite(_ id: UUID, in window: WindowState) {
         if workspace.section(of: id) == .favorites {
             edit { $0.unfavorite(id, into: window.focusedSpaceID) }
+            haptics.levelChange()
         } else if workspace.item(id)?.isTab == true {
             edit { $0.favorite(id) }
+            haptics.levelChange()
         }
     }
 
@@ -326,11 +330,13 @@ extension BrowserStore {
         guard let rt = runtime(forItem: id, in: window) else { return }
         rt.isMuted.toggle()
         edit { $0.updateTab(id) { $0.isMuted = rt.isMuted } }
+        haptics.generic()
     }
 
     func folderToggle(_ id: UUID) {
         guard case .folder(let f)? = workspace.item(id)?.content else { return }
         edit { $0.setFolderExpanded(id, !f.isExpanded) }
+        haptics.alignment()
     }
 
     func setAllFolders(expanded: Bool, in window: WindowState) {
@@ -390,6 +396,7 @@ extension BrowserStore {
         let from = workspace.spaceIndex(window.focusedSpaceID) ?? 0
         window.spaceDirection = target >= from ? 1 : -1
         window.focusedSpaceID = id
+        haptics.levelChange()
         if let sel = window.selection[id], workspace.item(sel) != nil {
             for t in workspace.tabs(under: sel) { ensureRuntime(forItem: t.id, in: window) }
         } else {
@@ -581,6 +588,7 @@ extension BrowserStore {
         rt.load(url)
         window.peek = PeekSession(runtime: rt, openedFrom: itemID)
         window.overlay = nil
+        haptics.levelChange()
     }
 
     func closePeek(in window: WindowState) {

@@ -47,6 +47,13 @@
     const img = e.target && e.target.tagName === 'IMG' ? e.target.currentSrc || e.target.src : null;
     post({ type: 'context', link: a ? a.href : null, image: img, selection: String(window.getSelection() || '').slice(0, 2000) });
   }, true);
+  // Force Touch: pressing hard on a link opens it in Peek, like ⇧-click. Only real presses count (a page can
+  // dispatch these events itself), and the system's own link preview is switched off for links.
+  document.addEventListener('webkitmouseforcewillbegin', e => { if (e.isTrusted && linkOf(e.target)) e.preventDefault(); }, true);
+  document.addEventListener('webkitmouseforcedown', e => {
+    const a = e.isTrusted ? linkOf(e.target) : null;
+    if (a) post({ type: 'peekLink', href: a.href });
+  }, true);
   let lastHover = null;
   document.addEventListener('mouseover', e => {
     const a = linkOf(e.target);
