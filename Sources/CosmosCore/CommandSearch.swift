@@ -58,9 +58,26 @@ public struct LearnedSelections: Codable, Equatable, Sendable {
 
     public static func normalise(_ q: String) -> String { q.lowercased().trimmingCharacters(in: .whitespaces) }
 
+    /// What the Command Bar makes fresh from the text (a typed address, a search, a suggestion, a site search, a sum) can
+    /// never be ranked by a past pick, so a pick of one is not kept: it would only hold on to what was typed.
+    public static func isLearnable(candidateID id: String) -> Bool {
+        !["url:", "web:", "sug:", "site:"].contains { id.hasPrefix($0) } && id != "calc"
+    }
+
+    /// Drops the picks an earlier version kept of typed things. True when there were any.
+    @discardableResult
+    public mutating func dropUnlearnable() -> Bool {
+        let before = picks
+        for (query, forQuery) in picks {
+            let kept = forQuery.filter { Self.isLearnable(candidateID: $0.key) }
+            picks[query] = kept.isEmpty ? nil : kept
+        }
+        return picks != before
+    }
+
     public mutating func record(query: String, candidateID: String, at date: Date = Date()) {
         let key = Self.normalise(query)
-        guard !key.isEmpty else { return }
+        guard !key.isEmpty, Self.isLearnable(candidateID: candidateID) else { return }
         var forQuery = picks[key] ?? [:]
         var p = forQuery[candidateID] ?? Pick(count: 0, lastAt: date)
         p.count += 1; p.lastAt = date

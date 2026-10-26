@@ -21,7 +21,8 @@ public extension JSONDecoder {
 /// Atomic JSON persistence for one Codable value, with timestamped rotating backups.
 ///
 /// Arc keeps `Storable<Name>.<timestamp>.json` copies next to each file so "Restore Data" can roll back; Cosmos
-/// does the same in a `Backups/` folder: at most one backup per `backupInterval`, newest `keepBackups` kept.
+/// does the same in a `Backups/` folder: at most one backup per `backupInterval`, newest `keepBackups` kept (`0` keeps none,
+/// for a file that is only a cache of what could be learned again).
 public final class JSONFileStore<Value: Codable> {
     public let url: URL
     public let backupDirectory: URL
@@ -68,7 +69,7 @@ public final class JSONFileStore<Value: Codable> {
     }
 
     private func backupIfDue(now: Date) {
-        guard fm.fileExists(atPath: url.path) else { return }
+        guard keepBackups > 0, fm.fileExists(atPath: url.path) else { return }
         if let newest = backups().first,
            let attrs = try? fm.attributesOfItem(atPath: newest.path), let made = attrs[.modificationDate] as? Date,
            now.timeIntervalSince(made) < backupInterval { return }
@@ -76,6 +77,18 @@ public final class JSONFileStore<Value: Codable> {
         let dest = backupDirectory.appendingPathComponent("\(name).\(Self.stamp.string(from: now)).json")
         try? fm.copyItem(at: url, to: dest)
         for old in backups().dropFirst(keepBackups) { try? fm.removeItem(at: old) }
+    }
+
+    /// Writes the value now without keeping a copy of what it replaces, and deletes the copies there are. For a file from which
+    /// something was just forgotten: the dated copies would otherwise still hold it.
+    public func rewriteDiscardingBackups(_ value: Value) throws {
+        try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder.cosmos.encode(value).write(to: url, options: .atomic)
+        deleteBackups()
+    }
+
+    public func deleteBackups() {
+        for old in backups() { try? fm.removeItem(at: old) }
     }
 
     /// Restores the newest backup that decodes; returns its value.

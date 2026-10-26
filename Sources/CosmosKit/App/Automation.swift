@@ -266,7 +266,7 @@ final class Automation {
 
     /// Sends a synthetic key-down such as "cmd+t" or "ctrl+shift+=" through the normal event path.
     private func sendChord(_ combo: String) {
-        guard let window = controller?.window else { note("  chord: no window"); return }
+        guard controller?.window != nil else { note("  chord: no window"); return }
         var flags: NSEvent.ModifierFlags = []
         var key = ""
         for part in combo.lowercased().split(separator: "+", omittingEmptySubsequences: false).map(String.init) {

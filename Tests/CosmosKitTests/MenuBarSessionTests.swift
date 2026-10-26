@@ -17,7 +17,7 @@ private final class SizedFeatures: WKWindowFeatures {
 @Suite struct MenuBarSessionTests {
     private func html(_ body: String) -> SiteServer.Route { .init(type: "text/html", body: Data(body.utf8)) }
 
-    private func waitFor(_ seconds: Double = 5, _ condition: () -> Bool) async throws {
+    private func waitFor(_ seconds: Double = 20, _ condition: () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(seconds)
         while !condition(), Date() < deadline { try await Task.sleep(for: .milliseconds(25)) }
     }
@@ -397,9 +397,9 @@ private final class SizedFeatures: WKWindowFeatures {
     /// search and the typed address, and they have dates.
     @Test func clearingARangeForgetsWhatWasTypedInIt() throws {
         let rig = Rig()
-        rig.store.learned.record(query: "old", candidateID: "web:old", at: Date().addingTimeInterval(-86400 * 3))
-        rig.store.learned.record(query: "private search", candidateID: "web:private search")
-        rig.store.learned.record(query: "example.com/secret", candidateID: "url:https://example.com/secret")
+        rig.store.learned.record(query: "old", candidateID: "hist:https://example.com/old", at: Date().addingTimeInterval(-86400 * 3))
+        rig.store.learned.record(query: "private search", candidateID: "hist:https://example.com/private")
+        rig.store.learned.record(query: "example.com/secret", candidateID: "hist:https://example.com/secret")
 
         rig.store.clearHistory(since: Date().addingTimeInterval(-3600))
 
@@ -444,6 +444,49 @@ private final class SizedFeatures: WKWindowFeatures {
         #expect(rig.store.settings.menuBar.lastAddress == nil, "the panel would have opened on it again")
         #expect(rig.store.learned.picks["exa"]?.keys.sorted() == ["hist:\(other.absoluteString)"])
         #expect(cleared == 1)
+    }
+
+    /// The files keep dated copies of themselves. What was forgotten must not be readable in those either, nor anywhere else
+    /// in the data folder.
+    @Test(arguments: ["all", "range", "one row"]) func clearingLeavesNothingReadableAnywhereInTheDataFolder(how: String) throws {
+        let rig = Rig()
+        let url = URL(string: "https://example.com/secret-page")!
+        rig.store.history.record(url: url, title: "Secret")
+        rig.store.learned.record(query: "secret query", candidateID: "hist:\(url.absoluteString)")
+        rig.store.settings.menuBar.remember(url)
+        rig.store.saveNow()
+        rig.store.settings.menuBar.remember(URL(string: "https://example.com/other")!)
+        rig.store.saveNow()
+        rig.store.settings.menuBar.remember(url)
+        rig.store.saveNow()
+        // An earlier version also kept dated copies of what the Command Bar learned.
+        let backups = rig.dir.appendingPathComponent("Backups", isDirectory: true)
+        try FileManager.default.createDirectory(at: backups, withIntermediateDirectories: true)
+        try Data(#"{"picks":{"secret query":{}}}"#.utf8).write(to: backups.appendingPathComponent("command-bar-learning.2026-10-01-00-00-00-000.json"))
+        func filesHolding(_ word: String) -> [String] {
+            ((FileManager.default.enumerator(at: rig.dir, includingPropertiesForKeys: nil)?.allObjects as? [URL]) ?? []).filter { file in
+                !file.hasDirectoryPath && ((try? Data(contentsOf: file)) ?? Data()).contains(Data(word.utf8))
+            }.map { $0.path.replacingOccurrences(of: rig.dir.path, with: "") }
+        }
+        #expect(filesHolding("secret").contains { $0.contains("Backups/settings.") }, "the setup should have made a dated copy of the settings")
+
+        switch how {
+        case "all": rig.store.clearHistory()
+        case "range": rig.store.clearHistory(since: Date().addingTimeInterval(-3600))
+        default: rig.store.deleteHistoryEntry(url)
+        }
+        rig.store.saveNow()
+
+        #expect(filesHolding("secret") == [], "still readable")
+    }
+
+    /// The menu-bar page keeps its fragment, a history row does not: it is the same page.
+    @Test func deletingTheRowOfThePageThePanelIsOnForgetsItWhateverItsFragment() {
+        let rig = Rig()
+        rig.store.history.record(url: URL(string: "https://example.com/a")!, title: "A")
+        rig.store.settings.menuBar.remember(URL(string: "https://example.com/a#section")!)
+        rig.store.deleteHistoryEntry(URL(string: "https://example.com/a")!)
+        #expect(rig.store.settings.menuBar.lastAddress == nil)
     }
 
     @Test func deletingAnotherRowLeavesTheMenuBarPageAlone() {

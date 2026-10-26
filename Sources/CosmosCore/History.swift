@@ -60,6 +60,9 @@ public final class HistoryStore: @unchecked Sendable {
             """)
     }
 
+    /// The address a page is kept under: web pages only, and the same page with or without a fragment is one row.
+    public static func address(for url: URL) -> String? { key(url) }
+
     private static func key(_ url: URL) -> String? {
         guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return nil }
         var c = URLComponents(url: url, resolvingAgainstBaseURL: false)

@@ -109,6 +109,45 @@ struct EmptyPanelMessage: View {
 
 // MARK: - History
 
+/// What "Clear…" can clear. Every choice asks first: none of them can be undone, and each takes more than the pages with it.
+private enum HistoryRange: CaseIterable {
+    case lastHour, today, lastWeek, all
+
+    var menuTitle: String {
+        switch self {
+        case .lastHour: "Last Hour…"
+        case .today: "Today…"
+        case .lastWeek: "Last 7 Days…"
+        case .all: "All History…"
+        }
+    }
+
+    /// Where the range starts; nil for everything.
+    var since: Date? {
+        switch self {
+        case .lastHour: Date().addingTimeInterval(-3600)
+        case .today: Calendar.current.startOfDay(for: Date())
+        case .lastWeek: Date().addingTimeInterval(-7 * 86400)
+        case .all: nil
+        }
+    }
+
+    var question: String {
+        switch self {
+        case .lastHour: "Clear the last hour of history?"
+        case .today: "Clear today's history?"
+        case .lastWeek: "Clear the last 7 days of history?"
+        case .all: "Clear all history?"
+        }
+    }
+
+    var detail: String {
+        self == .all
+            ? "Visited pages, what the Command Bar learned from them, saved site icons and the page the menu bar browser was on are removed. Closed tabs in the Archive are kept. This can't be undone."
+            : "The pages visited then, what the Command Bar learned in that time and the page the menu bar browser was on are removed. Closed tabs in the Archive are kept. This can't be undone."
+    }
+}
+
 struct HistoryPanel: View {
     let store: BrowserStore
     let window: WindowState
@@ -116,21 +155,20 @@ struct HistoryPanel: View {
     @Local private var query = ""
     @Local private var entries: [HistoryEntry] = []
     @Local private var revision = 0
-    @Local private var confirmingAll = false
+    @Local private var pendingRange: HistoryRange?
 
     var body: some View {
         PanelFrame(title: "History", symbol: "clock.fill", width: 700, height: 560, close: { window.overlay = nil }, accessory: {
             Menu("Clear…") {
-                Button("Last Hour") { store.clearHistory(since: Date().addingTimeInterval(-3600)); revision += 1 }
-                Button("Today") { store.clearHistory(since: Calendar.current.startOfDay(for: Date())); revision += 1 }
-                Button("Last 7 Days") { store.clearHistory(since: Date().addingTimeInterval(-7 * 86400)); revision += 1 }
-                Divider()
-                Button("All History…") { confirmingAll = true }
+                ForEach(HistoryRange.allCases, id: \.self) { range in
+                    if range == .all { Divider() }
+                    Button(range.menuTitle) { pendingRange = range }
+                }
             }
             .menuStyle(.borderlessButton).fixedSize().font(.system(size: 11.5, weight: .medium))
         }) {
             VStack(spacing: 0) {
-                if confirmingAll { clearAllConfirmation }
+                if let range = pendingRange { clearConfirmation(for: range) }
                 PanelSearchField(text: $query, prompt: "Search history").padding(12)
                 if entries.isEmpty {
                     EmptyPanelMessage(symbol: "clock", title: query.isEmpty ? "No history yet" : "No matches")
@@ -154,19 +192,19 @@ struct HistoryPanel: View {
         }
     }
 
-    /// Clearing everything is not undone, and it takes more than the visited pages with it, so it asks first.
-    private var clearAllConfirmation: some View {
+    /// Clearing is not undone, and it takes more than the visited pages with it, so it asks first.
+    private func clearConfirmation(for range: HistoryRange) -> some View {
         HStack(spacing: 10) {
-            Text("Clear all history? Visited pages, what the Command Bar learned from them, saved site icons and the page the menu bar browser was on are removed. This can't be undone.")
+            Text("\(range.question) \(range.detail)")
                 .font(.system(size: 12)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 8)
-            ActionButton(title: "Cancel", kind: .quiet) { confirmingAll = false }
-            ActionButton(title: "Clear History", kind: .destructive) { store.clearHistory(); revision += 1; confirmingAll = false }
+            ActionButton(title: "Cancel", kind: .quiet) { pendingRange = nil }
+            ActionButton(title: "Clear History", kind: .destructive) { store.clearHistory(since: range.since); revision += 1; pendingRange = nil }
         }
         .padding(.horizontal, 16).padding(.vertical, 10)
-        .background(palette.hoverStrong)
+        .overlay(alignment: .bottom) { Rectangle().fill(palette.stroke).frame(height: 0.5) }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Confirm clearing all history")
+        .accessibilityLabel("Confirm clearing history")
     }
 
     private var grouped: [(String, [HistoryEntry])] {

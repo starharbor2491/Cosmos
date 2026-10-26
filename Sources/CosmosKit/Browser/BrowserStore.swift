@@ -92,7 +92,8 @@ public final class BrowserStore: TabHost {
             let bo = JSONFileStore<BoostLibrary>(url: directory.appendingPathComponent("boosts.json"))
             let ro = JSONFileStore<LinkRouting>(url: directory.appendingPathComponent("link-routing.json"), backupInterval: 6 * 3600)
             let se = JSONFileStore<Settings>(url: directory.appendingPathComponent("settings.json"), backupInterval: 6 * 3600)
-            let le = JSONFileStore<LearnedSelections>(url: directory.appendingPathComponent("command-bar-learning.json"), backupInterval: 24 * 3600)
+            // What the Command Bar learned is a cache of habits: no dated copies, they would only keep what was typed.
+            let le = JSONFileStore<LearnedSelections>(url: directory.appendingPathComponent("command-bar-learning.json"), keepBackups: 0)
             workspaceFile = ws; archiveFile = ar; boostsFile = bo; routingFile = ro; settingsFile = se; learnedFile = le
             sessionFile = JSONFileStore<SessionState>(url: directory.appendingPathComponent("session.json"), backupInterval: 24 * 3600, keepBackups: 3)
 
@@ -109,7 +110,11 @@ public final class BrowserStore: TabHost {
             boosts = ((try? bo.load()) ?? nil) ?? BoostLibrary()
             linkRouting = ((try? ro.load()) ?? nil) ?? LinkRouting()
             settings = ((try? se.load()) ?? nil) ?? Settings()
-            learned = ((try? le.load()) ?? nil) ?? LearnedSelections()
+            var loadedLearning = ((try? le.load()) ?? nil) ?? LearnedSelections()
+            // Dated copies an earlier version made, and the typed things it kept, go on the first launch.
+            le.deleteBackups()
+            if loadedLearning.dropUnlearnable() { try? le.rewriteDiscardingBackups(loadedLearning) }
+            learned = loadedLearning
             savedSession = (try? sessionFile?.load()) ?? nil
             history = (try? HistoryStore(path: directory.appendingPathComponent("history.sqlite").path)) ?? (try! HistoryStore(path: nil))
             favicons = FaviconStore(directory: directory.appendingPathComponent("Favicons", isDirectory: true))
@@ -174,6 +179,7 @@ public final class BrowserStore: TabHost {
             favicons.removeAll()
         }
         settings.menuBar.lastAddress = nil
+        forgetInSavedFiles()
         onHistoryCleared?()
     }
 
@@ -181,12 +187,25 @@ public final class BrowserStore: TabHost {
     /// other page or tab needs it, and the menu-bar page when that is the one.
     public func deleteHistoryEntry(_ url: URL) {
         history.delete(url: url)
-        let address = url.absoluteString
-        learned.forget(candidateIDs: ["hist:\(address)", "url:\(address)"])
+        let before = learned
+        learned.forget(candidateIDs: ["hist:\(url.absoluteString)", HistoryStore.address(for: url).map { "hist:\($0)" } ?? ""])
         dropUnusedLogos()
-        guard settings.menuBar.lastAddress == address else { return }
-        settings.menuBar.lastAddress = nil
-        onHistoryCleared?()
+        // The page the panel is on is that page even when its address carries a fragment the history row does not.
+        let panelIsOnIt = HistoryStore.address(for: url).map { gone in
+            settings.menuBar.lastAddress.flatMap(URL.init(string:)).flatMap(HistoryStore.address(for:)) == gone
+        } ?? false
+        if panelIsOnIt { settings.menuBar.lastAddress = nil }
+        forgetInSavedFiles(settings: panelIsOnIt, learning: learned != before)
+        if panelIsOnIt { onHistoryCleared?() }
+    }
+
+    /// The files keep dated copies of themselves, and a copy made before something was forgotten would still hold it: write
+    /// the files again now and drop the copies. (Only what could have held it: the settings carry the menu-bar page, what the
+    /// Command Bar learned carries the typed queries.)
+    private func forgetInSavedFiles(settings forgetSettings: Bool = true, learning forgetLearning: Bool = true) {
+        guard dataDirectory != nil else { return }
+        if forgetSettings { try? settingsFile?.rewriteDiscardingBackups(settings) }
+        if forgetLearning { try? learnedFile?.rewriteDiscardingBackups(learned) }
     }
 
     /// Logos are kept for the sites that have a page in the history or a tab, archived or not.
