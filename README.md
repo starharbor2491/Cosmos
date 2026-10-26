@@ -104,5 +104,5 @@ Cosmos is MIT licensed ([LICENSE](LICENSE)). It uses only Apple frameworks; ther
 
 - The registrable-domain logic uses the **Public Suffix List** (<https://publicsuffix.org>, MPL 2.0), bundled with its comments removed in `Sources/CosmosCore/Resources/public_suffix_rules.txt`.
 - **Filter lists are not included.** Cosmos downloads EasyList and EasyPrivacy (GPLv3+ / CC BY-SA 3.0, easylist.to), the Fanboy cookie list (CC BY 3.0) and, if you turn them on, uBlock Origin's lists (GPLv3) from their publishers. Settings ▸ Blocking shows each list's license.
-- Icons are Apple's SF Symbols. The app icon is drawn in code.
+- Icons are Apple's SF Symbols. The app icon and the menu-bar mark are the artwork in `cosmos icon/`.
 - Arc is a product of The Browser Company. Cosmos contains no Arc code, binaries, assets or strings; [arc-teardown/](arc-teardown/) describes Arc's behaviour from the outside.

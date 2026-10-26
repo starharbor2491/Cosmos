@@ -41,7 +41,7 @@ Other pieces:
 - **Radial menu** (`RadialSession`, `RadialMenuView`, `TabRuntime.presentRadialMenu`): the page agent reports what is under the pointer just before WebKit asks for its context menu; `CosmosWebView.willOpenMenu` hands that menu to the store, which puts a ring over the page and cancels the system menu (its items are kept alive and run when a slice is chosen). A page that handles `contextmenu` itself never asks WebKit for a menu, so it never gets a ring.
 - **Menu-bar browser** (`MenuBarBrowser`, `MenuBarSession`, `MenuBarBrowserView`): an `NSStatusItem` and a non-activating `NSPanel`. The page is a `TabRuntime` made from a profile's `ProfileEnvironment`, so it uses that profile's cookie jar, blocking rules and Boosts; its host (`MenuBarHost`) loads new-window links in place and sends what belongs in a window there.
 - **Settings** (`Settings/`): every control is drawn here (see `SettingsControls.swift`). Open dropdown lists are drawn by the window itself (`DropdownHost`), not inline.
-- **App shell** (`App/`): the app delegate (windows, link routing, key handling), the main menu (every item carries a `MenuAction`), Probe windows, Settings, the demo seed, the icon renderer and the automation harness.
+- **App shell** (`App/`): the app delegate (windows, link routing, key handling), the main menu (every item carries a `MenuAction`), Probe windows, Settings, the demo seed and the automation harness.
 
 ### Decisions worth knowing
 
