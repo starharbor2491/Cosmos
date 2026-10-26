@@ -102,7 +102,10 @@ The script is a JSON array of steps; the log goes to `script.json.log`. A snapsh
 | `space` `sidebar` `split` `peek` `closePeek` `menu` `resize` | switch space, toggle sidebar, add a split, open Peek, run a menu item, set window size |
 | `external` | open a link as if from another app (exercises link routing) |
 | `boost` `downloadsDir` | create a Boost; choose where downloads go |
-| `settings` `closeSettings` `allowlist` | show Settings on a tab (`blocking`, `extensions`, …); turn blocking off for a host |
+| `settings` `closeSettings` `allowlist` | show Settings on a tab (`blocking`, `extensions`, `radialMenu`, …); turn blocking off for a host |
+| `dropdown` `scrollSettings` | open the nth dropdown in Settings (`index`, top to bottom; -1 closes it); scroll the Settings pane `y` points, so a snapshot can show the part below the fold |
+| `setTheme` | give the current space one of the preset themes by name, to check a screen on light and dark skies |
+| `rightClick` `radial` | right-click the page at `x`,`y` as a real person would (with `flags`, `hold`); then `dump`, `hover`, `choose` or `back` on the radial menu that opened |
 | `extensions` `extensionAction` | add every extension found on this Mac, or click the nth extension button |
 | `eval` | run JavaScript in the current page and log the result |
 | `state` | log the space, overlay, tab, window and blocker state |

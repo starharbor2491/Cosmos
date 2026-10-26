@@ -3,7 +3,7 @@ import AppKit
 import CosmosCore
 
 enum SettingsTab: String, CaseIterable, Identifiable {
-    case general, sidebar, blocking, extensions, privacy, links, about
+    case general, sidebar, blocking, extensions, privacy, links, radialMenu, about
 
     var id: String { rawValue }
 
@@ -15,6 +15,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .extensions: "Extensions"
         case .privacy: "Privacy"
         case .links: "Links"
+        case .radialMenu: "Radial Menu"
         case .about: "About"
         }
     }
@@ -27,6 +28,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .extensions: "puzzlepiece.extension"
         case .privacy: "hand.raised"
         case .links: "arrow.triangle.branch"
+        case .radialMenu: "chart.pie"
         case .about: "sparkles"
         }
     }
@@ -200,6 +202,7 @@ struct SettingsView: View {
         case .extensions: ExtensionsPane(store: store, model: model)
         case .privacy: PrivacyPane(store: store, model: model)
         case .links: LinksPane(store: store)
+        case .radialMenu: RadialPane(store: store)
         case .about: AboutPane(store: store)
         }
     }
