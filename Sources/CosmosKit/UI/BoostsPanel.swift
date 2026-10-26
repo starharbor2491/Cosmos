@@ -135,7 +135,7 @@ struct BoostsPanel: View {
     private func header(_ boost: Binding<Boost>) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
-                TextField("Name", text: boost.name)
+                PromptTextField(text: boost.name, prompt: "Name")
                     .textFieldStyle(.plain).font(.system(size: 16, weight: .semibold)).foregroundStyle(palette.text)
                 Toggle("", isOn: boost.isEnabled).toggleStyle(.switch).labelsHidden().tint(palette.accent)
                 Button(role: .destructive) {
@@ -148,9 +148,10 @@ struct BoostsPanel: View {
             }
             HStack(spacing: 8) {
                 Image(systemName: "globe").font(.system(size: 11)).foregroundStyle(palette.tertiary)
-                TextField("example.com, *.example.org", text: Binding(
+                PromptTextField(text: Binding(
                     get: { boost.wrappedValue.hostPatterns.joined(separator: ", ") },
-                    set: { boost.wrappedValue.hostPatterns = $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }))
+                    set: { boost.wrappedValue.hostPatterns = $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }),
+                                prompt: "example.com, *.example.org")
                     .textFieldStyle(.plain).font(.system(size: 12.5, design: .monospaced)).foregroundStyle(palette.secondary)
             }
         }
@@ -172,7 +173,7 @@ private struct BoostListRow: View {
                 Text(boost.hostPatterns.joined(separator: ", ")).font(.system(size: 11)).foregroundStyle(palette.tertiary).lineLimit(1)
             }
             Spacer()
-            if matchesCurrent { Image(systemName: "eye.fill").font(.system(size: 10)).foregroundStyle(palette.accent).help("Applies to the page you're on") }
+            if matchesCurrent { Image(systemName: "eye.fill").font(.system(size: 10)).foregroundStyle(palette.accentGlyph).help("Applies to the page you're on") }
         }
         .padding(.horizontal, 10).padding(.vertical, 7)
         .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(selected ? palette.selected : .clear))
@@ -208,7 +209,7 @@ private struct ColorsTab: View {
             .toggleStyle(.switch).tint(palette.accent)
             BoostSlider(title: "Zoom", value: Binding(get: { boost.zoom ?? 1 }, set: { boost.zoom = abs($0 - 1) < 0.01 ? nil : $0 }), range: 0.5...2.5)
             Button("Reset Colors") { boost.colorFilter = nil }
-                .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(palette.accent)
+                .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(palette.accentText)
                 .disabled(boost.colorFilter == nil)
         }
         .foregroundStyle(palette.text)

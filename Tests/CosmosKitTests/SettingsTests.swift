@@ -192,3 +192,40 @@ import Testing
         }
     }
 }
+
+/// Settings has no overlays of its own: "Show Welcome" has to show it in a browser window, in front of Settings.
+@MainActor
+@Suite struct PresentOverlayTests {
+    @Test func theAppIsAskedToShowItWhenItHasAHook() {
+        let rig = Rig(seed: true)
+        var shown: [Overlay] = []
+        rig.store.onPresent = { shown.append($0) }
+        rig.store.present(.welcome)
+        #expect(shown == [.welcome])
+        #expect(rig.window.overlay == nil)
+    }
+
+    @Test func withoutAHookTheActiveWindowShowsIt() {
+        let rig = Rig(seed: true)
+        rig.store.activeWindow = rig.window
+        rig.store.present(.welcome)
+        #expect(rig.window.overlay == .welcome)
+    }
+}
+
+/// The Welcome screen's main button says what it does: "Start Fresh" before anything is brought over, "Start Exploring"
+/// after, and "Done" when Welcome is being looked at again after setup.
+@Suite struct WelcomeTitleTests {
+    @Test func firstRunWithNothingImportedStartsFresh() {
+        #expect(WelcomeView.doneTitle(imported: false, setUpBefore: false) == "Start Fresh")
+    }
+
+    @Test func firstRunAfterAnImportStartsExploring() {
+        #expect(WelcomeView.doneTitle(imported: true, setUpBefore: false) == "Start Exploring")
+    }
+
+    @Test func openedAgainLaterItIsJustDone() {
+        #expect(WelcomeView.doneTitle(imported: false, setUpBefore: true) == "Done")
+        #expect(WelcomeView.doneTitle(imported: true, setUpBefore: true) == "Done")
+    }
+}

@@ -216,157 +216,54 @@ struct SegmentedControl<Value: Hashable>: View {
     }
 }
 
-/// A choice from a longer list. The list opens in place, under the field, instead of in a system menu. While it is open
-/// the arrow keys move through it, Return or Space picks, Esc closes it, and so does a click anywhere else.
+/// A choice from a longer list. The list opens under the field in the Settings window's own layer (see
+/// DropdownHost.swift), not in a system menu. While it is open the arrow keys move through it, Return or Space picks,
+/// Esc closes it, and so does a click anywhere else.
 struct Dropdown<Value: Hashable>: View {
     @Binding var selection: Value
     let options: [Option<Value>]
     var label: String?
     var width: CGFloat = 232
-    @Local private var open = false
-    @Local private var highlight: Int?
+    @Local private var id = UUID()
     @Environment(\.palette) private var palette
-    @Environment(\.haptics) private var haptics
+    @Environment(\.dropdownHost) private var host
     @Environment(\.settingTitle) private var rowTitle
 
     private var selectedLabel: String { options.first { $0.value == selection }?.label ?? "" }
     private var selectedIndex: Int? { options.firstIndex { $0.value == selection } }
+    private var open: Bool { host?.isOpen(id) == true }
 
-    private func setOpen(_ on: Bool) {
-        highlight = on ? selectedIndex : nil
-        withAnimation(Motion.standard) { open = on }
-    }
-
-    private func choose(_ index: Int) {
-        guard options.indices.contains(index) else { return }
-        selection = options[index].value
-        setOpen(false)
-    }
-
-    private func move(_ delta: Int) {
+    private func toggle() {
+        guard let host else { return }
+        if host.isOpen(id) { host.close(); return }
         guard !options.isEmpty else { return }
-        guard open else { setOpen(true); return }
-        let next = min(max((highlight ?? selectedIndex ?? 0) + delta, 0), options.count - 1)
-        if next != highlight { haptics?.alignment() }
-        highlight = next
-    }
-
-    /// Keys while the list is open; returns whether the key was used up.
-    private func handle(_ key: ListKey) -> Bool {
-        switch key {
-        case .down: move(1); return true
-        case .up: move(-1); return true
-        case .escape: setOpen(false); return true
-        case .commit:
-            if let highlight { choose(highlight) } else { setOpen(false) }
-            return true
-        case .leave: setOpen(false); return false
-        }
+        host.present(.init(id: id, labels: options.map(\.label), selected: selectedIndex, width: width,
+                           choose: { [options] index in if options.indices.contains(index) { selection = options[index].value } }))
     }
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: Metrics.Space.xs) {
-            TapTarget(label: label ?? rowTitle, scale: 0.985, feel: .step, action: { setOpen(!open) }) { state in
-                HStack(spacing: Metrics.Space.s) {
-                    Text(selectedLabel).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold)).foregroundStyle(palette.tertiary)
-                        .rotationEffect(.degrees(open ? 180 : 0))
-                }
-                .foregroundStyle(palette.text)
-                .padding(.horizontal, Metrics.Space.m)
-                .frame(width: width, height: Metrics.Control.height)
-                .background(RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous).fill(state.hover || open ? palette.hoverStrong : palette.hover))
-                .overlay(RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous).strokeBorder(open ? palette.accent.opacity(0.8) : palette.stroke, lineWidth: open ? 1.2 : 0.8))
-                .focusRing(state.focused, radius: Metrics.Radius.control, palette: palette)
+        TapTarget(label: label ?? rowTitle, scale: 0.985, feel: .step, action: toggle) { state in
+            HStack(spacing: Metrics.Space.s) {
+                Text(selectedLabel).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold)).foregroundStyle(palette.tertiary)
+                    .rotationEffect(.degrees(open ? 180 : 0))
             }
-            .accessibilityValue("\(selectedLabel), \(open ? "expanded" : "collapsed")")
-
-            if open {
-                VStack(spacing: 2) {
-                    ForEach(Array(options.enumerated()), id: \.element.id) { index, option in
-                        let selected = option.value == selection
-                        TapTarget(label: option.label, scale: 0.985, feel: .step, action: { choose(index) }) { state in
-                            HStack {
-                                Text(option.label).font(.system(size: 13, weight: selected ? .semibold : .medium)).lineLimit(1)
-                                Spacer(minLength: 0)
-                                if selected { Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(palette.accentText) }
-                            }
-                            .foregroundStyle(palette.text)
-                            .padding(.horizontal, Metrics.Space.m)
-                            .frame(height: Metrics.Height.button)
-                            .background(RoundedRectangle(cornerRadius: Metrics.Radius.chip, style: .continuous).fill(state.hover || highlight == index ? palette.hoverStrong : .clear))
-                            .focusRing(state.focused, radius: Metrics.Radius.chip, palette: palette)
-                        }
-                        .onHover { if $0 { highlight = index } }
-                        .accessibilityAddTraits(selected ? .isSelected : [])
-                    }
-                }
-                .padding(Metrics.Space.xs)
-                .frame(width: width)
-                .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(palette.hover))
-                .overlay(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).strokeBorder(palette.stroke, lineWidth: 0.8))
-                .transition(.scale(scale: 0.96, anchor: .top).combined(with: .opacity))
-            }
+            .foregroundStyle(palette.text)
+            .padding(.horizontal, Metrics.Space.m)
+            .frame(width: width, height: Metrics.Control.height)
+            .background(RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous).fill(state.hover || open ? palette.hoverStrong : palette.hover))
+            .overlay(RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous).strokeBorder(open ? palette.accent.opacity(0.8) : palette.stroke, lineWidth: open ? 1.2 : 0.8))
+            .focusRing(state.focused, radius: Metrics.Radius.control, palette: palette)
         }
-        .onKeyPress(.downArrow) { move(1); return .handled }
-        .onKeyPress(.upArrow) { move(-1); return .handled }
-        .background(OpenListMonitor(active: open, onOutsideClick: { setOpen(false) }, onKey: handle))
-    }
-}
-
-/// The keys an open list answers to.
-enum ListKey { case up, down, escape, commit, leave }
-
-/// While `active`, watches the mouse and keyboard for a list that is open: a click outside its frame closes it (and
-/// still reaches whatever was clicked), and its keys are taken before anything else sees them. It sits behind the
-/// list's own views, so its frame is the list's frame.
-private struct OpenListMonitor: NSViewRepresentable {
-    let active: Bool
-    let onOutsideClick: () -> Void
-    let onKey: (ListKey) -> Bool
-
-    func makeNSView(context: Context) -> Watcher { Watcher() }
-
-    func updateNSView(_ view: Watcher, context: Context) {
-        view.onOutsideClick = onOutsideClick
-        view.onKey = onKey
-        view.setActive(active)
-    }
-
-    final class Watcher: NSView {
-        var onOutsideClick: (() -> Void)?
-        var onKey: ((ListKey) -> Bool)?
-        private var monitor: Any?
-
-        override func hitTest(_ point: NSPoint) -> NSView? { nil }
-
-        func setActive(_ on: Bool) {
-            if on, monitor == nil {
-                monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] event in
-                    guard let self, let window = self.window, event.window === window else { return event }
-                    if event.type == .keyDown {
-                        let key: ListKey? = switch event.keyCode {
-                        case 125: .down
-                        case 126: .up
-                        case 53: .escape
-                        case 36, 76, 49: .commit
-                        case 48: .leave
-                        default: nil
-                        }
-                        guard let key else { return event }
-                        return self.onKey?(key) == true ? nil : event
-                    }
-                    if !self.convert(self.bounds, to: nil).contains(event.locationInWindow) { self.onOutsideClick?() }
-                    return event
-                }
-            } else if !on, let monitor {
-                NSEvent.removeMonitor(monitor)
-                self.monitor = nil
-            }
-        }
-
-        deinit { if let monitor { NSEvent.removeMonitor(monitor) } }
+        .accessibilityValue("\(selectedLabel), \(open ? "expanded" : "collapsed")")
+        .onKeyPress(.downArrow) { if !open { toggle() }; return .handled }
+        .onKeyPress(.upArrow) { if !open { toggle() }; return .handled }
+        .background(GeometryReader { field in
+            Color.clear.preference(key: DropdownFrameKey.self, value: [id: field.frame(in: .named(SettingsView.coordinateSpace))])
+        })
+        .onAppear { host?.register(id, open: toggle) }
+        .onDisappear { host?.unregister(id); host?.close(ifOpen: id) }
     }
 }
 
@@ -388,8 +285,9 @@ struct ActionButton: View {
         TapTarget(label: title, enabled: enabled && !busy, scale: 0.96, action: action) { state in
             let shape = RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous)
             HStack(spacing: 6) {
-                if busy { OrbitSpinner(size: 13, color: foreground) }
-                else if let symbol { Image(systemName: symbol).font(.system(size: 12, weight: .semibold)) }
+                // The spinner takes the icon's place and size, so a button that starts working doesn't change width.
+                if busy { OrbitSpinner(size: 13, color: foreground).frame(width: 14, height: 14) }
+                else if let symbol { Image(systemName: symbol).font(.system(size: 12, weight: .semibold)).frame(width: 14, height: 14) }
                 Text(title).font(.system(size: 13, weight: .semibold))
             }
             .foregroundStyle(foreground)
@@ -571,7 +469,7 @@ struct Pane<Content: View>: View {
                 HStack(spacing: Metrics.Space.m) {
                     Image(systemName: symbol)
                         .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(palette.accent)
+                        .foregroundStyle(palette.accentGlyph)
                         .frame(width: 40, height: 40)
                         .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(palette.accent.opacity(0.16)))
                     VStack(alignment: .leading, spacing: 2) {

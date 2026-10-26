@@ -59,6 +59,8 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
     private var probes: [ProbeWindowController] = []
     var probeCount: Int { probes.count }
     private var settingsController: NSWindowController?
+    /// The open Settings window's dropdown layer, so the automation script can open a list.
+    var settingsDropdowns: DropdownHost?
     private var automation: Automation?
     private var pendingURLs: [URL] = []
     private var launched = false
@@ -170,6 +172,7 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
         store.onOpenIncognito = { [weak self] in self?.newIncognitoWindow() }
         store.onShowSettings = { [weak self] in self?.showSettings() }
         store.onShowSettingsTab = { [weak self] tab in self?.showSettings(tab: tab) }
+        store.onPresent = { [weak self] overlay in self?.present(overlay) }
         store.onOpenProbe = { [weak self, weak store] url in
             guard let self, let store else { return }
             self.openProbe(url, store: store)
@@ -210,6 +213,14 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
         c.window?.makeKeyAndOrderFront(nil)
     }
 
+    /// Shows `overlay` in the browser window the user last used, opening one if there is none, and brings it forward.
+    func present(_ overlay: Overlay) {
+        if active == nil { newWindow() }
+        guard let c = active ?? controllers.first else { return }
+        c.state.overlay = overlay
+        c.window?.makeKeyAndOrderFront(nil)
+    }
+
     func newIncognitoWindow() {
         let incognito = BrowserStore(directory: nil, incognito: true)
         wire(incognito)
@@ -245,7 +256,9 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
         win.titleVisibility = .hidden
         win.isMovableByWindowBackground = true
         win.isReleasedWhenClosed = false
-        let hosting = NSHostingView(rootView: SettingsView(store: store, tab: tab ?? .general))
+        let dropdowns = DropdownHost()
+        settingsDropdowns = dropdowns
+        let hosting = NSHostingView(rootView: SettingsView(store: store, tab: tab ?? .general, dropdowns: dropdowns))
         // The window keeps the size it is given instead of growing to its content's idea of itself.
         hosting.sizingOptions = []
         win.contentView = hosting

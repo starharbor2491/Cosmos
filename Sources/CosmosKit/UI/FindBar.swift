@@ -15,6 +15,7 @@ struct FindBar: View {
             Image(systemName: "magnifyingglass").font(.system(size: 12, weight: .medium)).foregroundStyle(palette.secondary)
             FindField(text: Binding(get: { window.findQuery }, set: { window.findQuery = $0; run(rt, backwards: false, fresh: true) }),
                       textColor: palette.isDark ? .white : .black,
+                      placeholderColor: NSColor(palette.tertiary),
                       onNext: { run(rt, backwards: false, fresh: false) },
                       onPrevious: { run(rt, backwards: true, fresh: false) },
                       onClose: { close() })
@@ -53,6 +54,8 @@ struct FindBar: View {
 private struct FindField: NSViewRepresentable {
     @Binding var text: String
     let textColor: NSColor
+    /// The system's placeholder grey all but vanishes on a themed bar, so the prompt is drawn in the hint colour.
+    let placeholderColor: NSColor
     let onNext: () -> Void
     let onPrevious: () -> Void
     let onClose: () -> Void
@@ -65,7 +68,7 @@ private struct FindField: NSViewRepresentable {
         f.drawsBackground = false
         f.focusRingType = .none
         f.font = .systemFont(ofSize: 13)
-        f.placeholderString = "Find in page"
+        f.placeholderAttributedString = NSAttributedString(string: "Find in page", attributes: [.foregroundColor: placeholderColor, .font: NSFont.systemFont(ofSize: 13)])
         f.delegate = context.coordinator
         f.stringValue = text
         DispatchQueue.main.async {

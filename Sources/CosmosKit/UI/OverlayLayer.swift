@@ -44,7 +44,7 @@ struct OverlayLayer: View {
                 Scrim(opacity: 0.30) { window.overlay = nil }
                 BoostsPanel(store: store, window: window).transition(Self.pop(from: .center))
             case .welcome:
-                Scrim(opacity: 0.45) { }
+                Scrim(opacity: 0.45) { window.overlay = nil }
                 WelcomeView(store: store, window: window).transition(Self.pop(from: .center))
             case .siteControls:
                 Scrim(opacity: 0.0) { window.overlay = nil }
@@ -66,7 +66,7 @@ struct OverlayLayer: View {
 
     private var shouldCatchEscape: Bool {
         switch window.overlay {
-        case .find, nil, .welcome, .commandBar: return false   // find and the command bar handle Esc in their own fields
+        case .find, nil, .commandBar: return false   // find and the command bar handle Esc in their own fields
         default: return true
         }
     }
@@ -141,7 +141,7 @@ struct PanelFrame<Content: View, Accessory: View>: View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 if let symbol {
-                    Image(systemName: symbol).font(.system(size: 15, weight: .semibold)).foregroundStyle(palette.accent)
+                    Image(systemName: symbol).font(.system(size: 15, weight: .semibold)).foregroundStyle(palette.accentGlyph)
                 }
                 Text(title).font(.system(size: 15, weight: .semibold)).foregroundStyle(palette.text)
                 Spacer()
@@ -178,7 +178,7 @@ struct PanelSearchField: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass").font(.system(size: 12, weight: .medium)).foregroundStyle(palette.tertiary)
-            TextField(prompt, text: $text)
+            PromptTextField(text: $text, prompt: prompt)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13.5))
                 .foregroundStyle(palette.text)
@@ -188,5 +188,22 @@ struct PanelSearchField: View {
         }
         .padding(.horizontal, 10).padding(.vertical, 7)
         .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(palette.hover))
+    }
+}
+
+/// A plain text field whose prompt is drawn in the panel's own hint colour. The system's placeholder colour is a fixed
+/// grey that all but vanishes on a themed panel (about 1.2:1), so no field in the interface uses it.
+struct PromptTextField: View {
+    @Binding var text: String
+    var prompt: String
+    @Environment(\.palette) private var palette
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            if text.isEmpty {
+                Text(prompt).foregroundStyle(palette.tertiary).lineLimit(1).allowsHitTesting(false).accessibilityHidden(true)
+            }
+            TextField("", text: $text).accessibilityLabel(prompt)
+        }
     }
 }

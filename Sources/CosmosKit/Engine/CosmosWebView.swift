@@ -8,7 +8,12 @@ public final class CosmosWebView: WKWebView {
     public override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
         super.willOpenMenu(menu, with: event)
         guard let runtime else { return }
-        MainActor.assumeIsolated { runtime.customiseContextMenu(menu) }
+        MainActor.assumeIsolated {
+            runtime.customiseContextMenu(menu)
+            // The ring stands in for the system menu, so this one is called off before it is drawn. Its items stay on
+            // the menu: the ring runs them through it when one is chosen.
+            if runtime.presentRadialMenu(menu) { menu.cancelTracking() }
+        }
     }
 
     /// Plain scroll/click events should not steal the window drag; nothing to override beyond the menu today.

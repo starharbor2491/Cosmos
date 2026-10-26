@@ -87,8 +87,8 @@ struct ToolbarButton: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: size, weight: .medium))
-                .contentTransition(.symbolEffect(.replace))
-                .symbolEffect(.bounce, value: bounce)
+                .symbolSwap()
+                .symbolBounce(value: bounce)
                 .rotationEffect(.degrees(rotation))
                 .frame(width: Metrics.Height.button, height: Metrics.Height.button)
                 .background(RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous).fill(hover && enabled ? palette.hover : .clear))
@@ -154,7 +154,7 @@ struct URLPill: View {
                     } label: {
                         Image(systemName: Self.symbol(for: url, rt: rt))
                             .font(.system(size: 11, weight: .semibold))
-                            .contentTransition(.symbolEffect(.replace))
+                            .symbolSwap()
                             .foregroundStyle(palette.tertiary)
                             .frame(width: 22, height: 22)
                             .contentShape(Rectangle())
@@ -175,7 +175,7 @@ struct URLPill: View {
                         Button { copyLink(url) } label: {
                             Image(systemName: copied ? "checkmark" : "link")
                                 .font(.system(size: 11, weight: .semibold))
-                                .contentTransition(.symbolEffect(.replace))
+                                .symbolSwap()
                                 .foregroundStyle(copied ? palette.accent : palette.secondary)
                         }
                         .buttonStyle(PressableStyle(scale: 0.85)).help("Copy Link (⇧⌘C)")
@@ -185,7 +185,7 @@ struct URLPill: View {
             }
             .padding(.horizontal, Metrics.Sidebar.inset)
             .frame(height: Metrics.Height.field)
-            .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(hover ? palette.hover.opacity(1.6) : palette.hover))
+            .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(hover ? palette.hoverStrong : palette.hover))
             .overlay(alignment: .bottom) {
                 if let rt, rt.isLoading {
                     GeometryReader { g in

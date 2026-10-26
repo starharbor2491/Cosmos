@@ -5,6 +5,14 @@ import Testing
 
 @MainActor
 @Suite struct CommandBarTests {
+    @Test func suggestionsLeaveNoCacheEntryAndSendNoCookies() {
+        let config = CommandBarModel.suggestionSession.configuration
+        #expect(config.urlCache == nil, "a cache would write what was typed to a file outside the data folder")
+        #expect(config.httpCookieStorage == nil)
+        #expect(!config.httpShouldSetCookies)
+        #expect(config.requestCachePolicy == .reloadIgnoringLocalAndRemoteCacheData)
+    }
+
     func model(_ text: String, mode: CommandBarMode = .newTab, rig: Rig) -> CommandBarModel {
         let m = CommandBarModel(store: rig.store, window: rig.window, mode: mode)
         m.textChanged(text)

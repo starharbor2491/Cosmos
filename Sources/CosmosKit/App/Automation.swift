@@ -100,6 +100,34 @@ final class Automation {
             if let s = store, let st = state, let name = step["name"] as? String, let preset = SpaceTheme.presets.first(where: { $0.name == name }) {
                 s.updateSpace(st.focusedSpaceID) { $0.theme = preset }
             }
+        case "rightClick":
+            // A right click at (x, y) in the page, measured from its top-left, as if the pointer were there.
+            if let s = store, let st = state, let web = s.currentRuntime(in: st)?.webView, let window = web.window {
+                let x = step["x"] as? Double ?? 0, y = step["y"] as? Double ?? 0
+                let local = NSPoint(x: x, y: web.isFlipped ? y : web.bounds.height - y)
+                let point = web.convert(local, to: nil)
+                let flags = NSEvent.ModifierFlags(rawValue: UInt(step["flags"] as? Int ?? 0))
+                let types: [NSEvent.EventType] = step["left"] as? Bool == true ? [.leftMouseDown, .leftMouseUp] : [.rightMouseDown, .rightMouseUp]
+                for type in types {
+                    if let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
+                                                      windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: type == .rightMouseDown || type == .leftMouseDown ? 1 : 0) {
+                        window.sendEvent(event)
+                    }
+                    if type == .rightMouseDown || type == .leftMouseDown { await sleep(step["hold"] as? Double ?? 0.05) }
+                }
+            } else { note("  rightClick: no page") }
+        case "radial":
+            // Looks at or drives the open radial menu: "dump" lists the ring, "hover" and "choose" take a slice number.
+            guard let session = state?.radial else { note("  radial: none open"); return }
+            if step["dump"] as? Bool == true {
+                note("  radial \(session.context.rawValue) depth=\(session.depth) center=\(Int(session.center.x)),\(Int(session.center.y)): " + session.ring.enumerated().map { "\($0.offset + 1)=\($0.element.title)\($0.element.isGroup ? " (+\($0.element.children.count))" : "")" }.joined(separator: " | "))
+            }
+            if let index = step["hover"] as? Int, session.ring.indices.contains(index) {
+                let at = RadialGeometry.offset(of: index, count: session.ring.count, radius: 90)
+                session.pointerMoved(to: CGPoint(x: session.center.x + at.x, y: session.center.y + at.y))
+            }
+            if let index = step["choose"] as? Int { session.choose(index) }
+            if step["back"] as? Bool == true { session.back() }
         case "sidebar":
             state?.sidebarVisible = (step["visible"] as? Bool) ?? true
         case "peek":
@@ -186,6 +214,10 @@ final class Automation {
             }
         case "settings":
             delegate?.showSettings(tab: (step["tab"] as? String).flatMap(SettingsTab.init(rawValue:)) ?? .general)
+        case "dropdown":
+            // Opens the nth dropdown in the Settings window, top to bottom, or closes the open one when `index` is -1.
+            let index = step["index"] as? Int ?? 0
+            if index < 0 { delegate?.settingsDropdowns?.close() } else { delegate?.settingsDropdowns?.openRegistered(at: index) }
         case "closeSettings":
             delegate?.settingsWindow?.close()
         case "snapshot":

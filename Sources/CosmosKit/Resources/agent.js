@@ -42,10 +42,15 @@
 
   // What is under the pointer on right click / hover (for the context menu and the status bubble).
   function linkOf(node) { while (node && node !== document) { if (node.tagName === 'A' && node.href) return node; node = node.parentNode; } return null; }
+  // Capturing, so it runs before the page's own handlers; it only reports and never calls preventDefault, so a site
+  // that draws its own right-click menu keeps it (and then WebKit shows no system menu for Cosmos to replace).
+  const editableOf = (n) => !!(n && (n.isContentEditable || (n.closest && n.closest('input:not([type=button]):not([type=submit]):not([type=checkbox]):not([type=radio]), textarea, [contenteditable=""], [contenteditable="true"]'))));
+  const mediaOf = (n) => !!(n && n.closest && n.closest('video, audio'));
   document.addEventListener('contextmenu', e => {
     const a = linkOf(e.target);
     const img = e.target && e.target.tagName === 'IMG' ? e.target.currentSrc || e.target.src : null;
-    post({ type: 'context', link: a ? a.href : null, image: img, selection: String(window.getSelection() || '').slice(0, 2000) });
+    post({ type: 'context', link: a ? a.href : null, image: img, selection: String(window.getSelection() || '').slice(0, 2000),
+           editable: editableOf(e.target), media: mediaOf(e.target), x: e.clientX, y: e.clientY });
   }, true);
   // Force Touch: pressing hard on a link opens it in Peek, like ⇧-click. Only real presses count (a page can
   // dispatch these events itself), and the system's own link preview is switched off for links.

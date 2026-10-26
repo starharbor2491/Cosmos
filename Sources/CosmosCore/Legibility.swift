@@ -91,10 +91,20 @@ public enum Legibility {
         return whiteChange <= max(inkChange * 3, 0.05) ? (forWhite, white) : (forInk, ink)
     }
 
-    /// `color` as text on `background`: unchanged when it reads, otherwise moved away from the background.
-    public static func foreground(_ color: RGBA, on background: RGBA) -> RGBA {
+    /// `color` as text (or, with a lower `minimum`, a glyph) on `background`: unchanged when it reads, otherwise moved
+    /// away from the background.
+    public static func foreground(_ color: RGBA, on background: RGBA, minimum: Double = 4.5) -> RGBA {
         let anchor = background.luminance > 0.3 ? RGBA(0, 0, 0) : RGBA(1, 1, 1)
-        return pulled(color, toward: anchor) { contrast($0, background) >= 4.5 }
+        return pulled(color, toward: anchor) { contrast($0, background) >= minimum }
+    }
+
+    /// The tint panels (Command Bar, History, Boosts…) are drawn with, over whatever the page behind them is.
+    public static func panelTint(lightInk: Bool) -> RGBA { lightInk ? RGBA(0.07, 0.06, 0.14, 0.72) : RGBA(1, 1, 1, 0.74) }
+
+    /// What a panel looks like in its worst case: its tint over the page that contrasts with it most (a white page
+    /// under a dark panel, a black one under a light panel).
+    public static func panelGround(lightInk: Bool) -> RGBA {
+        composite(panelTint(lightInk: lightInk), over: lightInk ? RGBA(1, 1, 1) : RGBA(0, 0, 0))
     }
 }
 
@@ -105,6 +115,11 @@ public extension SpaceTheme {
         let light = prefersLightForeground
         copy.colors = colors.map { Legibility.background($0, lightInk: light) }
         return copy
+    }
+
+    /// The accent as text (4.5:1) or, with a lower `minimum`, as a glyph (3:1) on a panel.
+    func accent(onPanelMinimum minimum: Double) -> RGBA {
+        Legibility.foreground(accent, on: Legibility.panelGround(lightInk: prefersLightForeground), minimum: minimum)
     }
 
     /// The stop text is hardest to read on: the lightest under light ink, the darkest under dark ink.

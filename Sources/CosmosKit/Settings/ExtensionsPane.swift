@@ -47,7 +47,7 @@ struct ExtensionsPane: View {
                 DividedRows(center.items) { item in
                     SettingRow(title: item.name, detail: ["Version \(item.version) · from \(item.origin)", center.loadErrors[item.id]].compactMap { $0 }.joined(separator: "\n")) {
                         HStack(spacing: Metrics.Space.m) {
-                            ActionButton(title: "Remove", kind: .quiet) { center.remove(item.id) }
+                            ActionButton(title: "Remove", kind: .quiet) { confirmRemove(item, from: center) }
                             SwitchControl(isOn: Binding(get: { item.enabled }, set: { center.setEnabled(item.id, $0) }), label: item.name)
                         }
                     }
@@ -75,7 +75,7 @@ struct ExtensionsPane: View {
                 }
                 HStack(spacing: Metrics.Space.s) {
                     ActionButton(title: "Choose a Folder…", symbol: "folder", kind: .secondary) { addFromFolder(center) }
-                    ActionButton(title: scanning ? "Looking…" : "Find in Arc and Other Browsers", symbol: "magnifyingglass", kind: .secondary, busy: scanning) { discover(center) }
+                    ActionButton(title: "Find in Arc and Other Browsers", symbol: "magnifyingglass", kind: .secondary, busy: scanning) { discover(center) }
                     Spacer(minLength: 0)
                 }
                 if let problem {
@@ -116,6 +116,15 @@ struct ExtensionsPane: View {
         else { message += " It will be able to:" }
         return await model.confirm(.init(title: "Add “\(summary.name)”?", message: message, bullets: summary.lines + summary.problems.prefix(3),
                                          confirmTitle: "Add Extension"))
+    }
+
+    /// Removing deletes the extension's copy inside Cosmos, so it is asked about first.
+    private func confirmRemove(_ item: InstalledExtension, from center: ExtensionCenter) {
+        Task {
+            let sure = await model.confirm(.init(title: "Remove “\(item.name)”?", message: "It stops running and its files are deleted from Cosmos. You can add it again later.",
+                                                 confirmTitle: "Remove", destructive: true))
+            if sure { center.remove(item.id) }
+        }
     }
 
     private func addFromWebStore(_ center: ExtensionCenter) {

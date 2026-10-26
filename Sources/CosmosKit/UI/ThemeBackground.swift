@@ -13,7 +13,7 @@ struct ThemeBackground: View {
                 gradient
                 glows(in: geo.size)
                 if theme.starfield > 0.01 {
-                    StarfieldView(density: theme.starfield, seed: UInt64(truncatingIfNeeded: abs(theme.name.hashValue)), animated: animated && !Motion.reduced, light: !theme.prefersLightForeground)
+                    StarfieldView(density: theme.starfield, seed: theme.starSeed, animated: animated && !Motion.reduced, light: !theme.prefersLightForeground)
                 }
                 if theme.intensity < 0.999 {
                     Color(nsColor: .windowBackgroundColor).opacity(1 - theme.intensity)

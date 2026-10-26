@@ -225,6 +225,55 @@ enum TestIcon {
         #expect(((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []).isEmpty)
     }
 
+    @Test func aDownloadStillRunningWhenHistoryIsClearedDoesNotBringTheLogoBack() async throws {
+        let png = TestIcon.png(side: 64, color: .systemPurple)
+        let server = try await SiteServer(routes: ["/": .init(type: "text/html", body: Data("<link rel=icon href=/l.png>".utf8)),
+                                                   "/l.png": .init(type: "image/png", body: png, delay: 0.8)])
+        let (store, dir) = makeStore()
+        store.ensure(url: URL(string: "http://127.0.0.1:\(server.port)/"))
+        // Wait until the logo itself has been asked for: the download is now in flight.
+        for _ in 0..<100 where !server.requests.contains("/l.png") { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(server.requests.contains("/l.png"))
+
+        store.removeAll()
+        try await Task.sleep(for: .milliseconds(1500))
+
+        #expect(store.image(forHost: "127.0.0.1") == nil)
+        #expect(((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []).isEmpty)
+    }
+
+    @Test func afterClearingALogoCanBeFetchedAgain() async throws {
+        let server = try await SiteServer(routes: ["/": html("<link rel=icon href=/l.png>"), "/l.png": image(TestIcon.png(side: 64, color: .systemTeal))])
+        let (store, _) = makeStore()
+        let url = URL(string: "http://127.0.0.1:\(server.port)/")
+        store.ensure(url: url)
+        #expect(await waitForIcon(store) != nil)
+        store.removeAll()
+        #expect(store.image(forHost: "127.0.0.1") == nil)
+        store.ensure(url: url)
+        #expect(await waitForIcon(store) != nil)
+    }
+
+    @Test func logosNobodyHasAskedForInAWhileArePrunedFromTheFolder() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-prune-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let now = Date()
+        func put(_ name: String, daysOld: Double) throws {
+            let url = dir.appendingPathComponent(name)
+            try Data("x".utf8).write(to: url)
+            try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-daysOld * 86_400)], ofItemAtPath: url.path)
+        }
+        try put("old.example.png", daysOld: 120)
+        try put("recent.example.png", daysOld: 3)
+        try put("notes.txt", daysOld: 400)
+
+        let removed = FaviconStore.prune(directory: dir, now: now)
+
+        #expect(removed == 1)
+        let left = Set(try FileManager.default.contentsOfDirectory(atPath: dir.path))
+        #expect(left == ["recent.example.png", "notes.txt"])
+    }
+
     @Test func aLogoEmbeddedInThePageIsDecoded() async throws {
         let embedded = "data:image/png;base64," + TestIcon.png(side: 48, color: .systemPink).base64EncodedString()
         let server = try await SiteServer(routes: ["/": html("<html><head><link rel=\"icon\" href=\"\(embedded)\"></head></html>")])

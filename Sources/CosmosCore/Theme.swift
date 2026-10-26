@@ -119,6 +119,12 @@ public struct SpaceTheme: Codable, Hashable, Sendable {
     public var accent: RGBA {
         colors.max { $0.hsb.s * (0.4 + $0.hsb.b) < $1.hsb.s * (0.4 + $1.hsb.b) } ?? colors[0]
     }
+
+    /// Where this sky's stars are drawn from. A fixed function of the name (FNV-1a), not `hashValue`, which Swift
+    /// changes on every launch, so the same space has the same stars every time it opens.
+    public var starSeed: UInt64 {
+        name.utf8.reduce(0xcbf29ce484222325) { ($0 ^ UInt64($1)) &* 0x100000001b3 }
+    }
 }
 
 public extension SpaceTheme {

@@ -24,6 +24,8 @@ public protocol TabHost: AnyObject {
     func tab(_ tab: TabRuntime, boostZoomFor host: String) -> Double?
     /// Remembers (or, with `nil`, forgets) what the user answered when a site asked for a permission. `key` is `host|kind`.
     func tab(_ tab: TabRuntime, remember allowed: Bool?, forPermission key: String)
+    /// Shows the radial menu for the system menu a page asked for; false leaves the system menu to be drawn.
+    func tab(_ tab: TabRuntime, showRadialMenu menu: NSMenu, context: RadialContext, center: CGPoint, windowSize: CGSize) -> Bool
 }
 
 /// One live page: owns the `WKWebView`, mirrors its state into observable properties and implements the WebKit
@@ -55,7 +57,18 @@ public final class TabRuntime: NSObject {
     public var isEphemeral = false
 
     @ObservationIgnored private var observers: [NSKeyValueObservation] = []
-    @ObservationIgnored private var context: (link: URL?, image: URL?, selection: String) = (nil, nil, "")
+    /// What was under the pointer at the last right click (the page agent reports it just before the menu is asked for).
+    @ObservationIgnored private var context = PageContext()
+
+    struct PageContext {
+        var link: URL?
+        var image: URL?
+        var selection = ""
+        var editable = false
+        var media = false
+        /// Where the click was, in the page's own pixels from its top-left; only known for the main frame.
+        var point: CGPoint?
+    }
     @ObservationIgnored private var pendingBoostZoom = true
     @ObservationIgnored private var mediaFrames: [String: Bool] = [:]
     @ObservationIgnored private var crashes = CrashLoopGuard()
@@ -204,7 +217,10 @@ public final class TabRuntime: NSObject {
             if !isAudible && !(body["video"] as? Bool ?? false) { hasPlayingVideo = false }
             host?.tabDidChange(self)
         case "context":
-            context = ((body["link"] as? String).flatMap(URL.init(string:)), (body["image"] as? String).flatMap(URL.init(string:)), body["selection"] as? String ?? "")
+            var next = PageContext(link: (body["link"] as? String).flatMap(URL.init(string:)), image: (body["image"] as? String).flatMap(URL.init(string:)),
+                                   selection: body["selection"] as? String ?? "", editable: body["editable"] as? Bool ?? false, media: body["media"] as? Bool ?? false)
+            if fromMainFrame, let x = body["x"] as? Double, let y = body["y"] as? Double, x.isFinite, y.isFinite { next.point = CGPoint(x: x, y: y) }
+            context = next
         case "hover":
             hoverURL = (body["href"] as? String).flatMap(URL.init(string:))
         case "escape":
@@ -237,14 +253,33 @@ public final class TabRuntime: NSObject {
         if let link = context.link, let at = insertAfter {
             let peek = NSMenuItem(title: "Open Link in Peek", action: #selector(menuOpenInPeek), keyEquivalent: "")
             peek.target = self
+            peek.identifier = NSUserInterfaceItemIdentifier("cosmos.openLinkInPeek")
             peek.image = NSImage(systemSymbolName: "eye", accessibilityDescription: nil)
             let split = NSMenuItem(title: "Open Link in Split View", action: #selector(menuOpenInSplit), keyEquivalent: "")
             split.target = self
+            split.identifier = NSUserInterfaceItemIdentifier("cosmos.openLinkInSplit")
             split.image = NSImage(systemSymbolName: "rectangle.split.2x1", accessibilityDescription: nil)
             menu.insertItem(split, at: at + 1)
             menu.insertItem(peek, at: at + 1)
             _ = link
         }
+    }
+
+    /// Puts the radial menu up in place of the system menu, if the settings, the site and the window allow it. Returns
+    /// whether it did, in which case the caller cancels the system menu. Holding ⌥ asks for the system menu.
+    func presentRadialMenu(_ menu: NSMenu) -> Bool {
+        guard let host, let window = webView.window, !NSEvent.modifierFlags.contains(.option), !NSWorkspace.shared.isVoiceOverEnabled else { return false }
+        let kind = RadialContext.detect(link: context.link != nil, image: context.image != nil, selection: !context.selection.isEmpty,
+                                        editable: context.editable, media: context.media)
+        // Where the pointer is, in the window's space with y down. The page reports its own click point; without one
+        // (a click in a frame, the keyboard's menu key) it is wherever the mouse is.
+        var windowPoint = window.mouseLocationOutsideOfEventStream
+        if let p = context.point {
+            let zoom = webView.pageZoom
+            windowPoint = webView.convert(NSPoint(x: p.x * zoom, y: webView.isFlipped ? p.y * zoom : webView.bounds.height - p.y * zoom), to: nil)
+        }
+        let size = window.contentView?.bounds.size ?? window.frame.size
+        return host.tab(self, showRadialMenu: menu, context: kind, center: CGPoint(x: windowPoint.x, y: size.height - windowPoint.y), windowSize: size)
     }
 
     @objc private func menuOpenInPeek() { if let l = context.link { host?.tab(self, open: l, as: .peek) } }

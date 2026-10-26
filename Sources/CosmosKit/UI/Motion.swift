@@ -20,6 +20,18 @@ enum Motion {
     static let pop: AnyTransition = .scale(scale: 0.7).combined(with: .opacity)
 }
 
+extension View {
+    /// An SF Symbol that bounces when `value` changes, unless Reduce Motion is on.
+    func symbolBounce<V: Equatable>(value: V) -> some View {
+        symbolEffect(.bounce, value: value).symbolEffectsRemoved(Motion.reduced)
+    }
+
+    /// An SF Symbol that swaps for another with a transition, or at once under Reduce Motion.
+    func symbolSwap() -> some View {
+        contentTransition(Motion.reduced ? .identity : .symbolEffect(.replace))
+    }
+}
+
 /// Shrinks slightly while pressed and springs back, so every control answers the click before the action lands.
 struct PressableStyle: ButtonStyle {
     var scale: CGFloat = 0.96

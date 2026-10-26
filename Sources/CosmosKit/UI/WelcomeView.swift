@@ -14,6 +14,18 @@ struct WelcomeView: View {
     @Local private var results: [String: String] = [:]
     @Local private var failures: [String: String] = [:]
     @Local private var defaultSet = DefaultBrowser.isDefault
+    /// Whether setup was already finished when this screen opened, which makes it a visit, not a first run.
+    @Local private var setUpBefore: Bool
+
+    init(store: BrowserStore, window: WindowState) {
+        self.store = store
+        self.window = window
+        _setUpBefore = Local(wrappedValue: store.settings.hasCompletedOnboarding)
+    }
+
+    static func doneTitle(imported: Bool, setUpBefore: Bool) -> String {
+        setUpBefore ? "Done" : (imported ? "Start Exploring" : "Start Fresh")
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -55,7 +67,7 @@ struct WelcomeView: View {
                 .disabled(defaultSet)
 
                 Button { finish() } label: {
-                    Text(results.isEmpty ? "Start Fresh" : "Start Exploring")
+                    Text(Self.doneTitle(imported: !results.isEmpty, setUpBefore: setUpBefore))
                         .font(.system(size: 14, weight: .semibold))
                         .frame(width: 220).padding(.vertical, 9)
                         .background(Capsule().fill(palette.accentFill))
@@ -72,6 +84,8 @@ struct WelcomeView: View {
         .overlay(RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous).strokeBorder(palette.stroke, lineWidth: 0.8))
         .shadow(color: palette.shadow, radius: 40, y: 16)
         .task { sources = await ImportCoordinator.sources(for: store); loaded = true }
+        // However it is closed (the button, Esc, a click outside) the first run is over.
+        .onDisappear { store.settings.hasCompletedOnboarding = true }
     }
 
     private func run(_ source: ImportSource) {
@@ -108,7 +122,7 @@ private struct ImportRow: View {
         HStack(spacing: 12) {
             Image(systemName: source.symbol)
                 .font(.system(size: 17, weight: .medium))
-                .foregroundStyle(palette.accent)
+                .foregroundStyle(palette.accentGlyph)
                 .frame(width: 38, height: 38)
                 .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(palette.accent.opacity(0.16)))
             VStack(alignment: .leading, spacing: 2) {
@@ -121,7 +135,7 @@ private struct ImportRow: View {
             if running {
                 ProgressView().controlSize(.small)
             } else if result != nil {
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(palette.accent).font(.system(size: 18))
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(palette.accentGlyph).font(.system(size: 18))
             } else {
                 Button(action: action) {
                     Text(source.isAvailable ? "Import" : "Choose…")

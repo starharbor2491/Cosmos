@@ -12,7 +12,9 @@ import Testing
         ("user:pass@host.example:8080/path", "host.example"),
         ("localhost", "localhost"),
         ("192.168.1.10:3000", "192.168.1.10"),
-        ("münchen.de", "münchen.de"),
+        ("münchen.de", "xn--mnchen-3ya.de"),
+        ("MÜNCHEN.de/straße", "xn--mnchen-3ya.de"),
+        ("xn--mnchen-3ya.de", "xn--mnchen-3ya.de"),
         ("docs.example.co.uk.", "docs.example.co.uk"),
     ] as [(String, String)]) func anAddressBecomesTheHostItMatches(input: String, host: String) {
         #expect(LinkRule.normalizedHost(input) == host)
@@ -29,6 +31,15 @@ import Testing
         #expect(rule.applies(to: URL(string: "https://github.com/x")!))
         #expect(rule.applies(to: URL(string: "https://gist.github.com/x")!))
         #expect(!rule.applies(to: URL(string: "https://notgithub.com/x")!))
+    }
+
+    /// `URL.host` is always the ASCII (punycode) form, so that is the form a rule has to hold to match anything.
+    @Test func aRuleForAnInternationalSiteMatchesItsLinks() throws {
+        let host = try #require(LinkRule.normalizedHost("münchen.de"))
+        let rule = LinkRule(matches: [.host(host)], destination: .mostRecentSpace)
+        #expect(rule.applies(to: URL(string: "https://münchen.de/karte")!))
+        #expect(rule.applies(to: URL(string: "https://www.xn--mnchen-3ya.de/karte")!))
+        #expect(!rule.applies(to: URL(string: "https://muenchen.de/karte")!))
     }
 
     @Test func aHugeInputIsRefusedQuickly() {

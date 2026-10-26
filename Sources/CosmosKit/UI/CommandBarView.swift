@@ -147,7 +147,7 @@ private struct CommandRow: View {
         case .command, .space, .calculation, .webSearch, .suggestion, .siteSearch:
             Image(systemName: row.symbol ?? "magnifyingglass")
                 .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(palette.accent)
+                .foregroundStyle(palette.accentGlyph)
                 .frame(width: 22, height: 22)
                 .background(RoundedRectangle(cornerRadius: Metrics.Radius.chip, style: .continuous).fill(palette.accent.opacity(0.16)))
         }

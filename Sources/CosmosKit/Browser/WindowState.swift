@@ -57,6 +57,8 @@ public final class WindowState: Identifiable {
     public var sidebarPeeking = false
     public var overlay: Overlay?
     public var peek: PeekSession?
+    /// The radial menu that is open over the page, if any.
+    public var radial: RadialSession?
     public var findQuery = ""
     public var findHadMatch = true
     public var toast: Toast?
