@@ -97,7 +97,7 @@ private struct ArchiveRow: View {
                 Button("Restore") { store.restore(entry, in: window); window.overlay = nil }
                     .buttonStyle(.plain).font(.system(size: 12, weight: .semibold)).foregroundStyle(palette.accentText)
                 Button { store.deleteArchived(entry.id) } label: { Image(systemName: "trash").font(.system(size: 11.5)) }
-                    .buttonStyle(.plain).foregroundStyle(palette.secondary)
+                    .buttonStyle(.plain).foregroundStyle(palette.secondary).accessibilityLabel("Delete archived tab")
             } else {
                 Text(entry.archivedAt, format: .relative(presentation: .named)).font(.system(size: 11.5)).foregroundStyle(palette.tertiary)
             }

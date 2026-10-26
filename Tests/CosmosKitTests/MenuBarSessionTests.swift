@@ -528,6 +528,24 @@ private final class SizedFeatures: WKWindowFeatures {
         #expect(rig.store.favicons.image(forHost: "secret-two.example") == nil)
     }
 
+    /// The words typed to find an archived tab are a pick keyed to it; removing the tab removes the pick.
+    @Test func removingFromTheArchiveForgetsWhatWasPickedForIt() throws {
+        let rig = Rig()
+        let entry = ArchivedItem(reason: .closed, spaceID: nil, items: [SidebarItem(content: .tab(TabData(url: URL(string: "https://example.com/a")!, pageTitle: "A")))])
+        let other = ArchivedItem(reason: .closed, spaceID: nil, items: [SidebarItem(content: .tab(TabData(url: URL(string: "https://example.com/b")!, pageTitle: "B")))])
+        rig.store.archive.add(entry)
+        rig.store.archive.add(other)
+        rig.store.learned.record(query: "private words", candidateID: "arch:\(entry.id)")
+        rig.store.learned.record(query: "other words", candidateID: "arch:\(other.id)")
+
+        rig.store.deleteArchived(entry.id)
+        #expect(rig.store.learned.picks["private words"] == nil)
+        #expect(rig.store.learned.picks["other words"] != nil)
+
+        rig.store.clearArchive()
+        #expect(rig.store.learned.picks.isEmpty)
+    }
+
     /// The sidebar's live file keeps the page every open tab is on, so clearing cannot rewrite it. A tab that then leaves the
     /// page it was on when history was cleared must not end up in a new copy.
     @Test func aTabThatLeavesItsPageAfterClearingIsNotListedInANewSidebarCopy() throws {

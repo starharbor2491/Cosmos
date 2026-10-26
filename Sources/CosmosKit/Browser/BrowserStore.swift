@@ -202,7 +202,9 @@ public final class BrowserStore: TabHost {
     /// could: the settings (the menu-bar page), what the Command Bar learned (the typed words) and the sidebar (the address
     /// of every tab at the time, including pages a tab has since left). The first two are written again now and their copies
     /// dropped. The sidebar's live file has to keep the pages that are open, so its copies are dropped and no new one is made
-    /// until the file has had time to move on (see `deleteBackupsAndPause`).
+    /// until the file has had time to move on (see `deleteBackupsAndPause`). A limit that is accepted: the pause lives in
+    /// memory (a relaunch starts without it) and ends after one interval, and a copy made then lists the pages that are open
+    /// then, which can include one that was open when history was cleared and has not been left since.
     private func forgetInSavedFiles() {
         guard dataDirectory != nil else { return }
         try? settingsFile?.rewriteDiscardingBackups(settings)
@@ -213,6 +215,9 @@ public final class BrowserStore: TabHost {
     /// Removes one archived tab (every one for nil), and the dated copies of the archive that still list it.
     /// The closed tab's address is in the sidebar's copies from when it was open and its logo is cached for its site.
     func removeFromArchive(_ id: UUID?) {
+        // What was typed to find them goes too (the file keeps no copies, so it needs no rewrite).
+        let removed = id.map { [$0] } ?? archive.entries.map(\.id)
+        learned.forget(candidateIDs: Set(removed.map { "arch:\($0)" }))
         if let id { archive.remove(id) } else { archive.entries.removeAll() }
         dropUnusedLogos()
         guard dataDirectory != nil else { return }
