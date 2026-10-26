@@ -31,7 +31,7 @@ struct BrowserRootView: View {
         }
         .environment(\.palette, palette)
         .environment(\.haptics, store.haptics)
-        .animation(.easeInOut(duration: 0.45), value: space.id)
+        .animation(Motion.glide, value: space.id)
         .animation(Motion.standard, value: window.sidebarVisible)
         .animation(Motion.quick, value: window.overlay)
         .preferredColorScheme(palette.isDark ? .dark : .light)
@@ -145,7 +145,7 @@ struct StatusBubble: View {
             }
         }
         .allowsHitTesting(false)
-        .animation(.easeOut(duration: 0.12), value: text)
+        .animation(Motion.quick, value: text)
     }
 }
 
@@ -173,7 +173,7 @@ struct ToastView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: window.toast)
+        .animation(Motion.spring, value: window.toast)
     }
 }
 
@@ -210,8 +210,8 @@ struct EmptyStateView: View {
                         Label("Import from Arc…", systemImage: "arrow.down.doc")
                             .font(.system(size: 13, weight: .semibold))
                             .padding(.horizontal, 16).padding(.vertical, 8)
-                            .background(Capsule().fill(palette.accent.opacity(0.9)))
-                            .foregroundStyle(.white)
+                            .background(Capsule().fill(palette.accentFill))
+                            .foregroundStyle(palette.onAccent)
                     }
                     .buttonStyle(.plain)
                     .padding(.top, 6)
@@ -322,7 +322,7 @@ struct SidebarRevealLayer: View {
                     }
             }
         }
-        .animation(.easeOut(duration: 0.18), value: window.sidebarPeeking)
+        .animation(Motion.quick, value: window.sidebarPeeking)
     }
 }
 

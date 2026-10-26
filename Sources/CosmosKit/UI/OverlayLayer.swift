@@ -9,6 +9,15 @@ struct OverlayLayer: View {
     @Environment(\.palette) private var palette
 
     var body: some View {
+        GeometryReader { geo in
+            panels
+                .frame(width: geo.size.width, height: geo.size.height)
+                .environment(\.overlayBounds, geo.size)
+        }
+        .background(OverlayEscapeCatcher(active: shouldCatchEscape) { window.overlay = nil })
+    }
+
+    private var panels: some View {
         ZStack {
             switch window.overlay {
             case .commandBar:
@@ -47,7 +56,6 @@ struct OverlayLayer: View {
                 EmptyView()
             }
         }
-        .background(OverlayEscapeCatcher(active: shouldCatchEscape) { window.overlay = nil })
     }
 
     /// A panel grows out of where it was asked for: the Command Bar from the top, Site Controls from the address pill,
@@ -61,6 +69,16 @@ struct OverlayLayer: View {
         case .find, nil, .welcome, .commandBar: return false   // find and the command bar handle Esc in their own fields
         default: return true
         }
+    }
+}
+
+private struct OverlayBoundsKey: EnvironmentKey { static let defaultValue = CGSize.zero }
+
+extension EnvironmentValues {
+    /// The window area panels are laid out in, so one that is bigger than a small window can shrink to fit.
+    var overlayBounds: CGSize {
+        get { self[OverlayBoundsKey.self] }
+        set { self[OverlayBoundsKey.self] = newValue }
     }
 }
 
@@ -117,6 +135,7 @@ struct PanelFrame<Content: View, Accessory: View>: View {
     @ViewBuilder var accessory: () -> Accessory
     @ViewBuilder var content: () -> Content
     @Environment(\.palette) private var palette
+    @Environment(\.overlayBounds) private var bounds
 
     var body: some View {
         VStack(spacing: 0) {
@@ -133,8 +152,8 @@ struct PanelFrame<Content: View, Accessory: View>: View {
             Rectangle().fill(palette.stroke).frame(height: 0.5)
             content()
         }
-        .frame(width: width)
-        .frame(height: height)
+        .frame(width: Metrics.panelSize(width, within: bounds.width))
+        .frame(height: height.map { Metrics.panelSize($0, within: bounds.height) })
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous))
         .background(RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous).fill(palette.panel))
         .clipShape(RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous))

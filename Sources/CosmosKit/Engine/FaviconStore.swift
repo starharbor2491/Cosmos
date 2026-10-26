@@ -4,6 +4,7 @@ import CosmosCore
 /// Site logos, cached per host in memory and on disk. A page reports its icon links when it loads; for tabs that are
 /// asleep (pinned, restored, imported) the store asks the site itself. Icons are always fetched straight from the site,
 /// never through a favicon service, and the request names only the site's origin, never the page you were on.
+/// With no directory the store keeps icons in memory only (incognito): nothing about the sites visited reaches the disk.
 @MainActor
 @Observable
 public final class FaviconStore {
@@ -27,7 +28,7 @@ public final class FaviconStore {
     @ObservationIgnored private var failed: [String: Date] = [:]
     /// Hosts whose logo was confirmed recently (this session), so navigating around a site doesn't re-download it.
     @ObservationIgnored private var checked: [String: Date] = [:]
-    @ObservationIgnored private let directory: URL
+    @ObservationIgnored private let directory: URL?
     @ObservationIgnored private let session: URLSession
     /// Set by the app for `--offline` runs; nothing is downloaded while it is true.
     @ObservationIgnored var offline: Bool
@@ -36,22 +37,25 @@ public final class FaviconStore {
     private static let maxAge: TimeInterval = 14 * 24 * 3600
     nonisolated private static let maxSide = 128
 
+    /// - Parameter directory: where icons are cached; `nil` keeps them in memory only.
     /// - Parameter offline: never touch the network (demos and automated runs); only icons already on disk are shown.
-    public init(directory: URL = CosmosPaths.dataDirectory.appendingPathComponent("Favicons", isDirectory: true), offline: Bool = false) {
+    public init(directory: URL? = CosmosPaths.dataDirectory.appendingPathComponent("Favicons", isDirectory: true), offline: Bool = false) {
         self.directory = directory
         self.offline = offline
         let cfg = URLSessionConfiguration.ephemeral
         cfg.timeoutIntervalForRequest = 8
+        // The request timeout restarts whenever a byte arrives, so a server dripping data would hold a slot forever.
+        cfg.timeoutIntervalForResource = 15
         cfg.httpCookieStorage = nil
         cfg.httpAdditionalHeaders = ["User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15 Cosmos"]
         session = URLSession(configuration: cfg)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if let directory { try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
     }
 
     private func key(_ host: String) -> String { host.lowercased().replacingOccurrences(of: "www.", with: "", options: .anchored) }
 
-    private func file(for key: String) -> URL {
-        directory.appendingPathComponent(key.replacingOccurrences(of: "/", with: "_") + ".png")
+    private func file(for key: String) -> URL? {
+        directory?.appendingPathComponent(key.replacingOccurrences(of: "/", with: "_") + ".png")
     }
 
     // MARK: Reading
@@ -62,7 +66,7 @@ public final class FaviconStore {
         guard let host, !host.isEmpty else { return nil }
         let k = key(host)
         if let img = memory[k] { return img }
-        if let img = NSImage(contentsOf: file(for: k)) { remember(img, key: k); return img }
+        if let file = file(for: k), let img = NSImage(contentsOf: file) { remember(img, key: k); return img }
         return nil
     }
 
@@ -99,7 +103,8 @@ public final class FaviconStore {
     }
 
     private func hasFreshFile(_ k: String) -> Bool {
-        guard let modified = (try? FileManager.default.attributesOfItem(atPath: file(for: k).path))?[.modificationDate] as? Date else { return false }
+        guard let file = file(for: k),
+              let modified = (try? FileManager.default.attributesOfItem(atPath: file.path))?[.modificationDate] as? Date else { return false }
         return Date().timeIntervalSince(modified) < Self.maxAge
     }
 
@@ -135,7 +140,7 @@ public final class FaviconStore {
         inFlight.remove(k)
         if let data, let image = NSImage(data: data) {
             remember(image, key: k)
-            try? data.write(to: file(for: k), options: .atomic)
+            if let file = file(for: k) { try? data.write(to: file, options: .atomic) }
             checked[k] = Date()
             failed[k] = nil
             revision += 1
@@ -183,11 +188,28 @@ public final class FaviconStore {
         var seen = Set<URL>()
         let ranked = candidates.filter { seen.insert($0.href).inserted }.sorted { score($0) > score($1) }
         for c in ranked.prefix(3) {
-            guard let (data, response) = try? await session.data(from: c.href) else { continue }
-            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) { continue }
+            guard let data = await download(c.href, limit: maxIconBytes, session: session) else { continue }
             if let png = normalizedPNG(from: data) { return png }
         }
         return nil
+    }
+
+    nonisolated static let maxIconBytes = 2_000_000
+
+    /// The body of `url`, or nil when the request fails or the body is bigger than `limit`. Stops reading at the limit
+    /// instead of buffering a response nobody can use.
+    nonisolated static func download(_ url: URL, limit: Int, session: URLSession) async -> Data? {
+        guard let (bytes, response) = try? await session.bytes(from: url) else { return nil }
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) { return nil }
+        if response.expectedContentLength > Int64(limit) { return nil }
+        var data = Data()
+        do {
+            for try await byte in bytes {
+                data.append(byte)
+                if data.count > limit { return nil }
+            }
+        } catch { return nil }
+        return data
     }
 
     /// Prefers ~64 px icons: crisp in the sidebar on retina screens without being huge.
@@ -203,28 +225,12 @@ public final class FaviconStore {
 
     // MARK: Parsing and decoding
 
-    nonisolated(unsafe) private static let linkTag = try! NSRegularExpression(pattern: #"<link\b[^>]*>"#, options: .caseInsensitive)
-    nonisolated(unsafe) private static let attribute = try! NSRegularExpression(pattern: #"([a-zA-Z][a-zA-Z0-9_:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))"#)
-
     /// Icon links (`rel` containing "icon") in the head of `html`, in page order, resolved against `base`.
     nonisolated static func iconLinks(inHTML html: String, base: URL) -> [Candidate] {
         var head = html
         if let end = html.range(of: "</head", options: .caseInsensitive) { head = String(html[..<end.lowerBound]) }
-        // A tag that never closes cannot match, but the pattern would still scan to the end from every "<link"; past the
-        // last ">" there is nothing it could match, so leave that part out.
-        guard let lastClose = head.lastIndex(of: ">") else { return [] }
-        head = String(head[...lastClose])
-        let whole = NSRange(head.startIndex..., in: head)
         var out: [Candidate] = []
-        for tag in linkTag.matches(in: head, range: whole) {
-            guard let tagRange = Range(tag.range, in: head) else { continue }
-            let text = String(head[tagRange])
-            var attrs: [String: String] = [:]
-            for m in attribute.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
-                guard let name = Range(m.range(at: 1), in: text).map({ text[$0].lowercased() }) else { continue }
-                let value = (2...4).lazy.compactMap { Range(m.range(at: $0), in: text).map { String(text[$0]) } }.first ?? ""
-                attrs[name] = value
-            }
+        for attrs in linkTags(in: head) {
             guard let rel = attrs["rel"]?.lowercased(), rel.contains("icon"),
                   let href = attrs["href"]?.replacingOccurrences(of: "&amp;", with: "&").trimmingCharacters(in: .whitespacesAndNewlines), !href.isEmpty,
                   let url = URL(string: href, relativeTo: base)?.absoluteURL,
@@ -234,10 +240,63 @@ public final class FaviconStore {
         return out
     }
 
+    /// The attributes of every `<link>` tag, names lowercased, in page order. One pass over the bytes: a page is
+    /// untrusted, and a pattern that retries from every letter of one very long tag takes seconds on the main actor.
+    nonisolated private static func linkTags(in html: String) -> [[String: String]] {
+        let b = Array(html.utf8)
+        let lt = UInt8(ascii: "<"), gt = UInt8(ascii: ">"), slash = UInt8(ascii: "/"), equals = UInt8(ascii: "=")
+        let quotes = [UInt8(ascii: "\""), UInt8(ascii: "'")]
+        let word = Array("link".utf8)
+        func isSpace(_ c: UInt8) -> Bool { c == 0x20 || (0x09...0x0D).contains(c) }
+        func text(_ from: Int, _ to: Int) -> String { String(decoding: b[from..<to], as: UTF8.self) }
+
+        var tags: [[String: String]] = []
+        var i = 0
+        scan: while i < b.count {
+            guard b[i] == lt else { i += 1; continue }
+            i += 1
+            // "link" in either case, then something that ends the tag name.
+            guard i + 4 < b.count, (0..<4).allSatisfy({ b[i + $0] | 0x20 == word[$0] }),
+                  isSpace(b[i + 4]) || b[i + 4] == slash || b[i + 4] == gt else { continue }
+            i += 4
+            var attrs: [String: String] = [:]
+            while true {
+                while i < b.count, isSpace(b[i]) || b[i] == slash { i += 1 }
+                guard i < b.count else { break scan }
+                if b[i] == gt { i += 1; break }
+                let nameStart = i
+                while i < b.count, !isSpace(b[i]), b[i] != equals, b[i] != gt, b[i] != slash { i += 1 }
+                let name = text(nameStart, i).lowercased()
+                while i < b.count, isSpace(b[i]) { i += 1 }
+                guard i < b.count else { break scan }
+                var value = ""
+                if b[i] == equals {
+                    i += 1
+                    while i < b.count, isSpace(b[i]) { i += 1 }
+                    guard i < b.count else { break scan }
+                    if quotes.contains(b[i]) {
+                        let quote = b[i]
+                        let from = i + 1
+                        guard let close = b[from...].firstIndex(of: quote) else { break scan }
+                        value = text(from, close)
+                        i = close + 1
+                    } else {
+                        let from = i
+                        while i < b.count, !isSpace(b[i]), b[i] != gt { i += 1 }
+                        value = text(from, i)
+                    }
+                }
+                if !name.isEmpty, attrs[name] == nil { attrs[name] = value }
+            }
+            tags.append(attrs)
+        }
+        return tags
+    }
+
     /// Decodes any image the browser can (PNG, ICO, SVG…) into one PNG, at most 128 px on its long side. Anything
     /// under 8 px, or not an image, is rejected.
     nonisolated static func normalizedPNG(from data: Data) -> Data? {
-        guard data.count > 40, data.count < 2_000_000, let image = NSImage(data: data) else { return nil }
+        guard data.count > 40, data.count <= maxIconBytes, let image = NSImage(data: data) else { return nil }
         // An .ico holds several sizes; the largest one decides how sharp the result can be. Vector art has no pixel size.
         let bitmaps = image.representations.compactMap { $0 as? NSBitmapImageRep }
         var width = bitmaps.map(\.pixelsWide).max() ?? 0
@@ -298,8 +357,10 @@ public final class FaviconStore {
         backings.removeAll()
         failed.removeAll()
         checked.removeAll()
-        try? FileManager.default.removeItem(at: directory)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if let directory {
+            try? FileManager.default.removeItem(at: directory)
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
         revision += 1
     }
 

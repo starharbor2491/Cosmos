@@ -22,7 +22,7 @@ struct BlockingPane: View {
         Pane(title: "Blocking", subtitle: "Ads, trackers and cookie banners, stopped before they load.", symbol: "shield.lefthalf.filled") {
             SettingsGroup(note: "You can switch blocking off for one site from the shield in its Site Controls panel.") {
                 SettingRow(title: "Block ads and trackers", detail: summaryLine(blocker), symbol: "shield.lefthalf.filled") {
-                    HStack(spacing: Metrics.Space.s + 2) {
+                    HStack(spacing: Metrics.Space.m) {
                         if store.settings.adBlockingEnabled, let blocker {
                             ActionButton(title: "Update Now", symbol: "arrow.triangle.2.circlepath", kind: .secondary, busy: blocker.isUpdating) { blocker.updateNow() }
                         }
@@ -33,7 +33,7 @@ struct BlockingPane: View {
 
             SettingsGroup(title: "Filter lists") {
                 DividedRows(lists) { info in
-                    SettingRow(title: info.name, detail: [info.isCustom ? info.url.absoluteString : info.summary, statusLine(statuses[info.id])].compactMap { $0 }.joined(separator: "\n")) {
+                    SettingRow(title: info.name, detail: [info.isCustom ? info.url.absoluteString : info.summary, info.license.isEmpty ? nil : "License: \(info.license)", statusLine(statuses[info.id])].compactMap { $0 }.joined(separator: "\n")) {
                         HStack(spacing: Metrics.Space.s) {
                             if info.isCustom {
                                 IconButton(symbol: "trash", label: "Remove \(info.name)", destructive: true) { Task { await blocker?.removeCustomList(id: info.id) } }
@@ -46,10 +46,9 @@ struct BlockingPane: View {
                                 }), label: info.name)
                         }
                     }
-                    .help(info.license.isEmpty ? info.url.absoluteString : "License: \(info.license)")
                 }
                 .opacity(store.settings.adBlockingEnabled ? 1 : 0.45)
-                .allowsHitTesting(store.settings.adBlockingEnabled)
+                .disabled(!store.settings.adBlockingEnabled)
             }
 
             SettingsGroup(title: "Add your own list", note: "Use a web address or a file:// path to a list in the usual Adblock format.") {
@@ -60,10 +59,10 @@ struct BlockingPane: View {
                         ActionButton(title: "Add List", kind: .primary, enabled: !customURL.trimmingCharacters(in: .whitespaces).isEmpty, action: addCustomList)
                     }
                     if let addProblem {
-                        Text(addProblem).font(.system(size: 12)).foregroundStyle(Color(red: 1, green: 0.42, blue: 0.40)).transition(.opacity)
+                        Text(addProblem).font(.system(size: 12)).foregroundStyle(palette.negative).transition(.opacity)
                     }
                 }
-                .padding(Metrics.Space.m)
+                .cardInset()
                 .animation(Motion.quick, value: addProblem)
             }
 

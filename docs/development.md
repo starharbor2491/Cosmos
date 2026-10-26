@@ -16,7 +16,7 @@ The script runs `swift build`, then assembles the bundle by hand: it copies the 
 ## Test
 
 ```bash
-scripts/test.sh                              # everything, about 340 tests
+scripts/test.sh                              # everything, about 400 tests
 scripts/test.sh --filter ContentBlockerTests # a suite
 ```
 
@@ -52,7 +52,7 @@ scripts/stress.sh 7 400                      # the whole app, a throwaway demo p
 swift test --sanitize=address --scratch-path /tmp/cosmos-asan   # all tests under AddressSanitizer, in their own build folder
 ```
 
-`scripts/stress.sh` drives the real app through the automation harness (key presses, page loads including hostile ones, overlays, window sizes, Settings tabs, new and closed windows with `STRESS_WINDOWS=1`) and reports an exit code, the last step it ran and the exception if it died. The sanitizer build is slow the first time; it finds memory errors, not logic ones, and its larger stack frames also make deep recursion fail sooner (the Arc importer's folder depth cap is set with that in mind).
+`scripts/stress.sh` drives the real app through the automation harness (key presses, page loads including hostile ones, overlays, window sizes, Settings tabs, new and closed windows with `STRESS_WINDOWS=1`; the network is off unless you set `STRESS_ONLINE=1`) and reports an exit code, the last step it ran and the exception if it died. The sanitizer build is slow the first time; it finds memory errors, not logic ones, and its larger stack frames also make deep recursion fail sooner (the Arc importer's folder depth cap is set with that in mind).
 
 ## Run with a throwaway profile
 
@@ -114,13 +114,17 @@ The verbs are in `Sources/CosmosKit/App/Automation.swift`. The automation script
 
 ## Spacing and alignment
 
-Every measurement in the interface comes from `Sources/CosmosKit/UI/Metrics.swift`: a 4 pt spacing scale, five corner radii that nest concentrically, row and field heights, and one column system for the sidebar (gutter, inset, icon, gap, indent). Use a token instead of a local number.
+Every measurement in the interface is meant to come from `Sources/CosmosKit/UI/Metrics.swift`: a 4 pt spacing scale, five corner radii that nest concentrically, row and field heights, the Settings controls' one height, and one column system for the sidebar (gutter, inset, icon, gap, indent). Use a token instead of a local number. What is checked is the sidebar (below) and, for Settings, the controls' heights and insets by reading; other panels still have a few local numbers (the Boosts editor, the theme editor and the Command Bar's rows), which is where to look if something sits 2 pt off.
 
-The `spatial` automation step checks that the sidebar actually follows them. Views tagged `.spatial("name")` report their frames while an automation run is recording, and `SpatialProbe.check` applies the rules (all icons share a column, a folder's children sit under its icon, titles sit one gap after their icon, rows share edges and height, the address pill and Favorites span the rows' width, section rules reach the edge). A rule is one line in `SpatialProbe.swift`, with a test in `SpatialProbeTests` that feeds it a deliberately misaligned layout.
+The `spatial` automation step checks that the sidebar actually follows them. Views tagged `.spatial("name")` report their frames while an automation run is recording, and `SpatialProbe.check` applies the rules (all icons share a column, a folder's children sit under its icon, titles sit one gap after their icon, rows share edges and height, the address pill and Favorites span the rows' width, section rules reach the edge, folder chevrons sit in their depth's column, split panes keep the icon column, the footer's first glyph is centred on it, toolbar buttons are one square size; the last four only when they are on screen). A rule is one line in `SpatialProbe.swift`, with a test in `SpatialProbeTests` that feeds it a deliberately misaligned layout.
 
 ## Settings controls
 
-Settings (`Sources/CosmosKit/Settings/`) draws every control itself: switches, segmented choices, dropdowns that open in place, buttons, text fields, confirmation dialogs, even the focus ring (shown only while the keyboard is what you are using). They are in `SettingsControls.swift`, built from shapes and text on top of one `TapTarget` (hover, press, Return/Space, accessibility traits, a tick under the finger). `NoSystemControlsInSettingsTests` scans the folder and fails on any system `Toggle`, `Picker`, `Button`, `Form`, `TabView`, `List`, `TextField`, `Menu`, `ProgressView`, `NSAlert` or similar, so a new setting can't quietly bring one back. The only system dialog left is the file chooser for "Choose a Folder…", which has no substitute.
+Settings (`Sources/CosmosKit/Settings/`) draws its controls itself: switches, check boxes, segmented choices, dropdowns that open in place (arrow keys, Return, Esc and a click elsewhere all work), buttons, confirmation dialogs, even the focus ring (shown only while the keyboard is what you are using). They are in `SettingsControls.swift`, built from shapes and text on top of one `TapTarget` (hover, press, Return/Space, a 28 pt hit area, accessibility traits, a tick under the finger). A control with no label of its own is named after the row it sits in, so what VoiceOver says is what the row says. `NoSystemControlsInSettingsTests` scans the folder and fails on any system `Toggle`, `Picker`, `Button`, `Form`, `TabView`, `List`, `TextField`, `Menu`, `ProgressView`, `ColorPicker`, tooltip (`.help`), `NSAlert` or similar, so a new setting can't quietly bring one back. Two system pieces are left, each allowed in exactly one file: the text-editing engine inside a text field (an `NSTextField` with no border or background, because typing, selection and input methods are not worth rebuilding) and the file chooser for "Choose a Folder…". Scrolling is SwiftUI's `ScrollView` with its indicators hidden and the pane's edges fading where more content lies past them. Not verified without a screen: VoiceOver reading order and the feel of the dropdown keys.
+
+## Legibility
+
+A space's theme can be as bright as its author likes; what the window paints is adjusted so text reads on it. `Legibility` (CosmosCore) pulls each gradient stop toward black under light text, or toward white under dark text, by the least amount at which every role of text on every surface the sidebar draws (plain, hovered, pressed, selected) reaches its contrast: titles and addresses 4.5:1, hints, placeholders and timestamps 3:1, strokes and glyphs 3:1. Themes that already read are left alone; Aurora, Supernova and Pulsar, whose bright ends cannot carry white text, become deeper versions of themselves. Buttons take white or dark text by whichever reads, darkening the fill slightly rather than switching when that is all it takes. `LegibilityTests` checks every preset, and the numbers were measured on rendered screenshots of all eight presets (sidebar text 4.3:1 or more, titles 5.7:1 or more). The 3:1 for hints is below WCAG's 4.5:1 for small text; it is a choice, not an oversight.
 
 ## Layout of the package
 

@@ -95,6 +95,7 @@ struct ToolbarButton: View {
                 .contentShape(Rectangle())
                 .animation(Motion.quick, value: hover)
         }
+        .spatial("toolbar.button")
         .buttonStyle(PressableStyle(scale: 0.88))
         .foregroundStyle(enabled ? palette.secondary : palette.tertiary.opacity(0.6))
         .disabled(!enabled)
@@ -189,7 +190,7 @@ struct URLPill: View {
                 if let rt, rt.isLoading {
                     GeometryReader { g in
                         Capsule().fill(palette.accent).frame(width: g.size.width * max(0.06, rt.progress), height: 2)
-                            .animation(.easeOut(duration: 0.2), value: rt.progress)
+                            .animation(Motion.standard, value: rt.progress)
                     }
                     .frame(height: 2).padding(.horizontal, 8).clipped()
                 }
@@ -344,7 +345,7 @@ struct SectionDivider: View {
                 .padding(.leading, hover ? Metrics.Sidebar.gap : 0)
             }
         }
-        .animation(.easeOut(duration: 0.16), value: hover)
+        .animation(Motion.quick, value: hover)
         .padding(.horizontal, Metrics.Sidebar.inset)
         .frame(height: Metrics.Height.header)
         .contentShape(Rectangle())

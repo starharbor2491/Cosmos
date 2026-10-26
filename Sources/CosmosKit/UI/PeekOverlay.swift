@@ -35,8 +35,8 @@ struct PeekOverlay: View {
                         Label("Open in Space", systemImage: "arrow.up.right.square")
                             .font(.system(size: 12, weight: .semibold))
                             .padding(.horizontal, 10).padding(.vertical, 5)
-                            .background(Capsule().fill(palette.accent.opacity(0.9)))
-                            .foregroundStyle(.white)
+                            .background(Capsule().fill(palette.accentFill))
+                            .foregroundStyle(palette.onAccent)
                     }
                     .buttonStyle(.plain)
                     .keyboardShortcut(.return, modifiers: .command)
@@ -55,7 +55,7 @@ struct PeekOverlay: View {
             .padding(.horizontal, 44).padding(.vertical, 26)
             .transition(.scale(scale: 0.96).combined(with: .opacity))
         }
-        .animation(.spring(response: 0.3, dampingFraction: 0.86), value: peek.id)
+        .animation(Motion.spring, value: peek.id)
         .background(PeekKeyCatcher { store.closePeek(in: window) })
     }
 }

@@ -45,6 +45,12 @@ enum Metrics {
         static let button: CGFloat = 28
     }
 
+    /// A panel's width or height on a window that may be smaller than the panel wants: the preferred size, or the
+    /// window's minus a margin on each side. 0 means the window has not been measured yet.
+    static func panelSize(_ preferred: CGFloat, within available: CGFloat) -> CGFloat {
+        available > 0 ? min(preferred, max(0, available - 2 * Space.l)) : preferred
+    }
+
     /// One column system for the whole sidebar: every icon, title and section label starts at a shared x.
     enum Sidebar {
         /// Between the sidebar's edge and its content.
@@ -56,10 +62,33 @@ enum Metrics {
         /// One level of folder nesting: a child's icon sits under its folder's icon.
         static let indent: CGFloat = chevron + gap
         static let chevron: CGFloat = 10
+        /// Favorites sit in a grid this many wide.
+        static let favoriteColumns = 3
+        /// The width of one Favorites tile in a sidebar of the given width (the grid's flexible columns share what the
+        /// gutters and the gaps between tiles leave).
+        static func tileWidth(sidebarWidth: CGFloat) -> CGFloat {
+            (sidebarWidth - 2 * gutter - CGFloat(favoriteColumns - 1) * Space.s) / CGFloat(favoriteColumns)
+        }
     }
 
     enum Icon {
         static let row: CGFloat = 18
         static let tile: CGFloat = 24
+    }
+
+    /// Where a bottom bar's first button goes so its glyph is centred on the icon column above it.
+    static let footerInset: CGFloat = Sidebar.gutter + Sidebar.inset - (Height.button - Icon.row) / 2
+
+    /// The controls Settings is built from.
+    enum Control {
+        /// Buttons, dropdowns, text fields and segmented choices share one height, so they line up in a row.
+        static let height: CGFloat = 32
+        static let switchWidth: CGFloat = 42
+        static let switchHeight: CGFloat = 24
+        static let knob: CGFloat = 18
+        static let check: CGFloat = 20
+        /// The window's navigation column and a question's width.
+        static let navWidth: CGFloat = 212
+        static let dialogWidth: CGFloat = 400
     }
 }

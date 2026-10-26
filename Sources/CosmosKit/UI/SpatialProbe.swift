@@ -120,6 +120,36 @@ extension SpatialProbe {
             if near(a.minY, b.minY) { gaps.append(b.minX - a.maxX) } else { gaps.append(b.minY - a.maxY) }
         }
         record("favorites have even gaps", gaps.allSatisfy { near($0, Metrics.Space.s) }, "gaps \(list(gaps)), expected \(Metrics.Space.s)")
+
+        // What is only on screen sometimes is checked when it is there.
+        let chevrons = frames.filter { $0.key.hasPrefix("folder.chevron.d") }
+        if !chevrons.isEmpty {
+            var detail = ""
+            for (key, rects) in chevrons {
+                guard let d = Int(key.dropFirst("folder.chevron.d".count)) else { continue }
+                let expected = column + CGFloat(d) * Metrics.Sidebar.indent
+                if !rects.allSatisfy({ near($0.minX, expected) }) { detail += "\(key): x \(list(rects.map(\.minX))), expected \(expected). " }
+            }
+            record("folder chevrons sit in their depth's icon column", detail.isEmpty, detail)
+        }
+        let splitIcons = all("split.icon")
+        if !splitIcons.isEmpty {
+            record("split panes' icons sit in the icon column", splitIcons.allSatisfy { near($0.minX, column) }, "split icon x \(list(splitIcons.map(\.minX))), rows \(column)")
+            let follow = zip(all("split.title"), splitIcons).map { $0.minX - $1.minX }
+            record("split panes' titles follow their icon by one gap", follow.allSatisfy { near($0, gapOffset) }, "titles are \(list(follow)) pt after their icons, expected \(gapOffset)")
+            let heights = all("split.row").map(\.height)
+            record("split panes are one row high", heights.allSatisfy { near($0, Metrics.Height.row) }, "split row heights \(list(heights)), expected \(Metrics.Height.row)")
+        }
+        let glyph = all("footer.glyph")
+        if !glyph.isEmpty {
+            let expected = column + Metrics.Icon.row / 2
+            record("the footer's first glyph is centred on the icon column", glyph.allSatisfy { near($0.midX, expected) }, "glyph centre x \(list(glyph.map(\.midX))), icon column centre \(expected)")
+        }
+        let buttons = all("toolbar.button")
+        if !buttons.isEmpty {
+            record("toolbar buttons are one square size", buttons.allSatisfy { near($0.width, Metrics.Height.button) && near($0.height, Metrics.Height.button) },
+                   "button sizes \(list(buttons.map(\.width))) × \(list(buttons.map(\.height))), expected \(Metrics.Height.button)")
+        }
         return out
     }
 }

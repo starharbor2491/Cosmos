@@ -41,7 +41,7 @@ struct GeneralPane: View {
                 }
                 Hairline()
                 SettingRow(title: "Show the link under the pointer", detail: "A small bubble with the address when you hover a link.") {
-                    SwitchControl(isOn: $store.settings.showStatusBubble, label: "Show link address when hovering")
+                    SwitchControl(isOn: $store.settings.showStatusBubble)
                 }
             }
             SettingsGroup(title: "Startup") {
@@ -50,12 +50,12 @@ struct GeneralPane: View {
                 }
                 Hairline()
                 SettingRow(title: "Close the window with its last tab") {
-                    SwitchControl(isOn: $store.settings.closeWindowOnLastTab, label: "Close the window when its last tab closes")
+                    SwitchControl(isOn: $store.settings.closeWindowOnLastTab)
                 }
             }
-            SettingsGroup(title: "Feel", note: "Motion follows the Reduce Motion setting in System Settings.") {
+            SettingsGroup(title: "Feel", note: "Motion follows the Reduce Motion setting in System Settings. Loading spinners keep turning.") {
                 SettingRow(title: "Trackpad haptics", detail: "A tick under your finger when something snaps, switches or lands.", symbol: "hand.tap") {
-                    HStack(spacing: Metrics.Space.s + 2) {
+                    HStack(spacing: Metrics.Space.m) {
                         ActionButton(title: "Feel it", kind: .quiet, enabled: store.settings.trackpadHaptics) { store.haptics.levelChange() }
                         SwitchControl(isOn: $store.settings.trackpadHaptics, label: "Trackpad haptics")
                     }
@@ -78,9 +78,9 @@ struct SidebarPane: View {
     var body: some View {
         @Bindable var store = store
         Pane(title: "Sidebar", subtitle: "How tabs are kept, tidied and put to sleep.", symbol: "sidebar.left") {
-            SettingsGroup(title: "Sidebar") {
+            SettingsGroup(title: "Behaviour") {
                 SettingRow(title: "Slide in from the window edge", detail: "While the sidebar is hidden, touching the edge brings it back over the page.") {
-                    SwitchControl(isOn: $store.settings.revealSidebarOnHover, label: "Slide the sidebar in when the pointer touches the window edge")
+                    SwitchControl(isOn: $store.settings.revealSidebarOnHover)
                 }
                 Hairline()
                 SettingRow(title: "Open links from pinned tabs in Peek", detail: "Pinned tabs and Favorites keep their place; other sites open beside them.") {
@@ -97,7 +97,7 @@ struct SidebarPane: View {
                 }
                 Hairline()
                 SettingRow(title: "Picture in Picture on leaving", detail: "A tab playing video floats over your other windows when you switch away.") {
-                    SwitchControl(isOn: $store.settings.autoPictureInPicture, label: "Picture in Picture when you leave a tab playing video")
+                    SwitchControl(isOn: $store.settings.autoPictureInPicture)
                 }
             }
         }
@@ -127,11 +127,11 @@ struct PrivacyPane: View {
                 if let note {
                     Hairline()
                     HStack(spacing: Metrics.Space.s) {
-                        Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.green)
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(palette.positive)
                         Text(note).font(.system(size: 12.5)).foregroundStyle(palette.secondary)
                         Spacer()
                     }
-                    .padding(.horizontal, Metrics.Space.l).padding(.vertical, Metrics.Space.s + 2)
+                    .padding(.horizontal, Metrics.Space.l).padding(.vertical, Metrics.Space.m)
                     .transition(.opacity)
                 }
             }
@@ -146,7 +146,7 @@ struct PrivacyPane: View {
                             HStack(spacing: Metrics.Space.s) {
                                 Text(permission.allowed ? "Allowed" : "Blocked")
                                     .font(.system(size: 11.5, weight: .semibold))
-                                    .foregroundStyle(permission.allowed ? Color.green : Color(red: 1, green: 0.42, blue: 0.40))
+                                    .foregroundStyle(permission.allowed ? palette.positive : palette.negative)
                                 IconButton(symbol: "xmark", label: "Forget \(permission.name) for \(permission.host)") {
                                     withAnimation(Motion.standard) { store.settings.permissionDecisions[permission.key] = nil }
                                 }
@@ -167,10 +167,10 @@ struct PrivacyPane: View {
 
     private func clearHistory() {
         Task {
-            let ok = await model.confirm(.init(title: "Clear your history?", message: "Visited pages are removed from the Command Bar's suggestions. This can't be undone.",
+            let ok = await model.confirm(.init(title: "Clear your history?", message: "Visited pages, what the Command Bar learned from them and the saved site icons are removed. This can't be undone.",
                                                confirmTitle: "Clear History", destructive: true))
             guard ok else { return }
-            store.history.clear(since: nil)
+            store.clearHistory()
             announce("History cleared.")
         }
     }
@@ -182,7 +182,7 @@ struct PrivacyPane: View {
             guard ok else { return }
             let types = WKWebsiteDataStore.allWebsiteDataTypes()
             for profile in store.workspace.profiles {
-                store.environment(forProfile: profile.id).dataStore.removeData(ofTypes: types, modifiedSince: .distantPast) {}
+                await store.environment(forProfile: profile.id).dataStore.removeData(ofTypes: types, modifiedSince: .distantPast)
             }
             announce("Cookies and site data cleared.")
         }
@@ -204,13 +204,15 @@ struct LinksPane: View {
     let store: BrowserStore
     @Local private var newHost = ""
     @Local private var newDestination: LinkDestination = .probe
+    @Local private var problem: String?
+    @Environment(\.palette) private var palette
 
     var body: some View {
         @Bindable var store = store
         Pane(title: "Links", subtitle: "Where links from other apps open.", symbol: "arrow.triangle.branch") {
             SettingsGroup(title: "From other apps", note: "Click a link in Mail, Slack or anywhere else and Cosmos opens it where you choose. Probe is a small floating window you can send to a space when you want to keep the page.") {
                 SettingRow(title: "Links open in") {
-                    Dropdown(selection: $store.linkRouting.defaultDestination, options: destinations, label: "Links from other apps open in")
+                    Dropdown(selection: $store.linkRouting.defaultDestination, options: destinations)
                 }
             }
             SettingsGroup(title: "Rules", note: "A rule sends links to one site somewhere else. The first rule that matches wins.") {
@@ -228,18 +230,28 @@ struct LinksPane: View {
                 Hairline()
                 HStack(spacing: Metrics.Space.s) {
                     FieldInput(text: $newHost, placeholder: "Site, e.g. github.com", onSubmit: addRule)
+                        .onChange(of: newHost) { problem = nil }
                     Dropdown(selection: $newDestination, options: destinations, label: "Open in", width: 190)
                     ActionButton(title: "Add", kind: .primary, enabled: !newHost.trimmingCharacters(in: .whitespaces).isEmpty, action: addRule)
                 }
-                .padding(Metrics.Space.m)
+                .cardInset()
+                if let problem {
+                    Text(problem).font(.system(size: 12)).foregroundStyle(palette.negative)
+                        .padding(.horizontal, Metrics.Space.l).padding(.bottom, Metrics.Space.m)
+                        .transition(.opacity)
+                }
             }
             .animation(Motion.standard, value: store.linkRouting.rules.map(\.id))
+            .animation(Motion.quick, value: problem)
         }
     }
 
     private func addRule() {
-        let host = newHost.trimmingCharacters(in: .whitespaces)
-        guard !host.isEmpty else { return }
+        guard let host = LinkRule.normalizedHost(newHost) else {
+            problem = "That isn't a site. Try something like github.com."
+            return
+        }
+        problem = nil
         withAnimation(Motion.standard) { store.linkRouting.rules.append(LinkRule(matches: [.host(host)], destination: newDestination)) }
         newHost = ""
         store.haptics.levelChange()
@@ -286,7 +298,7 @@ struct AboutPane: View {
             Text("A space-themed browser for people who miss Arc.\nBuilt on WebKit.")
                 .font(.system(size: 13.5)).multilineTextAlignment(.center).foregroundStyle(palette.secondary)
                 .padding(.bottom, Metrics.Space.s)
-            HStack(spacing: Metrics.Space.s + 2) {
+            HStack(spacing: Metrics.Space.m) {
                 ActionButton(title: "Show Welcome", symbol: "sparkles", kind: .secondary) { store.activeWindow?.overlay = .welcome }
                 ActionButton(title: "Reveal Data Folder", symbol: "folder", kind: .secondary) {
                     if let dir = store.dataDirectory { NSWorkspace.shared.activateFileViewerSelecting([dir]) }

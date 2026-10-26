@@ -274,21 +274,19 @@ extension BrowserStore {
 
     func togglePin(_ id: UUID, in window: WindowState) {
         switch workspace.section(of: id) {
-        case .pinned: edit { $0.unpin(id) }; haptics.levelChange()
-        case .unpinned: edit { $0.pin(id) }; haptics.levelChange()
+        case .pinned: if edit({ $0.unpin(id) }) { haptics.levelChange() }
+        case .unpinned: if edit({ $0.pin(id) }) { haptics.levelChange() }
         case .favorites:
-            if let sid = workspace.spaces.first(where: { $0.id == window.focusedSpaceID })?.id { edit { $0.unfavorite(id, into: sid) }; haptics.levelChange() }
+            if let sid = workspace.spaces.first(where: { $0.id == window.focusedSpaceID })?.id, edit({ $0.unfavorite(id, into: sid) }) { haptics.levelChange() }
         case nil: break
         }
     }
 
     func toggleFavorite(_ id: UUID, in window: WindowState) {
         if workspace.section(of: id) == .favorites {
-            edit { $0.unfavorite(id, into: window.focusedSpaceID) }
-            haptics.levelChange()
+            if edit({ $0.unfavorite(id, into: window.focusedSpaceID) }) { haptics.levelChange() }
         } else if workspace.item(id)?.isTab == true {
-            edit { $0.favorite(id) }
-            haptics.levelChange()
+            if edit({ $0.favorite(id) }) { haptics.levelChange() }
         }
     }
 

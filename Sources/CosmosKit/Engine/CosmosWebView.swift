@@ -13,6 +13,29 @@ public final class CosmosWebView: WKWebView {
 
     /// Plain scroll/click events should not steal the window drag; nothing to override beyond the menu today.
     public override var acceptsFirstResponder: Bool { true }
+
+    // A tab dragged out of the sidebar carries its address as a link so other apps take it. Over the page WebKit would
+    // load that link in this tab, so a drag that started in the sidebar is turned away here.
+    private func isSidebarDrag(_ info: NSDraggingInfo) -> Bool {
+        if info.draggingPasteboard.types?.contains(NSPasteboard.PasteboardType(SidebarDrop.itemType.identifier)) == true { return true }
+        return MainActor.assumeIsolated { runtime?.host?.isDraggingSidebarItem == true }
+    }
+
+    public override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        isSidebarDrag(sender) ? [] : super.draggingEntered(sender)
+    }
+
+    public override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        isSidebarDrag(sender) ? [] : super.draggingUpdated(sender)
+    }
+
+    public override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        isSidebarDrag(sender) ? false : super.prepareForDragOperation(sender)
+    }
+
+    public override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        isSidebarDrag(sender) ? false : super.performDragOperation(sender)
+    }
 }
 
 extension NSMenuItem {

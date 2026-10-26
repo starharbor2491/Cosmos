@@ -24,6 +24,16 @@ import Testing
         #expect(rec.played == [.levelChange])
     }
 
+    @Test func aPinThatIsRefusedIsSilent() throws {
+        let (rig, rec) = rig()
+        let root = rig.space.pinnedRootID
+        let folder = try #require(rig.store.edit { $0.addFolder(title: "Reading", under: root) })
+        rig.store.togglePin(folder, in: rig.window)
+        rig.store.toggleFavorite(folder, in: rig.window)
+        #expect(rec.played.isEmpty, "a tick means something happened")
+        #expect(rig.store.workspace.section(of: folder) != nil)
+    }
+
     @Test func closingATabIsAGenericTap() throws {
         let (rig, rec) = rig()
         let tab = try #require(rig.today.first)

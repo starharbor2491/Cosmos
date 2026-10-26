@@ -79,4 +79,26 @@ import Testing
             }
         }
     }
+
+    /// The test above feeds titles far past the tidier's length cap, so it only proves they are skipped. These are the
+    /// longest titles it still tidies (500 UTF-16 units), which is where its patterns do their work.
+    @Test func theLongestTitlesItStillTidiesAreTidiedQuickly() {
+        let hosts = ["youtube.com", "github.com", "mail.google.com", "app.slack.com", "outlook.live.com", "docs.google.com", "example.com"]
+        for host in hosts {
+            for unit in ["a - b@c ", " | ", "(1) ", "x | ", "- ", "* ", "a@b.c - "] {
+                let title = String(String(repeating: unit, count: 500).prefix(500))
+                let start = Date()
+                _ = TidyTitles.tidy(title: title, url: URL(string: "https://\(host)/"))
+                #expect(Date().timeIntervalSince(start) < 0.25, "\(host): \(unit) took \(Date().timeIntervalSince(start)) s")
+            }
+        }
+    }
+
+    @Test func aTitleOverTheCapIsLeftAsItIs() {
+        let long = String(repeating: "Inbox - me@example.com - ", count: 40)
+        #expect(long.utf16.count > 500)
+        #expect(TidyTitles.tidy(title: long, url: URL(string: "https://mail.google.com/")) == long.trimmingCharacters(in: .whitespaces))
+        #expect(TidyTitles.tidy(title: "Inbox (3) - me@example.com - Gmail", url: URL(string: "https://mail.google.com/")) != "Inbox (3) - me@example.com - Gmail",
+                "a short one is still tidied, so the cap is what leaves the long one alone")
+    }
 }

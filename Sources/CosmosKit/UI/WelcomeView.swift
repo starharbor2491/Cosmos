@@ -7,6 +7,7 @@ struct WelcomeView: View {
     let store: BrowserStore
     let window: WindowState
     @Environment(\.palette) private var palette
+    @Environment(\.overlayBounds) private var bounds
     @Local private var sources: [ImportSource] = []
     @Local private var loaded = false
     @Local private var running: String?
@@ -21,48 +22,51 @@ struct WelcomeView: View {
                 Text("Welcome to Cosmos").font(.system(size: 28, weight: .bold, design: .rounded)).foregroundStyle(palette.text)
                 Text("A browser made for people who miss Arc.\nSpaces, a sidebar, Boosts, Peek and Split View all come with you.")
                     .font(.system(size: 13.5)).foregroundStyle(palette.secondary).multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .padding(.top, 30).padding(.bottom, 18)
 
-            VStack(spacing: 8) {
-                if !loaded {
-                    ProgressView().controlSize(.small).padding(.vertical, 14)
-                } else if sources.isEmpty {
-                    Text("No other browsers found on this Mac. You can import later from the Cosmos menu.")
-                        .font(.system(size: 12.5)).foregroundStyle(palette.tertiary).padding(.vertical, 14)
-                }
-                ForEach(sources) { source in
-                    ImportRow(source: source, running: running == source.id, result: results[source.id], failure: failures[source.id]) {
-                        run(source)
+            // Scrolls when the window is too short to show every browser at once.
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 8) {
+                    if !loaded {
+                        ProgressView().controlSize(.small).padding(.vertical, 14)
+                    } else if sources.isEmpty {
+                        Text("No other browsers found on this Mac. You can import later from the Cosmos menu.")
+                            .font(.system(size: 12.5)).foregroundStyle(palette.tertiary).padding(.vertical, 14)
                     }
-                    .disabled(running != nil)
+                    ForEach(sources) { source in
+                        ImportRow(source: source, running: running == source.id, result: results[source.id], failure: failures[source.id]) {
+                            run(source)
+                        }
+                        .disabled(running != nil)
+                    }
                 }
+                .padding(.horizontal, 28)
             }
-            .padding(.horizontal, 28)
-
-            Spacer(minLength: 12)
+            .padding(.bottom, 12)
 
             VStack(spacing: 10) {
                 Button { DefaultBrowser.request { ok in defaultSet = ok || DefaultBrowser.isDefault } } label: {
                     Label(defaultSet ? "Cosmos is your default browser" : "Make Cosmos my default browser", systemImage: defaultSet ? "checkmark.circle.fill" : "safari")
                         .font(.system(size: 12.5, weight: .medium))
                 }
-                .buttonStyle(.plain).foregroundStyle(defaultSet ? palette.accent : palette.secondary)
+                .buttonStyle(.plain).foregroundStyle(defaultSet ? palette.accentText : palette.secondary)
                 .disabled(defaultSet)
 
                 Button { finish() } label: {
                     Text(results.isEmpty ? "Start Fresh" : "Start Exploring")
                         .font(.system(size: 14, weight: .semibold))
                         .frame(width: 220).padding(.vertical, 9)
-                        .background(Capsule().fill(palette.accent))
-                        .foregroundStyle(.white)
+                        .background(Capsule().fill(palette.accentFill))
+                        .foregroundStyle(palette.onAccent)
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut(.return, modifiers: [])
             }
             .padding(.bottom, 26)
         }
-        .frame(width: 560, height: 560)
+        .frame(width: Metrics.panelSize(560, within: bounds.width), height: Metrics.panelSize(560, within: bounds.height))
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous))
         .background(RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous).fill(palette.panel))
         .overlay(RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous).strokeBorder(palette.stroke, lineWidth: 0.8))
@@ -110,7 +114,7 @@ private struct ImportRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(source.name).font(.system(size: 14, weight: .semibold)).foregroundStyle(palette.text)
                 Text(result ?? failure ?? source.detail)
-                    .font(.system(size: 12)).foregroundStyle(failure != nil ? Color.red.opacity(0.9) : palette.secondary)
+                    .font(.system(size: 12)).foregroundStyle(failure != nil ? palette.negative : palette.secondary)
                     .lineLimit(2).fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
@@ -123,7 +127,7 @@ private struct ImportRow: View {
                     Text(source.isAvailable ? "Import" : "Choose…")
                         .font(.system(size: 12.5, weight: .semibold))
                         .padding(.horizontal, 14).padding(.vertical, 6)
-                        .background(Capsule().fill(palette.hover.opacity(1.8)))
+                        .background(Capsule().fill(palette.hoverStrong))
                         .foregroundStyle(palette.text)
                 }
                 .buttonStyle(.plain)

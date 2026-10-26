@@ -101,17 +101,17 @@ public struct Workspace: Codable, Equatable, Sendable {
         return false
     }
 
-    /// All items below `id`, depth first, parent before children.
+    /// All items below `id`, depth first, parent before children. Walks with its own stack and remembers where it has
+    /// been, so a loop or a very deep chain in a damaged file cannot overflow the stack or run forever.
     public func descendants(of id: UUID) -> [SidebarItem] {
         var out: [SidebarItem] = []
-        func walk(_ nid: UUID) {
-            for c in items[nid]?.childIDs ?? [] {
-                guard let child = items[c] else { continue }
-                out.append(child)
-                walk(c)
-            }
+        var seen: Set<UUID> = [id]
+        var pending = Array((items[id]?.childIDs ?? []).reversed())
+        while let next = pending.popLast() {
+            guard seen.insert(next).inserted, let child = items[next] else { continue }
+            out.append(child)
+            pending.append(contentsOf: child.childIDs.reversed())
         }
-        walk(id)
         return out
     }
 
@@ -294,14 +294,34 @@ public struct Workspace: Codable, Equatable, Sendable {
     @discardableResult
     public mutating func restore(_ subtree: [SidebarItem], under parentID: UUID, at index: Int? = nil) -> UUID? {
         guard var root = subtree.first, let parent = items[parentID], canAccept(root.content, under: parent) else { return nil }
+        // The subtree may come from a damaged archive: keep only links between its own items that form a tree under
+        // the root (a child with one parent, no item listing itself, nothing pointing at items already in the tree).
+        let byID = Dictionary(subtree.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var order = [root.id], seen: Set<UUID> = [root.id], parentOf: [UUID: UUID] = [:]
+        var tree: [UUID: SidebarItem] = [:]
+        var next = 0
+        while next < order.count {
+            guard var item = byID[order[next]] else { next += 1; continue }
+            item.childIDs = item.childIDs.filter { byID[$0] != nil && seen.insert($0).inserted }
+            for child in item.childIDs { parentOf[child] = item.id }
+            if case .split(var data) = item.content {
+                if data.weights.count != item.childIDs.count { data.weights = Array(repeating: 1.0 / Double(max(1, item.childIDs.count)), count: item.childIDs.count) }
+                if let focused = data.focusedChildID, !item.childIDs.contains(focused) { data.focusedChildID = item.childIDs.first }
+                item.content = .split(data)
+            }
+            tree[item.id] = item
+            order.append(contentsOf: item.childIDs)
+            next += 1
+        }
         var remap: [UUID: UUID] = [:]
-        for s in subtree where items[s.id] != nil { remap[s.id] = UUID() }
+        for id in order where items[id] != nil { remap[id] = UUID() }
         func mapped(_ id: UUID) -> UUID { remap[id] ?? id }
-        for var s in subtree {
-            let original = s.id
+        for original in order {
+            guard var s = tree[original] else { continue }
             s.id = mapped(original)
             s.childIDs = s.childIDs.map(mapped)
-            if original == root.id { s.parentID = parentID } else { s.parentID = s.parentID.map(mapped) }
+            s.parentID = original == root.id ? parentID : parentOf[original].map(mapped)
+            if case .split(var data) = s.content { data.focusedChildID = data.focusedChildID.map(mapped); s.content = .split(data) }
             items[s.id] = s
             if original == root.id { root = s }
         }

@@ -8,11 +8,20 @@ import AppKit
 
 private struct HapticsKey: EnvironmentKey { static let defaultValue: Haptics? = nil }
 
+private struct SettingTitleKey: EnvironmentKey { static let defaultValue = "" }
+
 extension EnvironmentValues {
     /// The store's haptics, for controls that tick.
     var haptics: Haptics? {
         get { self[HapticsKey.self] }
         set { self[HapticsKey.self] = newValue }
+    }
+
+    /// The title of the row a control sits in. A control without a label of its own is named after it, so what a
+    /// screen reader (or voice control) calls the control is what the row says.
+    var settingTitle: String {
+        get { self[SettingTitleKey.self] }
+        set { self[SettingTitleKey.self] = newValue }
     }
 }
 
@@ -48,6 +57,8 @@ struct TapTarget<Content: View>: View {
             .scaleEffect(pressed && enabled ? scale : 1)
             .animation(Motion.quick, value: pressed)
             .opacity(enabled ? 1 : 0.4)
+            // However small it is drawn, a control can be hit anywhere in a 28 pt square.
+            .frame(minWidth: Metrics.Height.button, minHeight: Metrics.Height.button)
             .contentShape(Rectangle())
             .background(PressMonitor { pressed = $0 })
             .onHover { hover = $0 }
@@ -57,6 +68,7 @@ struct TapTarget<Content: View>: View {
             .focusEffectDisabled()
             .onKeyPress(.return) { activate(); return .handled }
             .onKeyPress(.space) { activate(); return .handled }
+            .disabled(!enabled)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(label)
             .accessibilityAddTraits(traits)
@@ -103,17 +115,18 @@ extension View {
 
 struct SwitchControl: View {
     @Binding var isOn: Bool
-    var label: String
+    var label: String?
     @Environment(\.palette) private var palette
+    @Environment(\.settingTitle) private var rowTitle
 
     var body: some View {
-        TapTarget(label: label, scale: 1, feel: .step, traits: .isToggle, action: { isOn.toggle() }) { state in
-            let width: CGFloat = 42, height: CGFloat = 24, knob: CGFloat = 18
+        TapTarget(label: label ?? rowTitle, scale: 1, feel: .step, traits: .isToggle, action: { isOn.toggle() }) { state in
+            let width = Metrics.Control.switchWidth, height = Metrics.Control.switchHeight, knob = Metrics.Control.knob
             let knobWidth = state.pressed ? knob + 4 : knob
             ZStack(alignment: isOn ? .trailing : .leading) {
-                Capsule().fill(isOn ? palette.accent : palette.text.opacity(0.2))
+                Capsule().fill(isOn ? palette.accentFill : palette.text.opacity(0.2))
                 Capsule().strokeBorder(palette.stroke, lineWidth: 0.5)
-                Capsule().fill(.white)
+                Capsule().fill(isOn ? palette.onAccent : .white)
                     .frame(width: knobWidth, height: knob)
                     .shadow(color: .black.opacity(0.28), radius: 2, y: 1)
                     .padding(3)
@@ -132,19 +145,20 @@ struct SwitchControl: View {
 
 struct CheckControl: View {
     @Binding var isOn: Bool
-    var label: String
+    var label: String?
     @Environment(\.palette) private var palette
+    @Environment(\.settingTitle) private var rowTitle
 
     var body: some View {
-        TapTarget(label: label, scale: 0.9, feel: .step, traits: .isToggle, action: { isOn.toggle() }) { state in
-            let shape = RoundedRectangle(cornerRadius: Metrics.Radius.chip - 1, style: .continuous)
+        TapTarget(label: label ?? rowTitle, scale: 0.9, feel: .step, traits: .isToggle, action: { isOn.toggle() }) { state in
+            let shape = RoundedRectangle(cornerRadius: Metrics.Radius.chip, style: .continuous)
             ZStack {
-                shape.fill(isOn ? palette.accent : (state.hover ? palette.hover.opacity(1.8) : palette.hover))
-                shape.strokeBorder(isOn ? .clear : palette.tertiary, lineWidth: 1)
-                Image(systemName: "checkmark").font(.system(size: 10, weight: .heavy)).foregroundStyle(.white)
+                shape.fill(isOn ? palette.accentFill : (state.hover ? palette.hoverStrong : palette.hover))
+                shape.strokeBorder(isOn ? .clear : palette.faint, lineWidth: 1)
+                Image(systemName: "checkmark").font(.system(size: 10, weight: .heavy)).foregroundStyle(palette.onAccent)
                     .scaleEffect(isOn ? 1 : 0.4).opacity(isOn ? 1 : 0)
             }
-            .frame(width: 20, height: 20)
+            .frame(width: Metrics.Control.check, height: Metrics.Control.check)
             .animation(Motion.spring, value: isOn)
             .focusRing(state.focused, radius: Metrics.Radius.chip, palette: palette)
         }
@@ -178,8 +192,8 @@ struct SegmentedControl<Value: Hashable>: View {
                         Text(option.label).font(.system(size: 13, weight: .medium))
                     }
                     .foregroundStyle(selected ? palette.text : palette.secondary)
-                    .padding(.horizontal, 14)
-                    .frame(height: 28)
+                    .padding(.horizontal, Metrics.Space.l)
+                    .frame(height: Metrics.Height.button)
                     .frame(maxWidth: .infinity)
                     .background {
                         let shape = RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous)
@@ -196,68 +210,163 @@ struct SegmentedControl<Value: Hashable>: View {
                 .accessibilityAddTraits(selected ? .isSelected : [])
             }
         }
-        .padding(3)
-        .background(RoundedRectangle(cornerRadius: Metrics.Radius.control + 3, style: .continuous).fill(palette.hover))
+        .padding(Metrics.Space.hair)
+        .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(palette.hover))
         .animation(Motion.standard, value: selection)
     }
 }
 
-/// A choice from a longer list. The list opens in place, under the field, instead of in a system menu.
+/// A choice from a longer list. The list opens in place, under the field, instead of in a system menu. While it is open
+/// the arrow keys move through it, Return or Space picks, Esc closes it, and so does a click anywhere else.
 struct Dropdown<Value: Hashable>: View {
     @Binding var selection: Value
     let options: [Option<Value>]
-    var label: String
+    var label: String?
     var width: CGFloat = 232
     @Local private var open = false
+    @Local private var highlight: Int?
     @Environment(\.palette) private var palette
+    @Environment(\.haptics) private var haptics
+    @Environment(\.settingTitle) private var rowTitle
+
+    private var selectedLabel: String { options.first { $0.value == selection }?.label ?? "" }
+    private var selectedIndex: Int? { options.firstIndex { $0.value == selection } }
+
+    private func setOpen(_ on: Bool) {
+        highlight = on ? selectedIndex : nil
+        withAnimation(Motion.standard) { open = on }
+    }
+
+    private func choose(_ index: Int) {
+        guard options.indices.contains(index) else { return }
+        selection = options[index].value
+        setOpen(false)
+    }
+
+    private func move(_ delta: Int) {
+        guard !options.isEmpty else { return }
+        guard open else { setOpen(true); return }
+        let next = min(max((highlight ?? selectedIndex ?? 0) + delta, 0), options.count - 1)
+        if next != highlight { haptics?.alignment() }
+        highlight = next
+    }
+
+    /// Keys while the list is open; returns whether the key was used up.
+    private func handle(_ key: ListKey) -> Bool {
+        switch key {
+        case .down: move(1); return true
+        case .up: move(-1); return true
+        case .escape: setOpen(false); return true
+        case .commit:
+            if let highlight { choose(highlight) } else { setOpen(false) }
+            return true
+        case .leave: setOpen(false); return false
+        }
+    }
 
     var body: some View {
         VStack(alignment: .trailing, spacing: Metrics.Space.xs) {
-            TapTarget(label: label, scale: 0.985, feel: .step, action: { withAnimation(Motion.standard) { open.toggle() } }) { state in
+            TapTarget(label: label ?? rowTitle, scale: 0.985, feel: .step, action: { setOpen(!open) }) { state in
                 HStack(spacing: Metrics.Space.s) {
-                    Text(options.first { $0.value == selection }?.label ?? "").font(.system(size: 13, weight: .medium)).lineLimit(1)
+                    Text(selectedLabel).font(.system(size: 13, weight: .medium)).lineLimit(1)
                     Spacer(minLength: 0)
                     Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold)).foregroundStyle(palette.tertiary)
                         .rotationEffect(.degrees(open ? 180 : 0))
                 }
                 .foregroundStyle(palette.text)
                 .padding(.horizontal, Metrics.Space.m)
-                .frame(width: width, height: 34)
-                .background(RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous).fill(state.hover || open ? palette.hover.opacity(1.8) : palette.hover))
+                .frame(width: width, height: Metrics.Control.height)
+                .background(RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous).fill(state.hover || open ? palette.hoverStrong : palette.hover))
                 .overlay(RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous).strokeBorder(open ? palette.accent.opacity(0.8) : palette.stroke, lineWidth: open ? 1.2 : 0.8))
                 .focusRing(state.focused, radius: Metrics.Radius.control, palette: palette)
             }
-            .accessibilityValue(options.first { $0.value == selection }?.label ?? "")
+            .accessibilityValue("\(selectedLabel), \(open ? "expanded" : "collapsed")")
 
             if open {
                 VStack(spacing: 2) {
-                    ForEach(options) { option in
+                    ForEach(Array(options.enumerated()), id: \.element.id) { index, option in
                         let selected = option.value == selection
-                        TapTarget(label: option.label, scale: 0.985, feel: .step, action: {
-                            selection = option.value
-                            withAnimation(Motion.standard) { open = false }
-                        }) { state in
+                        TapTarget(label: option.label, scale: 0.985, feel: .step, action: { choose(index) }) { state in
                             HStack {
                                 Text(option.label).font(.system(size: 13, weight: selected ? .semibold : .medium)).lineLimit(1)
                                 Spacer(minLength: 0)
-                                if selected { Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(palette.accent) }
+                                if selected { Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(palette.accentText) }
                             }
                             .foregroundStyle(palette.text)
-                            .padding(.horizontal, Metrics.Space.s + 2)
-                            .frame(height: 30)
-                            .background(RoundedRectangle(cornerRadius: Metrics.Radius.chip + 1, style: .continuous).fill(state.hover ? palette.hover.opacity(1.8) : .clear))
+                            .padding(.horizontal, Metrics.Space.m)
+                            .frame(height: Metrics.Height.button)
+                            .background(RoundedRectangle(cornerRadius: Metrics.Radius.chip, style: .continuous).fill(state.hover || highlight == index ? palette.hoverStrong : .clear))
                             .focusRing(state.focused, radius: Metrics.Radius.chip, palette: palette)
                         }
+                        .onHover { if $0 { highlight = index } }
                         .accessibilityAddTraits(selected ? .isSelected : [])
                     }
                 }
-                .padding(4)
+                .padding(Metrics.Space.xs)
                 .frame(width: width)
                 .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(palette.hover))
                 .overlay(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).strokeBorder(palette.stroke, lineWidth: 0.8))
                 .transition(.scale(scale: 0.96, anchor: .top).combined(with: .opacity))
             }
         }
+        .onKeyPress(.downArrow) { move(1); return .handled }
+        .onKeyPress(.upArrow) { move(-1); return .handled }
+        .background(OpenListMonitor(active: open, onOutsideClick: { setOpen(false) }, onKey: handle))
+    }
+}
+
+/// The keys an open list answers to.
+enum ListKey { case up, down, escape, commit, leave }
+
+/// While `active`, watches the mouse and keyboard for a list that is open: a click outside its frame closes it (and
+/// still reaches whatever was clicked), and its keys are taken before anything else sees them. It sits behind the
+/// list's own views, so its frame is the list's frame.
+private struct OpenListMonitor: NSViewRepresentable {
+    let active: Bool
+    let onOutsideClick: () -> Void
+    let onKey: (ListKey) -> Bool
+
+    func makeNSView(context: Context) -> Watcher { Watcher() }
+
+    func updateNSView(_ view: Watcher, context: Context) {
+        view.onOutsideClick = onOutsideClick
+        view.onKey = onKey
+        view.setActive(active)
+    }
+
+    final class Watcher: NSView {
+        var onOutsideClick: (() -> Void)?
+        var onKey: ((ListKey) -> Bool)?
+        private var monitor: Any?
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        func setActive(_ on: Bool) {
+            if on, monitor == nil {
+                monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] event in
+                    guard let self, let window = self.window, event.window === window else { return event }
+                    if event.type == .keyDown {
+                        let key: ListKey? = switch event.keyCode {
+                        case 125: .down
+                        case 126: .up
+                        case 53: .escape
+                        case 36, 76, 49: .commit
+                        case 48: .leave
+                        default: nil
+                        }
+                        guard let key else { return event }
+                        return self.onKey?(key) == true ? nil : event
+                    }
+                    if !self.convert(self.bounds, to: nil).contains(event.locationInWindow) { self.onOutsideClick?() }
+                    return event
+                }
+            } else if !on, let monitor {
+                NSEvent.removeMonitor(monitor)
+                self.monitor = nil
+            }
+        }
+
+        deinit { if let monitor { NSEvent.removeMonitor(monitor) } }
     }
 }
 
@@ -284,8 +393,8 @@ struct ActionButton: View {
                 Text(title).font(.system(size: 13, weight: .semibold))
             }
             .foregroundStyle(foreground)
-            .padding(.horizontal, kind == .quiet ? Metrics.Space.s : Metrics.Space.m + 2)
-            .frame(height: 32)
+            .padding(.horizontal, kind == .quiet ? Metrics.Space.s : Metrics.Space.l)
+            .frame(height: Metrics.Control.height)
             .background(shape.fill(fill(state)))
             .overlay(shape.strokeBorder(kind == .secondary ? palette.stroke : .clear, lineWidth: 0.8))
             .focusRing(state.focused, radius: Metrics.Radius.control, palette: palette)
@@ -295,18 +404,18 @@ struct ActionButton: View {
 
     private var foreground: Color {
         switch kind {
-        case .primary: .white
-        case .destructive: Color(red: 1, green: 0.42, blue: 0.40)
+        case .primary: palette.onAccent
+        case .destructive: palette.negative
         case .secondary: palette.text
-        case .quiet: palette.accent
+        case .quiet: palette.accentText
         }
     }
 
     private func fill(_ state: TapState) -> Color {
         switch kind {
-        case .primary: return palette.accent.opacity(state.hover ? 1 : 0.9)
-        case .destructive: return Color(red: 1, green: 0.35, blue: 0.33).opacity(state.hover ? 0.28 : 0.16)
-        case .secondary: return state.hover ? palette.hover.opacity(1.8) : palette.hover
+        case .primary: return palette.accentFill.opacity(state.hover ? 1 : 0.92)
+        case .destructive: return palette.negative.opacity(state.hover ? 0.22 : 0.12)
+        case .secondary: return state.hover ? palette.hoverStrong : palette.hover
         case .quiet: return state.hover ? palette.accent.opacity(0.14) : .clear
         }
     }
@@ -324,10 +433,10 @@ struct IconButton: View {
         TapTarget(label: label, scale: 0.88, action: action) { state in
             Image(systemName: symbol)
                 .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(state.hover ? (destructive ? Color(red: 1, green: 0.42, blue: 0.40) : palette.text) : palette.secondary)
-                .frame(width: 26, height: 26)
-                .background(Circle().fill(state.hover ? palette.hover.opacity(1.8) : .clear))
-                .focusRing(state.focused, radius: 13, palette: palette)
+                .foregroundStyle(state.hover ? (destructive ? palette.negative : palette.text) : palette.secondary)
+                .frame(width: Metrics.Height.button, height: Metrics.Height.button)
+                .background(Circle().fill(state.hover ? palette.hoverStrong : .clear))
+                .focusRing(state.focused, radius: Metrics.Height.button / 2, palette: palette)
                 .animation(Motion.quick, value: state.hover)
         }
     }
@@ -349,7 +458,7 @@ struct FieldInput: View {
                     textColor: NSColor(palette.text), placeholderColor: NSColor(palette.tertiary), caretColor: NSColor(palette.accent))
             .frame(height: 20)
             .padding(.horizontal, Metrics.Space.m)
-            .frame(width: width, height: 36)
+            .frame(width: width, height: Metrics.Control.height)
             .background(RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous).fill(palette.hover))
             .overlay(RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous)
                 .strokeBorder(focused ? palette.accent.opacity(0.9) : palette.stroke, lineWidth: focused ? 1.5 : 0.8))
@@ -411,6 +520,25 @@ private struct NativeField: NSViewRepresentable {
 
 // MARK: - Layout
 
+/// How solid each end of a scrolling pane is: 1 when the end is in view, fading to 0 over `fade` points as more content
+/// lies past it. A pane has no scroll bar, so its edges dissolving is what says there is more.
+struct ScrollEdges: Equatable {
+    var top: Double
+    var bottom: Double
+
+    init(offset: CGFloat, contentHeight: CGFloat, viewport: CGFloat, fade: CGFloat = 28) {
+        let above = max(0, offset)
+        let below = max(0, contentHeight - offset - viewport)
+        top = Double(1 - min(1, above / fade))
+        bottom = Double(1 - min(1, below / fade))
+    }
+}
+
+private struct PaneScrollKey: PreferenceKey {
+    static var defaultValue: CGRect { .zero }
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
+}
+
 /// A pane: a title, what it is for, and its groups, scrolling as one column.
 struct Pane<Content: View>: View {
     let title: String
@@ -418,10 +546,28 @@ struct Pane<Content: View>: View {
     let symbol: String
     @ViewBuilder let content: () -> Content
     @Environment(\.palette) private var palette
+    @Local private var edges = ScrollEdges(offset: 0, contentHeight: 0, viewport: 0)
 
     var body: some View {
+        GeometryReader { viewport in
+            scrolling
+                .coordinateSpace(name: "pane.scroll")
+                .onPreferenceChange(PaneScrollKey.self) { frame in
+                    MainActor.assumeIsolated { edges = ScrollEdges(offset: -frame.minY, contentHeight: frame.height, viewport: viewport.size.height) }
+                }
+                .mask(
+                    VStack(spacing: 0) {
+                        LinearGradient(colors: [.black.opacity(edges.top), .black], startPoint: .top, endPoint: .bottom).frame(height: 28)
+                        Color.black
+                        LinearGradient(colors: [.black, .black.opacity(edges.bottom)], startPoint: .top, endPoint: .bottom).frame(height: 28)
+                    }
+                )
+        }
+    }
+
+    private var scrolling: some View {
         ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: Metrics.Space.l + Metrics.Space.s) {
+            VStack(alignment: .leading, spacing: Metrics.Space.xl) {
                 HStack(spacing: Metrics.Space.m) {
                     Image(systemName: symbol)
                         .font(.system(size: 17, weight: .semibold))
@@ -440,6 +586,7 @@ struct Pane<Content: View>: View {
             .padding(.top, Metrics.Space.xl + Metrics.Space.xs)
             .padding(.bottom, Metrics.Space.xl + Metrics.Space.xs)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .background(GeometryReader { g in Color.clear.preference(key: PaneScrollKey.self, value: g.frame(in: .named("pane.scroll"))) })
         }
     }
 }
@@ -472,6 +619,12 @@ struct SettingsGroup<Content: View>: View {
     }
 }
 
+extension View {
+    /// The inset of anything custom inside a settings card (a field, a button row): the same 16 pt from the edge as
+    /// the text of the rows above and below it.
+    func cardInset() -> some View { padding(.horizontal, Metrics.Space.l).padding(.vertical, Metrics.Space.m) }
+}
+
 struct Hairline: View {
     @Environment(\.palette) private var palette
     var body: some View { Rectangle().fill(palette.stroke).frame(height: 0.5).padding(.leading, Metrics.Space.l) }
@@ -497,7 +650,7 @@ struct SettingRow<Trailing: View>: View {
                 }
             }
             Spacer(minLength: Metrics.Space.m)
-            trailing()
+            trailing().environment(\.settingTitle, title)
         }
         .padding(.horizontal, Metrics.Space.l)
         .padding(.vertical, Metrics.Space.m)
