@@ -75,6 +75,7 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         store = BrowserStore(directory: options.resolvedDataDirectory)
+        store.favicons.offline = options.offline
         wire(store)
         if let dir = store.dataDirectory {
             let extensions = ExtensionCenter(store: store, directory: dir, persistentStorage: !options.demo)
