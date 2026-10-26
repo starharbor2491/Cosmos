@@ -15,7 +15,7 @@ struct FavoritesGrid: View {
 
     var body: some View {
         let favorites = store.workspace.favorites
-        let dragging = window.draggingItemID != nil
+        let dragging = store.draggingItemID != nil
         Group {
             if favorites.isEmpty {
                 if dragging {
@@ -78,10 +78,7 @@ struct FavoriteTile: View {
         .onHover { hover = $0 }
         .help(store.title(forItem: item.id, in: window))
         .contextMenu { ItemContextMenu(store: store, window: window, itemID: item.id) }
-        .onDrag {
-            window.draggingItemID = item.id
-            return NSItemProvider(object: SidebarDrop.payload(item.id) as NSString)
-        }
+        .onDrag { store.beginDrag(item.id) }
         .onDrop(of: SidebarDrop.types, delegate: RowDropDelegate(store: store, window: window, targetID: item.id, axis: .horizontal, rowSize: 80, indicator: $indicator))
     }
 }
@@ -96,7 +93,7 @@ struct PinnedSection: View {
 
     var body: some View {
         let rows = SidebarRows.flatten(store.workspace, root: space.pinnedRootID, expandedOnly: true)
-        let dragging = window.draggingItemID != nil
+        let dragging = store.draggingItemID != nil
         VStack(spacing: 2) {
             if rows.isEmpty {
                 if dragging {
@@ -281,10 +278,7 @@ struct TabRow: View {
         .onHover { hover = $0 }
         .help(item.tab?.url?.absoluteString ?? "")
         .contextMenu { ItemContextMenu(store: store, window: window, itemID: item.id, renaming: $renaming) }
-        .onDrag {
-            window.draggingItemID = item.id
-            return NSItemProvider(object: SidebarDrop.payload(item.id) as NSString)
-        }
+        .onDrag { store.beginDrag(item.id) }
         .onDrop(of: SidebarDrop.types, delegate: RowDropDelegate(store: store, window: window, targetID: item.id, axis: .vertical, rowSize: 32, indicator: $indicator))
     }
 
@@ -380,10 +374,7 @@ struct FolderRow: View {
         .onTapGesture { withAnimation(.easeOut(duration: 0.16)) { store.folderToggle(item.id) } }
         .onHover { hover = $0 }
         .contextMenu { ItemContextMenu(store: store, window: window, itemID: item.id, renaming: $renaming) }
-        .onDrag {
-            window.draggingItemID = item.id
-            return NSItemProvider(object: SidebarDrop.payload(item.id) as NSString)
-        }
+        .onDrag { store.beginDrag(item.id) }
         .onDrop(of: SidebarDrop.types, delegate: RowDropDelegate(store: store, window: window, targetID: item.id, axis: .vertical, rowSize: 32, indicator: $indicator))
     }
 }

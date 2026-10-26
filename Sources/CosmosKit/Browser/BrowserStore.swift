@@ -32,6 +32,8 @@ public final class BrowserStore: TabHost {
     @ObservationIgnored var runtimes: [RuntimeKey: TabRuntime] = [:]
     @ObservationIgnored var environments: [UUID: ProfileEnvironment] = [:]
     @ObservationIgnored var incognitoEnvironment: ProfileEnvironment?
+    /// The sidebar item being dragged right now, in any window (drop targets read it; nil when no drag is in flight).
+    var draggingItemID: UUID?
     /// Bumped when a runtime is created or discarded so views that show "is this tab loaded?" refresh.
     public internal(set) var runtimeRevision = 0
     public private(set) var windows: [WindowState] = []

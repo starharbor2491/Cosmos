@@ -71,8 +71,6 @@ public final class WindowState: Identifiable {
     public var pendingTypedNavigation = false
     /// Hover status bubble text (bottom-left of the page).
     public var statusText: String?
-    /// The sidebar item being dragged right now (internal drags only; external URL drags don't set it).
-    public var draggingItemID: UUID?
 
     public init(focusedSpaceID: UUID, sidebarWidth: Double, isIncognito: Bool = false) {
         self.focusedSpaceID = focusedSpaceID

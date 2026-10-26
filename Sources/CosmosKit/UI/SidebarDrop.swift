@@ -10,9 +10,24 @@ struct DropIndicator: Equatable {
 }
 
 enum SidebarDrop {
-    static let types: [UTType] = [.plainText, .url]
-    static let prefix = "cosmos-item:"
-    static func payload(_ id: UUID) -> String { prefix + id.uuidString }
+    /// What an in-app drag carries, visible to this app only, so a tab dropped on a text field or another app can never
+    /// arrive as stray text. (Declared in Info.plist by `scripts/build-app.sh`. The drop targets don't depend on matching
+    /// it: they ask the store whether a drag started here.)
+    static let itemType = UTType(exportedAs: "app.cosmos.sidebar-item", conformingTo: .data)
+    static let types: [UTType] = [itemType, .url]
+
+    /// The drag of one sidebar item: the private type for moving it inside Cosmos and, for a tab, its address as a link
+    /// for everything else (a text field gets the address, Finder a web location).
+    static func provider(for id: UUID, url: URL?, title: String?) -> NSItemProvider {
+        let provider = NSItemProvider()
+        provider.registerDataRepresentation(forTypeIdentifier: itemType.identifier, visibility: .ownProcess) { completion in
+            completion(Data(id.uuidString.utf8), nil)
+            return nil
+        }
+        if let url { provider.registerObject(url as NSURL, visibility: .all) }
+        provider.suggestedName = title
+        return provider
+    }
 }
 
 /// The marker drawn on a row while a drag hovers it.
@@ -78,29 +93,34 @@ struct RowDropDelegate: DropDelegate {
         let pos = axis == .vertical ? info.location.y : info.location.x
         let t = pos / rowSize
         guard let target = store.workspace.item(targetID) else { return .after }
-        let allowsInto = target.isFolder || (target.isTab && window.draggingItemID != nil && store.workspace.item(window.draggingItemID!)?.isTab == true
+        let allowsInto = target.isFolder || (target.isTab && store.draggingItemID != nil && store.workspace.item(store.draggingItemID!)?.isTab == true
                                               && axis == .vertical && store.workspace.section(of: targetID) != .favorites)
         if allowsInto, t > 0.28, t < 0.72 { return .into }
         return t < 0.5 ? .before : .after
     }
 
     func validateDrop(info: DropInfo) -> Bool {
-        if let d = window.draggingItemID, !info.hasItemsConforming(to: [.url]) {
-            return d != targetID && !store.workspace.isAncestor(d, of: targetID)
-        }
+        // A drag that started in Cosmos is recorded by the store; anything else is a link from another app.
+        if let d = store.draggingItemID { return d != targetID && !store.workspace.isAncestor(d, of: targetID) }
         return info.hasItemsConforming(to: [.url])
     }
 
-    func dropEntered(info: DropInfo) { indicator = DropIndicator(id: targetID, zone: zone(info)) }
+    func dropEntered(info: DropInfo) { moveIndicator(DropIndicator(id: targetID, zone: zone(info))) }
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        indicator = DropIndicator(id: targetID, zone: zone(info))
+        moveIndicator(DropIndicator(id: targetID, zone: zone(info)))
         return DropProposal(operation: .move)
+    }
+
+    /// Updates the marker, with a tick under the finger each time it snaps to a new place.
+    private func moveIndicator(_ new: DropIndicator) {
+        if indicator != new { Haptics.alignment() }
+        indicator = new
     }
     func dropExited(info: DropInfo) { if indicator?.id == targetID { indicator = nil } }
 
     func performDrop(info: DropInfo) -> Bool {
         let z = zone(info)
-        defer { indicator = nil; window.draggingItemID = nil }
+        defer { indicator = nil; store.endDrag() }
         let ws = store.workspace
         guard let target = ws.item(targetID) else { return false }
 
@@ -122,14 +142,16 @@ struct RowDropDelegate: DropDelegate {
             }
         }
 
-        if let dragged = window.draggingItemID, !info.hasItemsConforming(to: [.url]) {
+        if let dragged = store.draggingItemID {
             if z == .into, target.isTab, ws.item(dragged)?.isTab == true {
                 store.splitWith(targetID, dragged: dragged, in: window)
+                Haptics.levelChange()
                 return true
             }
             guard let dest = destination(z) else { return false }
             let idx = DropActions.finalIndex(ws, dragged: dragged, parent: dest.parent, insertBefore: dest.index)
             store.dropMove(dragged, under: dest.parent, at: idx)
+            Haptics.levelChange()
             return true
         }
         return DropActions.externalURL(info) { url in
@@ -147,17 +169,18 @@ struct ContainerDropDelegate: DropDelegate {
     var atStart = false
     @Binding var indicator: DropIndicator?
 
-    func validateDrop(info: DropInfo) -> Bool { info.hasItemsConforming(to: SidebarDrop.types) }
+    func validateDrop(info: DropInfo) -> Bool { store.draggingItemID != nil || info.hasItemsConforming(to: [.url]) }
     func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
     func dropExited(info: DropInfo) { indicator = nil }
 
     func performDrop(info: DropInfo) -> Bool {
-        defer { indicator = nil; window.draggingItemID = nil }
+        defer { indicator = nil; store.endDrag() }
         let ws = store.workspace
         let count = ws.item(rootID)?.childIDs.count ?? 0
-        if let dragged = window.draggingItemID, !info.hasItemsConforming(to: [.url]) {
+        if let dragged = store.draggingItemID {
             let idx = atStart ? 0 : count
             store.dropMove(dragged, under: rootID, at: DropActions.finalIndex(ws, dragged: dragged, parent: rootID, insertBefore: idx))
+            Haptics.levelChange()
             return true
         }
         return DropActions.externalURL(info) { url in
@@ -167,6 +190,30 @@ struct ContainerDropDelegate: DropDelegate {
 }
 
 extension BrowserStore {
+    /// Starts dragging a sidebar item: remembers what is in flight (the drop targets read it) and returns the payload.
+    /// A drag that is cancelled never reports back, so this also watches the mouse button and clears itself once it is up.
+    func beginDrag(_ id: UUID) -> NSItemProvider {
+        draggingItemID = id
+        Haptics.generic()
+        Task { @MainActor [weak self] in
+            var upSince: Date?
+            while let self, self.draggingItemID == id {
+                if NSEvent.pressedMouseButtons & 1 == 0 {
+                    if let since = upSince, Date().timeIntervalSince(since) > 0.5 { self.endDrag() }
+                    else if upSince == nil { upSince = Date() }
+                } else {
+                    upSince = nil
+                }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+        }
+        let item = workspace.item(id)
+        let url = item?.isTab == true ? (runtime(forItem: id, in: nil)?.url ?? item?.tab?.url) : nil
+        return SidebarDrop.provider(for: id, url: url.flatMap { ["http", "https"].contains($0.scheme ?? "") ? $0 : nil }, title: item.map { _ in title(forItem: id, in: nil) })
+    }
+
+    func endDrag() { draggingItemID = nil }
+
     /// Moves a dragged item, fixing up the pinned "home" URL when it crosses between sections.
     func dropMove(_ id: UUID, under parent: UUID, at index: Int?) {
         let from = workspace.section(of: id)
