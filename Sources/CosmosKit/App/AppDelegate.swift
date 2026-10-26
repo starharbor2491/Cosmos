@@ -238,10 +238,19 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
             if tab == nil { c.window?.makeKeyAndOrderFront(nil); return }
             c.close()
         }
-        let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 460), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let win = NSWindow(contentRect: NSRect(origin: .zero, size: SettingsView.size), styleMask: [.titled, .closable, .fullSizeContentView],
+                           backing: .buffered, defer: false)
         win.title = "Cosmos Settings"
+        // The window is the space's sky edge to edge, with only the window buttons over it.
+        win.titlebarAppearsTransparent = true
+        win.titleVisibility = .hidden
+        win.isMovableByWindowBackground = true
         win.isReleasedWhenClosed = false
-        win.contentView = NSHostingView(rootView: SettingsView(store: store, tab: tab ?? .general))
+        let hosting = NSHostingView(rootView: SettingsView(store: store, tab: tab ?? .general))
+        // The window keeps the size it is given instead of growing to its content's idea of itself.
+        hosting.sizingOptions = []
+        win.contentView = hosting
+        win.setFrame(NSRect(origin: .zero, size: SettingsView.size), display: false)
         win.center()
         let c = NSWindowController(window: win)
         settingsController = c

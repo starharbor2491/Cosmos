@@ -30,6 +30,7 @@ struct BrowserRootView: View {
             OverlayLayer(store: store, window: window)
         }
         .environment(\.palette, palette)
+        .environment(\.haptics, store.haptics)
         .animation(.easeInOut(duration: 0.45), value: space.id)
         .animation(Motion.standard, value: window.sidebarVisible)
         .animation(Motion.quick, value: window.overlay)

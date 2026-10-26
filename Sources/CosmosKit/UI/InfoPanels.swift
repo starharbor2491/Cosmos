@@ -31,12 +31,13 @@ struct SiteControlsPanel: View {
             VStack(spacing: 2) {
                 if !host.isEmpty {
                     ControlRow(symbol: "shield.lefthalf.filled", title: "Ad & tracker blocking", detail: store.settings.adBlockingEnabled ? (blocked ? "On for this site" : "Off for this site") : "Off everywhere") {
-                        Toggle("", isOn: Binding(get: { blocked }, set: { on in
+                        SwitchControl(isOn: Binding(get: { blocked }, set: { on in
                             if on { store.settings.adBlockAllowlist.removeAll { $0 == host } }
                             else if !store.settings.adBlockAllowlist.contains(host) { store.settings.adBlockAllowlist.append(host) }
                             rt?.reload()
-                        }))
-                        .toggleStyle(.switch).labelsHidden().tint(palette.accent).disabled(!store.settings.adBlockingEnabled)
+                        }), label: "Ad and tracker blocking on this site")
+                        .opacity(store.settings.adBlockingEnabled ? 1 : 0.4)
+                        .allowsHitTesting(store.settings.adBlockingEnabled)
                     }
                     ControlRow(symbol: "plus.magnifyingglass", title: "Page zoom", detail: "\(Int(((rt?.zoom ?? 1) * 100).rounded()))%") {
                         HStack(spacing: 2) {
@@ -46,28 +47,21 @@ struct SiteControlsPanel: View {
                         }
                     }
                     ControlRow(symbol: "wand.and.stars", title: "Boost this site", detail: store.boostForCurrentPageIfExists(in: window) == nil ? "Recolour, change fonts, hide things" : "You have a Boost here") {
-                        Button("Open") { window.overlay = .boosts }
-                            .buttonStyle(.plain).font(.system(size: 12, weight: .semibold)).foregroundStyle(palette.accent)
+                        ActionButton(title: "Open", kind: .quiet) { window.overlay = .boosts }.padding(.trailing, -Metrics.Space.s)
                     }
                     if let rt, rt.isAudible || rt.isMuted {
                         ControlRow(symbol: rt.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill", title: "Sound", detail: rt.isMuted ? "Muted" : "Playing") {
-                            Button(rt.isMuted ? "Unmute" : "Mute") { rt.isMuted.toggle() }
-                                .buttonStyle(.plain).font(.system(size: 12, weight: .semibold)).foregroundStyle(palette.accent)
+                            ActionButton(title: rt.isMuted ? "Unmute" : "Mute", kind: .quiet) { rt.isMuted.toggle() }.padding(.trailing, -Metrics.Space.s)
                         }
                     }
-                    let decisions = store.settings.permissionDecisions.filter { $0.key.hasPrefix(host + "|") }
-                    if !decisions.isEmpty {
-                        ForEach(decisions.sorted(by: { $0.key < $1.key }), id: \.key) { key, allowed in
-                            ControlRow(symbol: Self.symbol(forPermission: key), title: Self.name(forPermission: key), detail: allowed ? "Allowed" : "Blocked") {
-                                Button("Reset") { store.settings.permissionDecisions[key] = nil }
-                                    .buttonStyle(.plain).font(.system(size: 12, weight: .semibold)).foregroundStyle(palette.accent)
-                            }
+                    ForEach(SitePermission.list(from: store.settings.permissionDecisions).filter { $0.host == host }) { permission in
+                        ControlRow(symbol: permission.symbol, title: permission.name, detail: permission.allowed ? "Allowed" : "Blocked") {
+                            ActionButton(title: "Reset", kind: .quiet) { store.settings.permissionDecisions[permission.key] = nil }.padding(.trailing, -Metrics.Space.s)
                         }
                     }
                 }
                 ControlRow(symbol: "link", title: "Copy link", detail: nil) {
-                    Button("Copy") { store.perform(.copyLink, in: window); window.overlay = nil }
-                        .buttonStyle(.plain).font(.system(size: 12, weight: .semibold)).foregroundStyle(palette.accent)
+                    ActionButton(title: "Copy", kind: .quiet) { store.perform(.copyLink, in: window); window.overlay = nil }.padding(.trailing, -Metrics.Space.s)
                 }
             }
             .padding(8)
@@ -80,27 +74,6 @@ struct SiteControlsPanel: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(.leading, window.sidebarVisible ? Metrics.Sidebar.gutter : 90)
         .padding(.top, window.sidebarVisible ? Metrics.Height.toolbar + Metrics.Height.field + Metrics.Space.xs : 52)
-    }
-
-    private static func name(forPermission key: String) -> String {
-        let kind = key.split(separator: "|").last.map(String.init) ?? key
-        switch kind {
-        case "camera": return "Camera"
-        case "microphone": return "Microphone"
-        case "cameraAndMicrophone": return "Camera & microphone"
-        case "location": return "Location"
-        default: return kind.capitalized
-        }
-    }
-
-    private static func symbol(forPermission key: String) -> String {
-        let kind = key.split(separator: "|").last.map(String.init) ?? key
-        switch kind {
-        case "camera", "cameraAndMicrophone": return "video.fill"
-        case "microphone": return "mic.fill"
-        case "location": return "location.fill"
-        default: return "hand.raised.fill"
-        }
     }
 
     struct ControlRow<Trailing: View>: View {
