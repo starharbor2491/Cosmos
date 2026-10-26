@@ -82,9 +82,10 @@ public final class JSONFileStore<Value: Codable> {
     /// Writes the value now without keeping a copy of what it replaces, and deletes the copies there are. For a file from which
     /// something was just forgotten: the dated copies would otherwise still hold it.
     public func rewriteDiscardingBackups(_ value: Value) throws {
+        // The copies go first: if the write fails they are still gone.
+        deleteBackups()
         try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try JSONEncoder.cosmos.encode(value).write(to: url, options: .atomic)
-        deleteBackups()
     }
 
     public func deleteBackups() {

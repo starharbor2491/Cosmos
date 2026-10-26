@@ -251,9 +251,9 @@ extension BrowserStore {
         select(rid, in: window)
     }
 
-    func deleteArchived(_ id: UUID) { archive.remove(id) }
+    func deleteArchived(_ id: UUID) { removeFromArchive(id) }
 
-    func clearArchive() { archive.entries.removeAll() }
+    func clearArchive() { removeFromArchive(nil) }
 
     func runAutoArchive() {
         guard !isIncognito, archive.interval != .never else { return }

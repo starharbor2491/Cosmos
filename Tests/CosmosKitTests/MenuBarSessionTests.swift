@@ -447,16 +447,23 @@ private final class SizedFeatures: WKWindowFeatures {
     }
 
     /// The files keep dated copies of themselves. What was forgotten must not be readable in those either, nor anywhere else
-    /// in the data folder.
-    @Test(arguments: ["all", "range", "one row"]) func clearingLeavesNothingReadableAnywhereInTheDataFolder(how: String) throws {
+    /// in the data folder: not in the settings (the menu-bar page), not in what the Command Bar learned, and not in the
+    /// sidebar's own copies, which list the page every tab was on at the time, including pages a tab has since left.
+    @Test(arguments: ["all", "range", "one row", "one row, panel moved on"]) func clearingLeavesNothingReadableAnywhereInTheDataFolder(how: String) throws {
         let rig = Rig()
         let url = URL(string: "https://example.com/secret-page")!
+        let tabPage = URL(string: "https://example.com/secret-tab-page")!
         rig.store.history.record(url: url, title: "Secret")
+        rig.store.history.record(url: tabPage, title: "Secret tab")
         rig.store.learned.record(query: "secret query", candidateID: "hist:\(url.absoluteString)")
         rig.store.settings.menuBar.remember(url)
+        let root = rig.space.unpinnedRootID
+        let tab = try #require(rig.store.edit { $0.addTab(url: tabPage, under: root, at: 0) })
         rig.store.saveNow()
         rig.store.settings.menuBar.remember(URL(string: "https://example.com/other")!)
         rig.store.saveNow()
+        // The tab goes on to another page; the copy of the sidebar made a moment ago still lists the one it left.
+        rig.store.edit { $0.updateTab(tab) { $0.url = URL(string: "https://example.com/elsewhere") } }
         rig.store.settings.menuBar.remember(url)
         rig.store.saveNow()
         // An earlier version also kept dated copies of what the Command Bar learned.
@@ -469,15 +476,67 @@ private final class SizedFeatures: WKWindowFeatures {
             }.map { $0.path.replacingOccurrences(of: rig.dir.path, with: "") }
         }
         #expect(filesHolding("secret").contains { $0.contains("Backups/settings.") }, "the setup should have made a dated copy of the settings")
+        #expect(filesHolding("secret-tab-page").contains { $0.contains("Backups/workspace.") }, "and of the sidebar, listing the page the tab left")
 
         switch how {
         case "all": rig.store.clearHistory()
         case "range": rig.store.clearHistory(since: Date().addingTimeInterval(-3600))
-        default: rig.store.deleteHistoryEntry(url)
+        case "one row": rig.store.deleteHistoryEntry(url); rig.store.deleteHistoryEntry(tabPage)
+        default:
+            rig.store.settings.menuBar.remember(URL(string: "https://example.com/moved-on"))
+            rig.store.deleteHistoryEntry(url); rig.store.deleteHistoryEntry(tabPage)
         }
         rig.store.saveNow()
 
         #expect(filesHolding("secret") == [], "still readable")
+    }
+
+    /// An archived tab is a closed tab's address: deleting it, or clearing the Archive, takes the dated copies of the
+    /// archive file with it.
+    @Test func removingFromTheArchiveLeavesNoDatedCopyListingIt() throws {
+        let rig = Rig()
+        func entry(_ address: String) -> ArchivedItem {
+            ArchivedItem(reason: .closed, spaceID: nil, items: [SidebarItem(content: .tab(TabData(url: URL(string: address)!, pageTitle: "Page")))])
+        }
+        let doomed = entry("https://example.com/secret-closed-one")
+        let everything = entry("https://example.com/secret-closed-two")
+        rig.store.archive.add(doomed)
+        rig.store.archive.add(everything)
+        rig.store.saveNow()
+        rig.store.archive.add(entry("https://example.com/kept"))
+        rig.store.saveNow()
+        func filesHolding(_ word: String) -> [String] {
+            ((FileManager.default.enumerator(at: rig.dir, includingPropertiesForKeys: nil)?.allObjects as? [URL]) ?? []).filter { file in
+                !file.hasDirectoryPath && ((try? Data(contentsOf: file)) ?? Data()).contains(Data(word.utf8))
+            }.map { $0.path }
+        }
+        #expect(filesHolding("secret-closed-one").contains { $0.contains("Backups/archive.") }, "the setup should have made a dated copy")
+
+        rig.store.deleteArchived(doomed.id)
+        rig.store.saveNow()
+        #expect(filesHolding("secret-closed-one") == [])
+        #expect(filesHolding("secret-closed-two") != [], "only that entry went")
+
+        rig.store.clearArchive()
+        rig.store.saveNow()
+        #expect(filesHolding("secret-closed") == [])
+    }
+
+    /// An earlier version made dated copies of what the Command Bar learned and kept the typed things; they go on launch.
+    @Test func anOlderLearningFileAndItsCopiesAreCleanedOnLaunch() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-upgrade-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("Backups", isDirectory: true), withIntermediateDirectories: true)
+        let old = #"{"maxQueries":600,"picks":{"typed words":{"web:typed words":{"count":1,"lastAt":"2026-10-20T10:00:00Z"},"hist:https://example.com/":{"count":1,"lastAt":"2026-10-20T10:00:00Z"}}}}"#
+        try Data(old.utf8).write(to: dir.appendingPathComponent("command-bar-learning.json"))
+        try Data(old.utf8).write(to: dir.appendingPathComponent("Backups/command-bar-learning.2026-10-20-10-00-00-000.json"))
+
+        let store = BrowserStore(directory: dir)
+
+        #expect(store.learned.picks["typed words"]?.keys.sorted() == ["hist:https://example.com/"], "what was typed as an address or search is gone, the page pick stays")
+        #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("Backups/command-bar-learning.2026-10-20-10-00-00-000.json").path))
+        let saved = try String(contentsOf: dir.appendingPathComponent("command-bar-learning.json"), encoding: .utf8)
+        #expect(!saved.contains("web:typed words"))
     }
 
     /// The menu-bar page keeps its fragment, a history row does not: it is the same page.

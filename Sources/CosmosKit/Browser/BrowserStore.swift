@@ -187,7 +187,6 @@ public final class BrowserStore: TabHost {
     /// other page or tab needs it, and the menu-bar page when that is the one.
     public func deleteHistoryEntry(_ url: URL) {
         history.delete(url: url)
-        let before = learned
         learned.forget(candidateIDs: ["hist:\(url.absoluteString)", HistoryStore.address(for: url).map { "hist:\($0)" } ?? ""])
         dropUnusedLogos()
         // The page the panel is on is that page even when its address carries a fragment the history row does not.
@@ -195,17 +194,28 @@ public final class BrowserStore: TabHost {
             settings.menuBar.lastAddress.flatMap(URL.init(string:)).flatMap(HistoryStore.address(for:)) == gone
         } ?? false
         if panelIsOnIt { settings.menuBar.lastAddress = nil }
-        forgetInSavedFiles(settings: panelIsOnIt, learning: learned != before)
+        forgetInSavedFiles()
         if panelIsOnIt { onHistoryCleared?() }
     }
 
-    /// The files keep dated copies of themselves, and a copy made before something was forgotten would still hold it: write
-    /// the files again now and drop the copies. (Only what could have held it: the settings carry the menu-bar page, what the
-    /// Command Bar learned carries the typed queries.)
-    private func forgetInSavedFiles(settings forgetSettings: Bool = true, learning forgetLearning: Bool = true) {
+    /// The files keep dated copies of themselves, and a copy made before something was forgotten would still hold it. What
+    /// could: the settings (the menu-bar page), what the Command Bar learned (the typed words), and the sidebar and session
+    /// (every tab's address at the time, including pages a tab has since left). The first two are written again now and their
+    /// copies dropped; the other two just lose their copies, and the next save makes one of the state as it is, which only
+    /// lists the pages that are open.
+    private func forgetInSavedFiles() {
         guard dataDirectory != nil else { return }
-        if forgetSettings { try? settingsFile?.rewriteDiscardingBackups(settings) }
-        if forgetLearning { try? learnedFile?.rewriteDiscardingBackups(learned) }
+        try? settingsFile?.rewriteDiscardingBackups(settings)
+        try? learnedFile?.rewriteDiscardingBackups(learned)
+        workspaceFile?.deleteBackups()
+        sessionFile?.deleteBackups()
+    }
+
+    /// Removes one archived tab (every one for nil), and the dated copies of the archive that still list it.
+    func removeFromArchive(_ id: UUID?) {
+        if let id { archive.remove(id) } else { archive.entries.removeAll() }
+        guard dataDirectory != nil else { return }
+        try? archiveFile?.rewriteDiscardingBackups(archive)
     }
 
     /// Logos are kept for the sites that have a page in the history or a tab, archived or not.
