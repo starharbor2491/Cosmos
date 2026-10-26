@@ -28,10 +28,13 @@ public protocol TabHost: AnyObject {
     func tab(_ tab: TabRuntime, showRadialMenu menu: NSMenu, context: RadialContext, center: CGPoint, windowSize: CGSize) -> Bool
     /// True where there is no room for another window or tab (the menu-bar panel): a link that asks for one loads in place.
     var opensNewWindowsInPlace: Bool { get }
+    /// The page is about to be replaced (a load, a reload, a link followed): anything that was made from it is out of date.
+    func tabWillNavigate(_ tab: TabRuntime)
 }
 
 public extension TabHost {
     var opensNewWindowsInPlace: Bool { false }
+    func tabWillNavigate(_ tab: TabRuntime) {}
 }
 
 /// One live page: owns the `WKWebView`, mirrors its state into observable properties and implements the WebKit
@@ -256,17 +259,17 @@ public final class TabRuntime: NSObject {
             default: break
             }
         }
-        if context.link != nil, let at = insertAfter {
+        if let link = context.link, Self.isWebLink(link), let at = insertAfter {
             // The link is carried on the item, not read from the page context when the item runs: the ring can be open
             // while the page moves on.
             let peek = NSMenuItem(title: "Open Link in Peek", action: #selector(menuOpenInPeek(_:)), keyEquivalent: "")
             peek.target = self
-            peek.representedObject = context.link
+            peek.representedObject = link
             peek.identifier = NSUserInterfaceItemIdentifier("cosmos.openLinkInPeek")
             peek.image = NSImage(systemSymbolName: "eye", accessibilityDescription: nil)
             let split = NSMenuItem(title: "Open Link in Split View", action: #selector(menuOpenInSplit(_:)), keyEquivalent: "")
             split.target = self
-            split.representedObject = context.link
+            split.representedObject = link
             split.identifier = NSUserInterfaceItemIdentifier("cosmos.openLinkInSplit")
             split.image = NSImage(systemSymbolName: "rectangle.split.2x1", accessibilityDescription: nil)
             menu.insertItem(split, at: at + 1)
@@ -299,8 +302,11 @@ public final class TabRuntime: NSObject {
         return host.tab(self, showRadialMenu: menu, context: kind, center: CGPoint(x: windowPoint.x, y: size.height - windowPoint.y), windowSize: size)
     }
 
-    @objc private func menuOpenInPeek(_ sender: NSMenuItem) { if let l = sender.representedObject as? URL { host?.tab(self, open: l, as: .peek) } }
-    @objc private func menuOpenInSplit(_ sender: NSMenuItem) { if let l = sender.representedObject as? URL { host?.tab(self, open: l, as: .split) } }
+    /// Peek and Split load a page beside this one: only a web address (a page can link to a file or a script too).
+    static func isWebLink(_ url: URL) -> Bool { ["http", "https"].contains(url.scheme?.lowercased() ?? "") }
+
+    @objc private func menuOpenInPeek(_ sender: NSMenuItem) { if let l = sender.representedObject as? URL, Self.isWebLink(l) { host?.tab(self, open: l, as: .peek) } }
+    @objc private func menuOpenInSplit(_ sender: NSMenuItem) { if let l = sender.representedObject as? URL, Self.isWebLink(l) { host?.tab(self, open: l, as: .split) } }
 }
 
 // MARK: - Navigation
@@ -372,6 +378,7 @@ extension TabRuntime: WKNavigationDelegate {
         // What was under the pointer on the last page says nothing about this one (a PDF or an error page has no agent
         // to report its own).
         context = PageContext()
+        host?.tabWillNavigate(self)
     }
 
     public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {

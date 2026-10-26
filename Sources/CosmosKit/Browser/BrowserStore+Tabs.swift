@@ -540,12 +540,19 @@ extension BrowserStore {
     }
 
     /// A script-sized window (an OAuth sign-in, a payment sheet) gets a small window of its own, like a real popup. It
-    /// needs no browser window, so a page in the menu-bar panel can have one too.
-    func openPopup(from tab: TabRuntime, configuration: WKWebViewConfiguration, features: WKWindowFeatures) -> WKWebView {
+    /// needs no browser window, so a page in the menu-bar panel can have one too. `bringForward` is for a window the user
+    /// asked for from a panel that does not make Cosmos the frontmost app; a page on its own never takes the focus.
+    func openPopup(from tab: TabRuntime, configuration: WKWebViewConfiguration, features: WKWindowFeatures, bringForward: Bool = false) -> WKWebView {
         let rt = TabRuntime(itemID: UUID(), profileID: tab.profileID, configuration: configuration, host: self)
         rt.isEphemeral = true
-        onPopupWindow?(rt, features)
+        onPopupWindow?(rt, features, bringForward)
         return rt.webView
+    }
+
+    /// A ring made over a page is of that page: a reload or a followed link leaves it holding the old page's actions.
+    public func tabWillNavigate(_ tab: TabRuntime) {
+        let w = window(showing: tab.itemID) ?? windows.first(where: { $0.peek?.runtime === tab })
+        w?.radial = nil
     }
 
     public func tab(_ tab: TabRuntime, showRadialMenu menu: NSMenu, context: RadialContext, center: CGPoint, windowSize: CGSize) -> Bool {

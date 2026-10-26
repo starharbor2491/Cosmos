@@ -174,6 +174,19 @@ import Testing
 
     // MARK: Settings
 
+    /// Settings written by another version can name actions this one does not know. The pane and the real ring must agree
+    /// that such a list is no choice at all, rather than the pane showing an empty ring the menu then ignores.
+    @Test func aListOfUnknownActionsIsNotACustomRing() throws {
+        var settings = RadialSettings()
+        settings.rings[RadialContext.link.rawValue] = ["flyToTheMoon", "renamedInTheFuture"]
+        #expect(settings.customRing(for: .link) == nil)
+        #expect(!settings.isCustomised(.link))
+        #expect(settings.ring(for: .link) == RadialAction.defaultRing(for: .link))
+        settings.setRing([], for: .link)
+        #expect(settings.customRing(for: .link) == [], "an empty ring the user made on purpose stays")
+        #expect(settings.isCustomised(.link))
+    }
+
     @Test func theRingIsOnEverywhereUntilTurnedOff() {
         var settings = RadialSettings()
         #expect(settings.isActive(on: "example.com") && settings.isActive(on: nil))

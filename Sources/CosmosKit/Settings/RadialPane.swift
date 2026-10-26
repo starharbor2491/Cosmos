@@ -124,7 +124,7 @@ struct RadialPane: View {
     private var addBinding: Binding<RadialAction?> {
         Binding(get: { nil }, set: { picked in
             guard let picked else { return }
-            withAnimation(Motion.standard) { store.settings.radialMenu.add(picked, to: context) }
+            withAnimation(Motion.standard) { _ = store.settings.radialMenu.add(picked, to: context) }
             store.haptics.levelChange()
         })
     }
@@ -142,7 +142,7 @@ struct RadialPane: View {
             IconButton(symbol: "chevron.down", label: "Move \(action.title) later") { move(index, 1) }
                 .opacity(index == count - 1 ? 0.3 : 1).disabled(index == count - 1)
             IconButton(symbol: "xmark", label: "Take \(action.title) off the ring", destructive: true) {
-                withAnimation(Motion.standard) { store.settings.radialMenu.remove(at: index, from: context) }
+                withAnimation(Motion.standard) { _ = store.settings.radialMenu.remove(at: index, from: context) }
             }
             .opacity(count == 1 ? 0.3 : 1).disabled(count == 1)
         }
@@ -155,7 +155,7 @@ struct RadialPane: View {
     }
 
     private func move(_ index: Int, _ delta: Int) {
-        withAnimation(Motion.standard) { store.settings.radialMenu.move(at: index, by: delta, in: context) }
+        withAnimation(Motion.standard) { _ = store.settings.radialMenu.move(at: index, by: delta, in: context) }
         store.haptics.alignment()
         hovered = index + delta
     }

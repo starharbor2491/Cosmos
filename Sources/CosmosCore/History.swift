@@ -44,6 +44,8 @@ public final class HistoryStore: @unchecked Sendable {
         if let path { try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true) }
         db = try SQLiteDatabase(path: path ?? ":memory:")
         try db.execute("PRAGMA journal_mode=WAL")
+        // A deleted row is overwritten rather than left readable in its page.
+        try db.execute("PRAGMA secure_delete=ON")
         try db.execute("""
             CREATE TABLE IF NOT EXISTS history (
                 url TEXT PRIMARY KEY,
@@ -152,6 +154,20 @@ public final class HistoryStore: @unchecked Sendable {
         guard let key = Self.key(url) else { return }
         lock.lock(); defer { lock.unlock() }
         try? db.run("DELETE FROM history WHERE url = ?", [.text(key)])
+        forgetWrittenCopies()
+    }
+
+    /// The hosts of every page in the history, lower-cased.
+    public func hosts() -> Set<String> {
+        lock.lock(); defer { lock.unlock() }
+        let rows = (try? db.query("SELECT url FROM history")) ?? []
+        return Set(rows.compactMap { $0.first?.string.flatMap(URL.init(string:))?.host?.lowercased() })
+    }
+
+    /// The database logs a change before it makes it, and the log would still hold the address of a row that was deleted
+    /// until the next checkpoint: fold it into the file and empty it.
+    private func forgetWrittenCopies() {
+        try? db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     }
 
     /// Clears everything, or only entries last visited at/after `since`.
@@ -159,5 +175,6 @@ public final class HistoryStore: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         if let since { try? db.run("DELETE FROM history WHERE last_visit >= ?", [.double(since.timeIntervalSince1970)]) }
         else { try? db.run("DELETE FROM history") }
+        forgetWrittenCopies()
     }
 }

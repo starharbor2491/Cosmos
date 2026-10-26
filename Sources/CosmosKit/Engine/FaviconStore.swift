@@ -377,6 +377,25 @@ public final class FaviconStore {
         return .plain
     }
 
+    /// Forgets the logos of every site not in `hosts`: what is left once part of the history is cleared and the sites that
+    /// still have a page in the history or a tab are the ones that need theirs.
+    public func keepOnly(hosts: Set<String>) {
+        let keep = Set(hosts.map(key))
+        generation += 1
+        inFlight.removeAll()
+        waiting.removeAll()
+        memory = memory.filter { keep.contains($0.key) }
+        backings = backings.filter { keep.contains($0.key) }
+        failed = failed.filter { keep.contains($0.key) }
+        checked = checked.filter { keep.contains($0.key) }
+        if let directory {
+            for file in (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [] where file.pathExtension == "png" {
+                if !keep.contains(file.deletingPathExtension().lastPathComponent) { try? FileManager.default.removeItem(at: file) }
+            }
+        }
+        revision += 1
+    }
+
     public func removeAll() {
         generation += 1
         inFlight.removeAll()

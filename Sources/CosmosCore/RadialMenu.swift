@@ -348,7 +348,9 @@ public struct RadialSettings: Codable, Equatable, Sendable {
     public func customRing(for context: RadialContext) -> [RadialAction]? {
         guard let names = rings[context.rawValue] else { return nil }
         var seen: Set<RadialAction> = []
-        return names.compactMap { RadialAction(rawValue: $0) }.filter { seen.insert($0).inserted }
+        let actions = names.compactMap { RadialAction(rawValue: $0) }.filter { seen.insert($0).inserted }
+        // A list whose every name is unknown (a settings file from another version) is no choice at all.
+        return actions.isEmpty && !names.isEmpty ? nil : actions
     }
 
     /// The ring a context shows: the user's, or the default.
@@ -362,7 +364,7 @@ public struct RadialSettings: Codable, Equatable, Sendable {
 
     public mutating func resetRing(for context: RadialContext) { rings[context.rawValue] = nil }
 
-    public func isCustomised(_ context: RadialContext) -> Bool { rings[context.rawValue] != nil }
+    public func isCustomised(_ context: RadialContext) -> Bool { customRing(for: context) != nil }
 
     /// The actions that could still be added to a context's ring: the ones that make sense there and are not on it.
     public func available(for context: RadialContext) -> [RadialAction] {
