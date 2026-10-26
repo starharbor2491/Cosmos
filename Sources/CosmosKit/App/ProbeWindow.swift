@@ -127,6 +127,7 @@ enum PopupWindows {
         let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
                            styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         win.isReleasedWhenClosed = false
+        win.isRestorable = false   // its title is the page's host
         let container = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
         runtime.webView.frame = container.bounds
         runtime.webView.autoresizingMask = [.width, .height]
