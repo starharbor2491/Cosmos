@@ -31,7 +31,11 @@ final class ContentBlockerController {
 
     /// - Parameter offline: never touch the network (demos and automated runs); the cached or bundled lists are used.
     /// - Parameter ruleListStore: where WebKit keeps the compiled lists; tests pass a private one.
-    init(store: BrowserStore, directory: URL, offline: Bool = false, ruleListStore: WKContentRuleListStore? = .default()) {
+    convenience init(store: BrowserStore, directory: URL, offline: Bool = false) {
+        self.init(store: store, directory: directory, offline: offline, ruleListStore: .default())
+    }
+
+    init(store: BrowserStore, directory: URL, offline: Bool, ruleListStore: WKContentRuleListStore?) {
         self.store = store
         self.offline = offline
         self.ruleListStore = ruleListStore

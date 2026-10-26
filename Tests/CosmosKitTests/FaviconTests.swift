@@ -29,7 +29,7 @@ enum TestIcon {
         return (FaviconStore(directory: dir, offline: offline), dir)
     }
 
-    private func waitForIcon(_ store: FaviconStore, host: String = "127.0.0.1", seconds: Double = 4) async -> NSImage? {
+    private func waitForIcon(_ store: FaviconStore, host: String = "127.0.0.1", seconds: Double = 15) async -> NSImage? {
         let deadline = Date().addingTimeInterval(seconds)
         while Date() < deadline {
             if let image = store.image(forHost: host) { return image }

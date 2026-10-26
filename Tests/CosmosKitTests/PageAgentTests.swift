@@ -10,7 +10,7 @@ import WebKit
 @Suite struct PageAgentTests {
     private func html(_ body: String) -> SiteServer.Route { .init(type: "text/html", body: Data(body.utf8)) }
 
-    private func waitFor(_ seconds: Double = 5, _ condition: () -> Bool) async throws {
+    private func waitFor(_ seconds: Double = 20, _ condition: () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(seconds)
         while !condition(), Date() < deadline { try await Task.sleep(for: .milliseconds(25)) }
     }

@@ -74,12 +74,12 @@ Cosmos is a browser, not a clone of everything Arc shipped.
 | `archive.json` | archived tabs |
 | `boosts.json`, `link-routing.json`, `settings.json` | Boosts, link routing rules, settings |
 | `history.sqlite` | history with visit counts (used for frecency in the Command Bar) |
-| `command-bar-learning.json` | which result you picked for which query |
+| `command-bar-learning.json` | which of your pages and tabs you picked for which query (never what you typed as an address or a search; no dated copies) |
 | `session.json` | windows to reopen |
 | `extensions.json`, `Extensions/` | the extensions you added and their files |
 | `FilterLists/`, `blocking.json` | downloaded filter lists and their compiled form |
 | `Favicons/` | the logos of sites in your sidebar; ones not renewed for 90 days are deleted |
-| `Backups/` | dated copies of the JSON files, kept automatically |
+| `Backups/` | dated copies of the JSON files, kept automatically; Clear History rewrites the files it changes and deletes their copies |
 
 That folder holds Cosmos's own files. Cookies, local storage and the page cache are kept by WebKit, one store per profile, under `~/Library/WebKit/` and `~/Library/Caches/` (in a folder named after the app's bundle id), and downloads go to `~/Downloads`. Incognito windows keep their cookies and site data in memory only.
 

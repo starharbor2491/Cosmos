@@ -167,7 +167,7 @@ struct PrivacyPane: View {
 
     private func clearHistory() {
         Task {
-            let ok = await model.confirm(.init(title: "Clear your history?", message: "Visited pages, what the Command Bar learned from them, the saved site icons and the page the menu bar browser was on are removed. This can't be undone.",
+            let ok = await model.confirm(.init(title: "Clear your history?", message: "Visited pages, what the Command Bar learned from them, the saved site icons and the page the menu bar browser was on are removed. Closed tabs in the Archive are kept. This can't be undone.",
                                                confirmTitle: "Clear History", destructive: true))
             guard ok else { return }
             store.clearHistory()
