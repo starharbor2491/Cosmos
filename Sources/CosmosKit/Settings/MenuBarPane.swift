@@ -29,7 +29,7 @@ struct MenuBarPane: View {
                         Option(value: .phone, label: "Phone", symbol: "iphone"),
                         Option(value: .desktop, label: "Desktop", symbol: "desktopcomputer"),
                     ])
-                    .frame(width: 260)
+                    .frame(width: Metrics.Control.segmentedWidth)
                 }
             }
             .opacity(menuBar.enabled ? 1 : 0.45)

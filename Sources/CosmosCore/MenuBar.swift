@@ -31,7 +31,7 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     /// Where the panel starts. Empty (or anything that is not a web address) means the search engine's front page.
     public var homeAddress = ""
     /// Open on the page that was showing when the panel was last closed.
-    public var rememberPage = true
+    public var rememberPage = true { didSet { if !rememberPage { lastAddress = nil } } }
     public var lastAddress: String?
 
     public init() {}
@@ -48,6 +48,8 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         if let v = try? c.decode(String.self, forKey: .homeAddress) { homeAddress = v }
         if let v = try? c.decode(Bool.self, forKey: .rememberPage) { rememberPage = v }
         if let v = try? c.decode(String.self, forKey: .lastAddress) { lastAddress = v }
+        // A file left by an older build (or edited by hand) may still hold a page that is not meant to be kept.
+        if !rememberPage { lastAddress = nil }
     }
 
     /// The profile the panel uses: the chosen one, or the default if that is gone (or nothing was chosen).

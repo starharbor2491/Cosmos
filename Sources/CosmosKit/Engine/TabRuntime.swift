@@ -64,7 +64,7 @@ public final class TabRuntime: NSObject {
 
     @ObservationIgnored private var observers: [NSKeyValueObservation] = []
     /// What was under the pointer at the last right click (the page agent reports it just before the menu is asked for).
-    @ObservationIgnored private var context = PageContext()
+    @ObservationIgnored private(set) var context = PageContext()
 
     struct PageContext {
         var link: URL?
@@ -256,7 +256,7 @@ public final class TabRuntime: NSObject {
             default: break
             }
         }
-        if let link = context.link, let at = insertAfter {
+        if context.link != nil, let at = insertAfter {
             let peek = NSMenuItem(title: "Open Link in Peek", action: #selector(menuOpenInPeek), keyEquivalent: "")
             peek.target = self
             peek.identifier = NSUserInterfaceItemIdentifier("cosmos.openLinkInPeek")
@@ -267,20 +267,24 @@ public final class TabRuntime: NSObject {
             split.image = NSImage(systemSymbolName: "rectangle.split.2x1", accessibilityDescription: nil)
             menu.insertItem(split, at: at + 1)
             menu.insertItem(peek, at: at + 1)
-            _ = link
         }
     }
 
     /// Puts the radial menu up in place of the system menu, if the settings, the site and the window allow it. Returns
-    /// whether it did, in which case the caller cancels the system menu. Holding ⌥ asks for the system menu.
+    /// whether it did, in which case the caller cancels the system menu. Holding ⌥ on the click asks for the system menu.
     func presentRadialMenu(_ menu: NSMenu) -> Bool {
-        guard let host, let window = webView.window, !NSEvent.modifierFlags.contains(.option), !NSWorkspace.shared.isVoiceOverEnabled else { return false }
+        let click = webView.recentClick()
+        let modifiers = click?.modifiers ?? NSEvent.modifierFlags
+        guard let host, let window = webView.window, !modifiers.contains(.option), !NSWorkspace.shared.isVoiceOverEnabled else { return false }
         let kind = RadialContext.detect(link: context.link != nil, image: context.image != nil, selection: !context.selection.isEmpty,
                                         editable: context.editable, media: context.media)
-        // Where the pointer is, in the window's space with y down. The page reports its own click point; without one
-        // (a click in a frame, the keyboard's menu key) it is wherever the mouse is.
+        // Where the pointer is, in the window's space with y down. The click says so itself; for a menu that came from
+        // the keyboard it is the page's report of where it was (only trustworthy when the view is not pinched), and
+        // failing that wherever the mouse is.
         var windowPoint = window.mouseLocationOutsideOfEventStream
-        if let p = context.point {
+        if let click {
+            windowPoint = click.location
+        } else if let p = context.point, webView.magnification == 1 {
             let zoom = webView.pageZoom
             windowPoint = webView.convert(NSPoint(x: p.x * zoom, y: webView.isFlipped ? p.y * zoom : webView.bounds.height - p.y * zoom), to: nil)
         }
@@ -358,6 +362,9 @@ extension TabRuntime: WKNavigationDelegate {
         isAudible = false
         hoverURL = nil
         pendingBoostZoom = true
+        // What was under the pointer on the last page says nothing about this one (a PDF or an error page has no agent
+        // to report its own).
+        context = PageContext()
     }
 
     public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
@@ -441,12 +448,20 @@ extension TabRuntime: WKUIDelegate {
     public func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                         for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         guard let host else { return nil }
-        if host.opensNewWindowsInPlace {
+        if Self.loadsNewWindowInPlace(hostOpensInPlace: host.opensNewWindowsInPlace, features: windowFeatures) {
             if let url = navigationAction.request.url, ["http", "https"].contains(url.scheme?.lowercased() ?? "") { load(url) }
             return nil
         }
         // Popups from script (OAuth, payment flows) need the opener relationship, so they must use WebKit's configuration.
         return host.tab(self, createChildWith: configuration, features: windowFeatures)
+    }
+
+    /// A page that asks for a script-sized window (an OAuth sign-in, a payment sheet) needs its opener, so it must get a
+    /// real window; every other new-window request loads where it is when the host has no room for another window.
+    static func isScriptSizedPopup(_ features: WKWindowFeatures) -> Bool { features.width != nil || features.height != nil }
+
+    static func loadsNewWindowInPlace(hostOpensInPlace: Bool, features: WKWindowFeatures) -> Bool {
+        hostOpensInPlace && !isScriptSizedPopup(features)
     }
 
     public func webViewDidClose(_ webView: WKWebView) { host?.tabRequestsClose(self) }

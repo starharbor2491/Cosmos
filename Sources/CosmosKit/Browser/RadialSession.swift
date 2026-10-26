@@ -50,7 +50,9 @@ public final class RadialSession: Identifiable {
     public func pointerMoved(to point: CGPoint, flickingFromOrigin: Bool = false) {
         let from = flickingFromOrigin ? origin : center
         let relative = CGPoint(x: point.x - from.x, y: point.y - from.y)
-        let now = RadialGeometry.slice(at: relative, count: ring.count).flatMap { ring[$0].isEnabled ? $0 : nil }
+        // With the button held a flick reaches far past the ring; a pointer just moving about only lights what it is over.
+        let reach = flickingFromOrigin ? RadialGeometry.reach : RadialGeometry.outerRadius
+        let now = RadialGeometry.slice(at: relative, count: ring.count, reach: reach).flatMap { ring[$0].isEnabled ? $0 : nil }
         guard now != hovered else { return }
         hovered = now
         if now != nil { haptics?.alignment() }
@@ -63,6 +65,19 @@ public final class RadialSession: Identifiable {
     func isInHub(_ point: CGPoint, flickingFromOrigin: Bool = false) -> Bool {
         let from = flickingFromOrigin ? origin : center
         return hypot(Double(point.x - from.x), Double(point.y - from.y)) < RadialGeometry.innerRadius
+    }
+
+    /// A click at `point` (the window's space): on a slice it chooses it, on the hub it goes back, anywhere else it is a
+    /// click away from the ring and closes it.
+    public func click(at point: CGPoint) {
+        let relative = relative(point)
+        if let index = RadialGeometry.slice(at: relative, count: ring.count, reach: RadialGeometry.outerRadius) {
+            choose(index)
+        } else if hypot(Double(relative.x), Double(relative.y)) < RadialGeometry.innerRadius {
+            back()
+        } else {
+            finish()
+        }
     }
 
     /// Picks a slice: a group opens its own ring, anything else runs and the menu closes.
@@ -100,6 +115,41 @@ public final class RadialSession: Identifiable {
     /// Chooses the slice that is lit, if any.
     public func chooseHovered() {
         if let hovered { choose(hovered) }
+    }
+
+    /// What the mouse and keyboard do to an open ring, already read out of their events (see `RadialInputMonitor`).
+    /// Returns whether the event is used up; one that is not goes on to whoever it was for. Points are in the window's
+    /// space, y down.
+    func receive(_ input: RadialInput) -> Bool {
+        switch input {
+        case .rightDown:
+            finish()
+            return true
+        case .rightDragged(let point):
+            pointerMoved(to: point, flickingFromOrigin: true)
+            return false
+        case .rightUp(let point):
+            // The button that opened the ring: let go over a slice and it is chosen; let go in the hub and the ring stays.
+            guard buttonIsDown else { return false }
+            buttonIsDown = false
+            pointerMoved(to: point, flickingFromOrigin: true)
+            if hovered != nil, !isInHub(point, flickingFromOrigin: true) { chooseHovered() }
+            return false
+        case .scroll:
+            finish()
+            return false
+        case .key(let command):
+            switch command {
+            case .back: back()
+            case .chooseHovered:
+                // With nothing lit, Return and Space are not the ring's.
+                guard hovered != nil else { return false }
+                chooseHovered()
+            case .step(let delta): step(delta)
+            case .choose(let index): choose(index)
+            }
+            return true
+        }
     }
 
     /// Lights the next (or previous) slice, for the keyboard.
@@ -158,4 +208,14 @@ enum RadialMenuBuilder {
         if let match = known.first(where: { title.lowercased().contains($0.key) }) { return match.value }
         return "chevron.right.circle"
     }
+}
+
+/// A mouse or key event, read for the ring.
+enum RadialInput: Equatable {
+    /// A new right click: it closes the ring.
+    case rightDown
+    case rightDragged(CGPoint)
+    case rightUp(CGPoint)
+    case scroll
+    case key(RadialKeyCommand)
 }

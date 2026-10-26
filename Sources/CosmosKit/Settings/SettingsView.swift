@@ -137,7 +137,7 @@ struct SettingsView: View {
                 Text("Settings").font(.system(size: 16, weight: .bold, design: .rounded)).foregroundStyle(palette.text)
             }
             .padding(.horizontal, Metrics.Space.m)
-            .padding(.top, 52)
+            .padding(.top, Metrics.Control.titleBarClearance)
             .padding(.bottom, Metrics.Space.m)
 
             ForEach(SettingsTab.allCases) { item in
@@ -222,10 +222,10 @@ struct SettingsView: View {
                     Text(dialog.message).font(.system(size: 13)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 if !dialog.bullets.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: Metrics.Space.s) {
                         ForEach(dialog.bullets, id: \.self) { line in
                             HStack(alignment: .top, spacing: Metrics.Space.s) {
-                                Circle().fill(palette.accent).frame(width: 5, height: 5).padding(.top, 6)
+                                Circle().fill(palette.accent).frame(width: 5, height: 5).padding(.top, 6)   // off-grid: a bullet dot sits on the first line's x-height
                                 Text(line).font(.system(size: 13)).foregroundStyle(palette.text).fixedSize(horizontal: false, vertical: true)
                             }
                         }

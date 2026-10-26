@@ -56,7 +56,7 @@ struct TapTarget<Content: View>: View {
         content(TapState(hover: hover && enabled, pressed: pressed && enabled, focused: focused))
             .scaleEffect(pressed && enabled ? scale : 1)
             .animation(Motion.quick, value: pressed)
-            .opacity(enabled ? 1 : 0.4)
+            .opacity(enabled ? 1 : 0.55)
             // However small it is drawn, a control can be hit anywhere in a 28 pt square.
             .frame(minWidth: Metrics.Height.button, minHeight: Metrics.Height.button)
             .contentShape(Rectangle())
@@ -129,7 +129,7 @@ struct SwitchControl: View {
                 Capsule().fill(isOn ? palette.onAccent : .white)
                     .frame(width: knobWidth, height: knob)
                     .shadow(color: .black.opacity(0.28), radius: 2, y: 1)
-                    .padding(3)
+                    .padding(Metrics.Control.knobInset)
             }
             .frame(width: width, height: height)
             .animation(Motion.spring, value: isOn)
@@ -183,11 +183,11 @@ struct SegmentedControl<Value: Hashable>: View {
     @Environment(\.palette) private var palette
 
     var body: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: Metrics.Space.hair) {
             ForEach(options) { option in
                 let selected = option.value == selection
                 TapTarget(label: option.label, scale: 0.96, feel: .step, traits: .isButton, action: { selection = option.value }) { state in
-                    HStack(spacing: 6) {
+                    HStack(spacing: Metrics.Space.s) {
                         if let symbol = option.symbol { Image(systemName: symbol).font(.system(size: 12, weight: .semibold)) }
                         Text(option.label).font(.system(size: 13, weight: .medium))
                     }
@@ -287,7 +287,7 @@ struct ActionButton: View {
     var body: some View {
         TapTarget(label: title, enabled: enabled && !busy, scale: 0.96, action: action) { state in
             let shape = RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous)
-            HStack(spacing: 6) {
+            HStack(spacing: Metrics.Space.s) {
                 // The spinner takes the icon's place and size, so a button that starts working doesn't change width.
                 if busy { OrbitSpinner(size: 13, color: foreground).frame(width: 14, height: 14) }
                 else if let symbol { Image(systemName: symbol).font(.system(size: 12, weight: .semibold)).frame(width: 14, height: 14) }
@@ -305,7 +305,7 @@ struct ActionButton: View {
 
     private var foreground: Color {
         switch kind {
-        case .primary: palette.onAccent
+        case .primary: enabled ? palette.onAccent : palette.secondary
         case .destructive: palette.negative
         case .secondary: palette.text
         case .quiet: palette.accentText
@@ -314,7 +314,8 @@ struct ActionButton: View {
 
     private func fill(_ state: TapState) -> Color {
         switch kind {
-        case .primary: return palette.accentFill.opacity(state.hover ? 1 : 0.92)
+        // A primary button that cannot be used yet is a quiet well, not a faded pink one that looks like it is not there.
+        case .primary: return enabled ? palette.accentFill.opacity(state.hover ? 1 : 0.92) : palette.hoverStrong
         case .destructive: return palette.negative.opacity(state.hover ? 0.22 : 0.12)
         case .secondary: return state.hover ? palette.hoverStrong : palette.hover
         case .quiet: return state.hover ? palette.accent.opacity(0.14) : .clear
@@ -357,7 +358,7 @@ struct FieldInput: View {
     var body: some View {
         NativeField(text: $text, placeholder: placeholder, focused: $focused, onSubmit: onSubmit,
                     textColor: NSColor(palette.text), placeholderColor: NSColor(palette.placeholder), caretColor: NSColor(palette.accent))
-            .frame(height: 20)
+            .frame(height: Metrics.Control.fieldText)
             .padding(.horizontal, Metrics.Space.m)
             .frame(width: width, height: Metrics.Control.height)
             .background(RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous).fill(palette.hover))
@@ -427,7 +428,7 @@ struct ScrollEdges: Equatable {
     var top: Double
     var bottom: Double
 
-    init(offset: CGFloat, contentHeight: CGFloat, viewport: CGFloat, fade: CGFloat = 28) {
+    init(offset: CGFloat, contentHeight: CGFloat, viewport: CGFloat, fade: CGFloat = Metrics.Control.edgeFade) {
         let above = max(0, offset)
         let below = max(0, contentHeight - offset - viewport)
         top = Double(1 - min(1, above / fade))
@@ -458,9 +459,9 @@ struct Pane<Content: View>: View {
                 }
                 .mask(
                     VStack(spacing: 0) {
-                        LinearGradient(colors: [.black.opacity(edges.top), .black], startPoint: .top, endPoint: .bottom).frame(height: 28)
+                        LinearGradient(colors: [.black.opacity(edges.top), .black], startPoint: .top, endPoint: .bottom).frame(height: Metrics.Control.edgeFade)
                         Color.black
-                        LinearGradient(colors: [.black, .black.opacity(edges.bottom)], startPoint: .top, endPoint: .bottom).frame(height: 28)
+                        LinearGradient(colors: [.black, .black.opacity(edges.bottom)], startPoint: .top, endPoint: .bottom).frame(height: Metrics.Control.edgeFade)
                     }
                 )
         }
@@ -473,9 +474,9 @@ struct Pane<Content: View>: View {
                     Image(systemName: symbol)
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(palette.accentGlyph)
-                        .frame(width: 40, height: 40)
+                        .frame(width: Metrics.Control.paneIcon, height: Metrics.Control.paneIcon)
                         .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(palette.accent.opacity(0.16)))
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: Metrics.Space.hair) {
                         Text(title).font(.system(size: 20, weight: .bold, design: .rounded)).foregroundStyle(palette.text)
                         Text(subtitle).font(.system(size: 12.5)).foregroundStyle(palette.secondary)
                     }
@@ -542,9 +543,9 @@ struct SettingRow<Trailing: View>: View {
     var body: some View {
         HStack(alignment: .center, spacing: Metrics.Space.m) {
             if let symbol {
-                Image(systemName: symbol).font(.system(size: 14, weight: .medium)).foregroundStyle(palette.secondary).frame(width: 22)
+                Image(systemName: symbol).font(.system(size: 14, weight: .medium)).foregroundStyle(palette.secondary).frame(width: Metrics.Control.rowSymbol)
             }
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: Metrics.Space.hair) {
                 Text(title).font(.system(size: 13.5, weight: .medium)).foregroundStyle(palette.text)
                 if let detail {
                     Text(detail).font(.system(size: 12)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)

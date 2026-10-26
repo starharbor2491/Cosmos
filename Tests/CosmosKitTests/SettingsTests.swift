@@ -229,3 +229,44 @@ import Testing
         #expect(WelcomeView.doneTitle(imported: true, setUpBefore: true) == "Done")
     }
 }
+
+/// Settings spacing comes from `Metrics`: a stack's spacing and a padding are never a bare number (a 6 pt gap beside an 8 pt
+/// one reads as a slip). A line that is off the grid on purpose says "off-grid" in a comment.
+@Suite struct SettingsTokenTests {
+    static let pattern = #"(spacing: [1-9]\d*|\.padding\((\.[a-z]+, )?[1-9]\d*\))"#
+
+    static func bareNumbers(in text: String, file: String) throws -> [String] {
+        let regex = try NSRegularExpression(pattern: pattern)
+        return text.components(separatedBy: "\n").enumerated().compactMap { index, line in
+            let code = line.trimmingCharacters(in: .whitespaces)
+            guard !code.hasPrefix("//"), !line.contains("off-grid"), regex.firstMatch(in: code, range: NSRange(code.startIndex..., in: code)) != nil else { return nil }
+            return "\(file):\(index + 1)"
+        }
+    }
+
+    @Test func settingsSourcesUseTheSpacingTokens() throws {
+        let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/CosmosKit/Settings", isDirectory: true)
+        var offenders: [String] = []
+        var scanned = 0
+        for file in try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) where file.pathExtension == "swift" {
+            scanned += 1
+            offenders += try Self.bareNumbers(in: String(contentsOf: file, encoding: .utf8), file: file.lastPathComponent)
+        }
+        #expect(scanned >= 8)
+        #expect(offenders.isEmpty, "bare spacing numbers in Settings: \(offenders.joined(separator: ", "))")
+    }
+
+    @Test func theScanSeesWhatItLooksFor() throws {
+        let bad = """
+        HStack(spacing: 6) {
+        VStack(spacing: 0) {
+        VStack(spacing: Metrics.Space.s) {
+        .padding(3)
+        .padding(.top, 52)
+        .padding(.horizontal, Metrics.Space.l)
+        .padding(.top, 6) // off-grid: a bullet dot
+        """
+        #expect(try Self.bareNumbers(in: bad, file: "V.swift") == ["V.swift:1", "V.swift:4", "V.swift:5"])
+    }
+}

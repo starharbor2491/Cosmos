@@ -114,6 +114,12 @@ final class MenuBarBrowser: NSObject {
     @objc private func menuSettings() { showSettings() }
     @objc private func menuHide() { store.settings.menuBar.enabled = false }
 
+    /// Puts the panel away and lets go of its page, with its back and forward list (Clear History).
+    func forgetPage() {
+        hide()
+        session.teardown()
+    }
+
     // MARK: Showing
 
     func toggle() {
