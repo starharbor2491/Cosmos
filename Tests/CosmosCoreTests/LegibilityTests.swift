@@ -123,4 +123,17 @@ import Testing
         _ = odd.legible
         _ = odd.worstStop
     }
+
+    /// An NSTextField draws its placeholder in one solid colour whatever alpha it is given, so a hint was coming out as
+    /// dark as typed text. The placeholder is handed over already mixed with what is behind it.
+    @Test(arguments: [true, false]) func aPlaceholderIsSolidReadableAndQuieterThanTypedText(lightInk: Bool) {
+        let placeholder = Legibility.placeholder(lightInk: lightInk)
+        let field = Legibility.composite(Legibility.hover(lightInk: lightInk), over: Legibility.panelGround(lightInk: lightInk))
+        let ink = lightInk ? Legibility.white : Legibility.ink
+        #expect(placeholder.a == 1, "solid")
+        #expect(Legibility.contrast(placeholder, field) >= Legibility.tertiary.minimum, "readable")
+        #expect(Legibility.contrast(placeholder, field) < Legibility.contrast(ink, field) - 1, "visibly quieter than the text a person types")
+        // Fields with no wash of their own (the Command Bar, Find) sit on the panel itself.
+        #expect(Legibility.contrast(placeholder, Legibility.panelGround(lightInk: lightInk)) >= Legibility.tertiary.minimum, "readable on the bare panel")
+    }
 }

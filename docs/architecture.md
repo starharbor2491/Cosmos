@@ -24,6 +24,8 @@ Other pieces:
 - **Archive**: archived tabs with the reason (closed, auto, imported), their space and when.
 - **Boost / BoostLibrary**: per-host colour filter, font, zoom, zap selectors, CSS and JS.
 - **LinkRouting**: where links from other apps go (Probe, most recent space, a space), with per-site rules.
+- **RadialMenu** (`RadialSettings`, `RadialAction`, `RadialLayout`, `RadialGeometry`): what the right-click ring holds for each kind of thing under the pointer, which sites keep the system menu, and where each slice is. No AppKit.
+- **MenuBar** (`MenuBarSettings`, `MenuBarPlacement`, `MenuBarToggle`): the menu-bar browser's settings, where its panel goes under the icon, and the click debounce.
 - **HistoryStore**: SQLite, with visit counts and a *frecency* score (recent and frequent beats old and frequent).
 - **CommandRanker, CommandComposer, LearnedSelections**: how the Command Bar decides what to show: fuzzy and prefix matching on titles and hosts, de-duplication by address, frecency, a bonus for results you picked before for the same query, then the composer adds the typed address, a web search, a calculator answer and site-search hints.
 - **PublicSuffixList, URLInput**: turn what you type into an address or a search, and tell `github.com` from `foo.github.io`.
@@ -36,6 +38,9 @@ Other pieces:
 - **TabRuntime** is one live page (`WKWebView` plus its delegates for navigation, UI, downloads and permissions). Sidebar tabs exist without a runtime until selected, which is why thousands of pinned and archived tabs cost nothing. Runtimes are keyed by `(item, profile)`; the memory saver discards idle ones and they reload on demand.
 - **ProfileEnvironment** is one per profile: its data store, one `WKUserContentController` (a small page agent in WebKit's client world, Boost scripts and style sheets in the page world, content rule lists, and the extension controller) and the configuration every tab of that profile is created with.
 - **Overlays and chrome** are SwiftUI (`BrowserRootView` in an `NSHostingView`), with web views hosted through `NSViewRepresentable`. The sidebar, Command Bar, Peek, find bar, panels and theme editor are in `UI/`. The window uses `fullSizeContentView`, so the space's gradient runs behind the traffic lights.
+- **Radial menu** (`RadialSession`, `RadialMenuView`, `TabRuntime.presentRadialMenu`): the page agent reports what is under the pointer just before WebKit asks for its context menu; `CosmosWebView.willOpenMenu` hands that menu to the store, which puts a ring over the page and cancels the system menu (its items are kept alive and run when a slice is chosen). A page that handles `contextmenu` itself never asks WebKit for a menu, so it never gets a ring.
+- **Menu-bar browser** (`MenuBarBrowser`, `MenuBarSession`, `MenuBarBrowserView`): an `NSStatusItem` and a non-activating `NSPanel`. The page is a `TabRuntime` made from a profile's `ProfileEnvironment`, so it uses that profile's cookie jar, blocking rules and Boosts; its host (`MenuBarHost`) loads new-window links in place and sends what belongs in a window there.
+- **Settings** (`Settings/`): every control is drawn here (see `SettingsControls.swift`). Open dropdown lists are drawn by the window itself (`DropdownHost`), not inline.
 - **App shell** (`App/`): the app delegate (windows, link routing, key handling), the main menu (every item carries a `MenuAction`), Probe windows, Settings, the demo seed, the icon renderer and the automation harness.
 
 ### Decisions worth knowing

@@ -45,7 +45,7 @@ struct CommandBarView: View {
                         .foregroundStyle(palette.secondary)
                 }
                 CommandField(model: model, window: window, textColor: palette.isDark ? .white : NSColor(red: 0.08, green: 0.07, blue: 0.14, alpha: 1),
-                             placeholderColor: palette.isDark ? NSColor.white.withAlphaComponent(0.4) : NSColor.black.withAlphaComponent(0.36))
+                             placeholderColor: NSColor(palette.placeholder))
                     .frame(height: 28)
                 if model.tabHint != nil, model.site == nil {
                     HStack(spacing: 5) {

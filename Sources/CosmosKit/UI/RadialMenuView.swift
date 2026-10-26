@@ -200,21 +200,44 @@ private struct RadialInputMonitor: NSViewRepresentable {
                 session.finish()
                 return false
             case .keyDown:
-                switch event.keyCode {
-                case 53: session.back(); return true                                    // esc
-                case 36, 76, 49: if session.hovered != nil { session.chooseHovered(); return true }; return false   // return, enter, space
-                case 124, 125, 48 where !event.modifierFlags.contains(.shift): session.step(1); return true   // right, down, tab
-                case 123, 126: session.step(-1); return true                            // left, up
-                default:
-                    if let digit = event.charactersIgnoringModifiers.flatMap({ Int($0) }), (1...RadialLayout.maxSlices).contains(digit), event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
-                        session.choose(digit - 1)
-                        return true
-                    }
-                    return false
+                let others = event.modifierFlags.intersection([.command, .control, .option]).isEmpty == false
+                guard let command = RadialKeyCommand.from(keyCode: event.keyCode, shift: event.modifierFlags.contains(.shift),
+                                                          otherModifiers: others, characters: event.charactersIgnoringModifiers) else { return false }
+                switch command {
+                case .back: session.back()
+                case .chooseHovered:
+                    // With nothing lit, Return and Space are not the ring's.
+                    guard session.hovered != nil else { return false }
+                    session.chooseHovered()
+                case .step(let delta): session.step(delta)
+                case .choose(let index): session.choose(index)
                 }
+                return true
             default:
                 return false
             }
+        }
+    }
+}
+
+/// What a key does while a ring is open, apart from the ring itself.
+enum RadialKeyCommand: Equatable {
+    case back
+    case chooseHovered
+    case step(Int)
+    case choose(Int)
+
+    /// `otherModifiers` is true when ⌘, ⌃ or ⌥ is down: those keys belong to the app's own shortcuts.
+    static func from(keyCode: UInt16, shift: Bool, otherModifiers: Bool, characters: String?) -> RadialKeyCommand? {
+        switch keyCode {
+        case 53: return .back                          // esc
+        case 36, 76, 49: return .chooseHovered         // return, enter, space
+        case 124, 125: return .step(1)                 // right, down
+        case 123, 126: return .step(-1)                // left, up
+        case 48: return .step(shift ? -1 : 1)          // tab, shift-tab
+        default:
+            guard !otherModifiers, let digit = characters.flatMap({ Int($0) }), (1...RadialLayout.maxSlices).contains(digit) else { return nil }
+            return .choose(digit - 1)
         }
     }
 }

@@ -98,6 +98,14 @@ public enum Legibility {
         return pulled(color, toward: anchor) { contrast($0, background) >= minimum }
     }
 
+    /// The colour of the hint in an empty text field, as a solid colour. A field the system draws (an NSTextField)
+    /// paints its placeholder opaque whatever alpha it is given, so the quiet ink has to be mixed with what is behind it
+    /// here: the field's own wash over a panel's worst-case ground.
+    public static func placeholder(lightInk: Bool) -> RGBA {
+        let ground = composite(hover(lightInk: lightInk), over: panelGround(lightInk: lightInk))
+        return composite((lightInk ? white : ink).withAlpha(tertiary.alpha), over: ground)
+    }
+
     /// The tint panels (Command Bar, History, Boosts…) are drawn with, over whatever the page behind them is.
     public static func panelTint(lightInk: Bool) -> RGBA { lightInk ? RGBA(0.07, 0.06, 0.14, 0.72) : RGBA(1, 1, 1, 0.74) }
 

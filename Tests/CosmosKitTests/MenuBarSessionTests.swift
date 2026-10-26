@@ -278,4 +278,18 @@ import WebKit
         rig.store.settings.radialMenu.enabled = false
         #expect(told == 2, "only the menu-bar settings count")
     }
+
+    /// The page the panel is on is saved as it loads. That is bookkeeping, not a change of settings: acting on it would
+    /// bring the panel back to the front (and take the keyboard) every time a page finished loading in the background.
+    @Test func rememberingThePageTheyAreOnDoesNotTellTheApp() {
+        let rig = Rig()
+        var told = 0
+        rig.store.onMenuBarChange = { told += 1 }
+        rig.store.settings.menuBar.remember(URL(string: "https://example.com/a"))
+        rig.store.settings.menuBar.remember(URL(string: "https://example.com/b"))
+        #expect(told == 0)
+        #expect(rig.store.settings.menuBar.lastAddress == "https://example.com/b")
+        rig.store.settings.menuBar.homeAddress = "example.org"
+        #expect(told == 1)
+    }
 }

@@ -356,7 +356,7 @@ struct FieldInput: View {
 
     var body: some View {
         NativeField(text: $text, placeholder: placeholder, focused: $focused, onSubmit: onSubmit,
-                    textColor: NSColor(palette.text), placeholderColor: NSColor(palette.tertiary), caretColor: NSColor(palette.accent))
+                    textColor: NSColor(palette.text), placeholderColor: NSColor(palette.placeholder), caretColor: NSColor(palette.accent))
             .frame(height: 20)
             .padding(.horizontal, Metrics.Space.m)
             .frame(width: width, height: Metrics.Control.height)
