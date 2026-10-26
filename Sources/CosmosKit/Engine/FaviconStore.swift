@@ -34,7 +34,7 @@ public final class FaviconStore {
 
     private static let maxParallel = 4
     private static let maxAge: TimeInterval = 14 * 24 * 3600
-    private static let maxSide = 128
+    nonisolated private static let maxSide = 128
 
     /// - Parameter offline: never touch the network (demos and automated runs); only icons already on disk are shown.
     public init(directory: URL = CosmosPaths.dataDirectory.appendingPathComponent("Favicons", isDirectory: true), offline: Bool = false) {
@@ -203,8 +203,8 @@ public final class FaviconStore {
 
     // MARK: Parsing and decoding
 
-    private static let linkTag = try! NSRegularExpression(pattern: #"<link\b[^>]*>"#, options: .caseInsensitive)
-    private static let attribute = try! NSRegularExpression(pattern: #"([a-zA-Z][a-zA-Z0-9_:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))"#)
+    nonisolated(unsafe) private static let linkTag = try! NSRegularExpression(pattern: #"<link\b[^>]*>"#, options: .caseInsensitive)
+    nonisolated(unsafe) private static let attribute = try! NSRegularExpression(pattern: #"([a-zA-Z][a-zA-Z0-9_:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))"#)
 
     /// Icon links (`rel` containing "icon") in the head of `html`, in page order, resolved against `base`.
     nonisolated static func iconLinks(inHTML html: String, base: URL) -> [Candidate] {

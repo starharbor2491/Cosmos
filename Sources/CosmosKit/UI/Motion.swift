@@ -43,7 +43,7 @@ private struct PressEffect: ViewModifier {
     }
 }
 
-private struct PressMonitor: NSViewRepresentable {
+struct PressMonitor: NSViewRepresentable {
     let onChange: (Bool) -> Void
 
     func makeNSView(context: Context) -> NSView {

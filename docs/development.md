@@ -95,6 +95,10 @@ Every measurement in the interface comes from `Sources/CosmosKit/UI/Metrics.swif
 
 The `spatial` automation step checks that the sidebar actually follows them. Views tagged `.spatial("name")` report their frames while an automation run is recording, and `SpatialProbe.check` applies the rules (all icons share a column, a folder's children sit under its icon, titles sit one gap after their icon, rows share edges and height, the address pill and Favorites span the rows' width, section rules reach the edge). A rule is one line in `SpatialProbe.swift`, with a test in `SpatialProbeTests` that feeds it a deliberately misaligned layout.
 
+## Settings controls
+
+Settings (`Sources/CosmosKit/Settings/`) draws every control itself: switches, segmented choices, dropdowns that open in place, buttons, text fields, confirmation dialogs, even the focus ring (shown only while the keyboard is what you are using). They are in `SettingsControls.swift`, built from shapes and text on top of one `TapTarget` (hover, press, Return/Space, accessibility traits, a tick under the finger). `NoSystemControlsInSettingsTests` scans the folder and fails on any system `Toggle`, `Picker`, `Button`, `Form`, `TabView`, `List`, `TextField`, `Menu`, `ProgressView`, `NSAlert` or similar, so a new setting can't quietly bring one back. The only system dialog left is the file chooser for "Choose a Folder…", which has no substitute.
+
 ## Layout of the package
 
 `Package.swift` lists the targets. Swift 5 language mode is used so that the UI code stays simple under strict concurrency. Resource files (`public_suffix_rules.txt`, `search-engines.json`, `top-domains.txt`, `agent.js`, the fallback filter rules) are SwiftPM resources, found through `Bundle.module`; the build script copies the resulting bundles into the app.
