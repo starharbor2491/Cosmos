@@ -5,6 +5,37 @@ import WebKit
 public final class CosmosWebView: WKWebView {
     weak var runtime: TabRuntime?
 
+    /// The click that is about to ask for a context menu, as the click itself says it: where it was in the window and
+    /// which modifier keys were down. WebKit answers a moment later, after the page has had its say, and by then the
+    /// keyboard may have changed and the page's idea of where the pointer was is only as good as its zoom arithmetic.
+    struct Click {
+        var location: NSPoint
+        var modifiers: NSEvent.ModifierFlags
+        var uptime: TimeInterval
+    }
+
+    private var lastClick: Click?
+
+    func noteClick(_ event: NSEvent) {
+        lastClick = Click(location: event.locationInWindow, modifiers: event.modifierFlags.intersection(.deviceIndependentFlagsMask), uptime: event.timestamp)
+    }
+
+    /// The last right (or control) click, if it was recent enough to be the one a menu is being asked for.
+    func recentClick() -> Click? {
+        guard let lastClick, ProcessInfo.processInfo.systemUptime - lastClick.uptime < 1.5 else { return nil }
+        return lastClick
+    }
+
+    public override func rightMouseDown(with event: NSEvent) {
+        noteClick(event)
+        super.rightMouseDown(with: event)
+    }
+
+    public override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.control) { noteClick(event) }
+        super.mouseDown(with: event)
+    }
+
     public override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
         super.willOpenMenu(menu, with: event)
         guard let runtime else { return }

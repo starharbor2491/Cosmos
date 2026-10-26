@@ -201,7 +201,8 @@ public enum RadialLayout {
     /// With a layout the user made, the ring is exactly what they chose, in their order, and everything else the system
     /// menu offered waits under "More". Without one (or when none of their choices is on this menu) the context's
     /// default comes first and WebKit's remaining items follow, up to what fits; the rest go under "More". Nothing the
-    /// system menu offered is ever lost.
+    /// system menu offered is ever lost. (That is everything WebKit puts on its menu; the extras the system adds when the
+    /// menu is drawn, such as Services, only exist in the system menu, which ⌥-click opens.)
     public static func ring(entries: [RadialEntry], context: RadialContext, custom: [RadialAction]?) -> [RadialEntry] {
         if let custom, !custom.isEmpty {
             let (placed, rest) = place(entries, custom)

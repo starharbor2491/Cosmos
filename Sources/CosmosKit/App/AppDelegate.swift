@@ -218,10 +218,15 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
 
     private func installMenuBarBrowser() {
         let browser = MenuBarBrowser(store: store, openInCosmos: { [weak self] url in self?.openInBrowser(url) },
-                                     showSettings: { [weak self] in self?.showSettings(tab: .menuBar) },
+                                     showSettings: { [weak self] in
+                                         // Cosmos is not the frontmost app when its icon is used, so Settings would open behind another app.
+                                         NSApp.activate(ignoringOtherApps: true)
+                                         self?.showSettings(tab: .menuBar)
+                                     },
                                      showBrowser: { [weak self] in self?.showBrowserWindow() })
         menuBar = browser
         store.onMenuBarChange = { [weak browser] in browser?.sync() }
+        store.onHistoryCleared = { [weak browser] in browser?.forgetPage() }
         browser.sync()
     }
 
@@ -254,6 +259,7 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
         let incognito = BrowserStore(directory: nil, incognito: true)
         wire(incognito)
         incognito.favicons.offline = store.favicons.offline
+        incognito.inheritPreferences(from: store)
         incognito.blocker = store.blocker
         let state = incognito.makeWindowState()
         let c = openWindow(state: state, store: incognito)
@@ -333,10 +339,15 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
 
     // MARK: Menu validation
 
+    /// Whether menu commands that act on a browser window mean anything now. They do not while the menu-bar panel holds the
+    /// keyboard: `active` would fall back to the last browser window and the command would change a window nobody is
+    /// looking at.
+    static func windowCommandsApply(keyWindow: NSWindow?) -> Bool { !(keyWindow is MenuBarPanel) }
+
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         guard let action = item.representedObject as? MenuAction else { return true }
         if action.needsWindow {
-            guard let c = active else { return false }
+            guard Self.windowCommandsApply(keyWindow: NSApp.keyWindow), let c = active else { return false }
             return action.enabled?(c) ?? true
         }
         return true
@@ -345,7 +356,7 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
     @objc func performMenuAction(_ sender: NSMenuItem) {
         guard let action = sender.representedObject as? MenuAction else { return }
         if action.needsWindow {
-            guard let c = active else { return }
+            guard Self.windowCommandsApply(keyWindow: NSApp.keyWindow), let c = active else { return }
             action.run(c)
         } else {
             action.run(active)

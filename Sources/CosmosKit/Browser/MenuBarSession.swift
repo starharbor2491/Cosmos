@@ -130,11 +130,15 @@ final class MenuBarHost: TabHost {
         switch disposition {
         case .currentTab: tab.load(url)
         case .newTabForeground, .newTabBackground, .peek, .split: session?.onOpenInCosmos(url)
-        case .download: store.tab(tab, open: url, as: .download)
+        case .download: store.startDownload(of: url, from: tab)
         }
     }
 
-    func tab(_ tab: TabRuntime, createChildWith configuration: WKWebViewConfiguration, features: WKWindowFeatures) -> WKWebView? { nil }
+    /// Only a script-sized window gets here (the rest load in place, see `opensNewWindowsInPlace`): an OAuth sign-in needs
+    /// its opener, so it is a window of its own.
+    func tab(_ tab: TabRuntime, createChildWith configuration: WKWebViewConfiguration, features: WKWindowFeatures) -> WKWebView? {
+        store.openPopup(from: tab, configuration: configuration, features: features)
+    }
 
     func tabRequestsClose(_ tab: TabRuntime) { session?.onHide() }
 

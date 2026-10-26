@@ -37,7 +37,7 @@ struct RadialMenuView: View {
         ZStack(alignment: .topLeading) {
             Color.black.opacity(0.14)
                 .contentShape(Rectangle())
-                .onTapGesture(count: 1, coordinateSpace: .local) { handleClick(at: $0) }
+                .onTapGesture(count: 1, coordinateSpace: .local) { session.click(at: $0) }
                 .onContinuousHover(coordinateSpace: .local) { phase in
                     if case .active(let point) = phase { session.pointerMoved(to: point) }
                 }
@@ -78,13 +78,13 @@ struct RadialMenuView: View {
                     if let symbol = entry.symbol {
                         Image(systemName: symbol).font(.system(size: 19, weight: .semibold)).frame(height: 22)
                     }
-                    if count <= 6 || session.depth > 0 || entry.symbol == nil {
-                        Text(Self.short(entry.title)).font(.system(size: entry.symbol == nil ? 11 : 9.5, weight: .semibold))
-                            .multilineTextAlignment(.center).lineLimit(entry.symbol == nil ? 3 : 2).minimumScaleFactor(0.8)
-                    }
+                    // Every slice is named, so the ring can be read instead of recalled (a busier ring uses smaller type).
+                    Text(Self.short(entry.title)).font(.system(size: entry.symbol == nil ? 11 : (count > 6 ? 9 : 9.5), weight: .semibold))
+                        .multilineTextAlignment(.center).lineLimit(entry.symbol == nil ? 3 : 2).minimumScaleFactor(0.75)
                 }
-                .frame(width: 72)
+                .frame(width: count > 6 ? 62 : 72)
                 .foregroundStyle(lit ? palette.onAccent : palette.text)
+                .animation(Motion.quick, value: lit)
                 .opacity(entry.isEnabled ? 1 : 0.35)
                 .overlay(alignment: .topTrailing) {
                     if entry.isGroup { Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold)).foregroundStyle(lit ? palette.onAccent : palette.secondary).offset(x: -8, y: 2) }
@@ -122,20 +122,9 @@ struct RadialMenuView: View {
 
     /// Slices are narrow: long titles fit better without their lead-in.
     private static func short(_ title: String) -> String {
-        for prefix in ["Open Link in ", "Open in ", "Open "] where title.hasPrefix(prefix) && title.count > prefix.count { return String(title.dropFirst(prefix.count)) }
+        // "Open Link" stays whole: without its noun it would just say "Link".
+        for prefix in ["Open Link in ", "Open Image in ", "Open Frame in ", "Open in "] where title.hasPrefix(prefix) && title.count > prefix.count { return String(title.dropFirst(prefix.count)) }
         return title
-    }
-
-    private func handleClick(at point: CGPoint) {
-        let relative = session.relative(point)
-        let distance = hypot(Double(relative.x), Double(relative.y))
-        if let index = RadialGeometry.slice(at: relative, count: session.ring.count) {
-            session.choose(index)
-        } else if distance < RadialGeometry.innerRadius {
-            session.back()
-        } else {
-            session.finish()
-        }
     }
 }
 
@@ -166,7 +155,7 @@ private struct RadialInputMonitor: NSViewRepresentable {
             monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .rightMouseDown, .rightMouseDragged, .rightMouseUp, .scrollWheel]) { [weak self] event in
                 guard let self, let session = self.session, let window = self.window, event.window === window else { return event }
                 nonisolated(unsafe) let seen = event
-                let used = MainActor.assumeIsolated { self.handle(seen, session: session, window: window) }
+                let used = MainActor.assumeIsolated { self.input(from: seen, in: window).map { session.receive($0) } ?? false }
                 return used ? nil : event
             }
         }
@@ -178,43 +167,21 @@ private struct RadialInputMonitor: NSViewRepresentable {
 
         deinit { if let monitor { NSEvent.removeMonitor(monitor) } }
 
+        /// The event as the ring reads it; nil for events that are not its business.
         @MainActor
-        private func handle(_ event: NSEvent, session: RadialSession, window: NSWindow) -> Bool {
+        private func input(from event: NSEvent, in window: NSWindow) -> RadialInput? {
             let height = window.contentView?.bounds.height ?? window.frame.height
             let point = CGPoint(x: event.locationInWindow.x, y: height - event.locationInWindow.y)
             switch event.type {
-            case .rightMouseDown:
-                session.finish()
-                return true
-            case .rightMouseDragged:
-                session.pointerMoved(to: point, flickingFromOrigin: true)
-                return false
-            case .rightMouseUp:
-                // The button that opened the ring: let go over a slice and it is chosen; let go in the hub and the ring stays.
-                guard session.buttonIsDown else { return false }
-                session.buttonIsDown = false
-                session.pointerMoved(to: point, flickingFromOrigin: true)
-                if session.hovered != nil, !session.isInHub(point, flickingFromOrigin: true) { session.chooseHovered() }
-                return false
-            case .scrollWheel:
-                session.finish()
-                return false
+            case .rightMouseDown: return .rightDown
+            case .rightMouseDragged: return .rightDragged(point)
+            case .rightMouseUp: return .rightUp(point)
+            case .scrollWheel: return .scroll
             case .keyDown:
                 let others = event.modifierFlags.intersection([.command, .control, .option]).isEmpty == false
-                guard let command = RadialKeyCommand.from(keyCode: event.keyCode, shift: event.modifierFlags.contains(.shift),
-                                                          otherModifiers: others, characters: event.charactersIgnoringModifiers) else { return false }
-                switch command {
-                case .back: session.back()
-                case .chooseHovered:
-                    // With nothing lit, Return and Space are not the ring's.
-                    guard session.hovered != nil else { return false }
-                    session.chooseHovered()
-                case .step(let delta): session.step(delta)
-                case .choose(let index): session.choose(index)
-                }
-                return true
-            default:
-                return false
+                return RadialKeyCommand.from(keyCode: event.keyCode, shift: event.modifierFlags.contains(.shift),
+                                             otherModifiers: others, characters: event.charactersIgnoringModifiers).map(RadialInput.key)
+            default: return nil
             }
         }
     }

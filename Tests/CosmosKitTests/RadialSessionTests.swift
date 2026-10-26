@@ -189,6 +189,49 @@ enum RadialFixture {
         #expect(!session.isInHub(CGPoint(x: 12, y: 12)))
     }
 
+    /// The far reach exists for a flick with the button held. A click is a click on the ring or it is a click away.
+    @Test func aClickBesideTheRingClosesItInsteadOfChoosingTheSliceInThatDirection() async throws {
+        let target = MenuTarget()
+        let (session, haptics, counter) = session(RadialFixture.linkMenu(target))
+        let outside = CGPoint(x: session.center.x + 250, y: session.center.y)
+
+        session.click(at: outside)
+
+        #expect(counter.finished == 1)
+        #expect(haptics.played.isEmpty, "nothing was chosen, so nothing ticks")
+        try await Task.sleep(for: .milliseconds(80))
+        #expect(target.fired.isEmpty)
+    }
+
+    @Test func aClickOnASliceChoosesItAndAClickOnTheHubGoesBack() async throws {
+        let target = MenuTarget()
+        let (session, _, counter) = session(RadialFixture.linkMenu(target))
+        let count = session.ring.count
+        let index = try #require(session.ring.firstIndex { $0.action == .copyLink })
+        let at = RadialGeometry.offset(of: index, count: count, radius: 90)
+
+        session.click(at: session.center)
+        #expect(counter.finished == 1, "the hub of the first ring closes it")
+
+        session.click(at: CGPoint(x: session.center.x + at.x, y: session.center.y + at.y))
+        #expect(counter.finished == 2)
+        try await Task.sleep(for: .milliseconds(80))
+        #expect(target.fired == ["copyLink"])
+    }
+
+    @Test func aSliceLightsOnlyUnderThePointerOnTheRingButAFlickReachesFar() {
+        let target = MenuTarget()
+        let (session, haptics, _) = session(RadialFixture.linkMenu(target))
+        let far = CGPoint(x: session.center.x, y: session.center.y - 250)
+
+        session.pointerMoved(to: far)
+        #expect(session.hovered == nil, "250 pt away is not on the ring")
+        #expect(haptics.played.isEmpty)
+
+        session.pointerMoved(to: CGPoint(x: session.origin.x, y: session.origin.y - 250), flickingFromOrigin: true)
+        #expect(session.hovered == 0, "a flick with the button held still reaches")
+    }
+
     @Test func theKeyboardStepsAroundTheEnabledSlicesAndWraps() {
         let target = MenuTarget()
         let menu = RadialFixture.menu([
@@ -277,6 +320,25 @@ enum RadialFixture {
         #expect(show(rig, runtime, menu: RadialFixture.linkMenu(MenuTarget())))
     }
 
+    /// An incognito window is a store of its own with default settings. What a person chose for the ring (off, off on a
+    /// site, their own layout) has to hold there too, or private windows would quietly ignore it.
+    @Test func anIncognitoWindowKeepsWhatWasChosenForTheRingAndTheHaptics() {
+        let main = Rig()
+        main.store.settings.radialMenu.enabled = false
+        main.store.settings.radialMenu.disable(host: "example.com")
+        main.store.settings.radialMenu.setRing([.copyLink], for: .link)
+        main.store.settings.trackpadHaptics = false
+
+        let incognito = BrowserStore(directory: nil, incognito: true)
+        #expect(incognito.settings.radialMenu == RadialSettings(), "starts with the defaults")
+        incognito.inheritPreferences(from: main.store)
+
+        #expect(incognito.settings.radialMenu == main.store.settings.radialMenu)
+        #expect(!incognito.settings.trackpadHaptics)
+        #expect(!incognito.haptics.isEnabled)
+        #expect(incognito.settings.menuBar == MenuBarSettings(), "nothing about the menu-bar browser or history is copied")
+    }
+
     @Test func aMenuWithNothingOnItIsLeftToTheSystem() throws {
         let rig = Rig()
         let runtime = try shown(rig)
@@ -341,6 +403,52 @@ enum RadialFixture {
         withExtendedLifetime(window) {}
     }
 
+    private func click(_ type: NSEvent.EventType = .rightMouseDown, at point: NSPoint, flags: NSEvent.ModifierFlags = [], in window: NSWindow) -> NSEvent {
+        NSEvent.mouseEvent(with: type, location: point, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
+                           windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+    }
+
+    /// The ring goes where the click was, read from the click itself. The page's own idea of where it was (its client
+    /// coordinates times the zoom) is only a guess, and a wrong one once the view is pinched.
+    @Test(.disabled(if: NSWorkspace.shared.isVoiceOverEnabled, "the ring steps aside for VoiceOver, on purpose"))
+    func theRingOpensWhereTheClickWasEvenWhenThePageIsPinchZoomed() throws {
+        let (rig, runtime, window) = try rigWithWindow()
+        report(runtime, ["link": "https://example.com/a", "x": 10.0, "y": 10.0])
+        runtime.webView.allowsMagnification = true
+        runtime.webView.setMagnification(2, centeredAt: .zero)
+        runtime.webView.noteClick(click(at: NSPoint(x: 300, y: 400), in: window))
+
+        #expect(runtime.presentRadialMenu(RadialFixture.linkMenu(MenuTarget())))
+
+        let open = try #require(rig.window.radial)
+        #expect(open.origin == CGPoint(x: 300, y: 600 - 400), "the click, with y turned over for the ring")
+        withExtendedLifetime(window) {}
+    }
+
+    /// ⌥ is read from the click, not from the keyboard at whatever moment the menu happens to be asked for.
+    @Test(.disabled(if: NSWorkspace.shared.isVoiceOverEnabled, "the ring steps aside for VoiceOver, on purpose"))
+    func optionHeldOnTheClickAsksForTheSystemMenu() throws {
+        let (rig, runtime, window) = try rigWithWindow()
+        report(runtime, ["link": "https://example.com/a", "x": 10.0, "y": 10.0])
+
+        runtime.webView.noteClick(click(at: NSPoint(x: 100, y: 100), flags: .option, in: window))
+        #expect(!runtime.presentRadialMenu(RadialFixture.linkMenu(MenuTarget())), "⌥-click: the system menu")
+        #expect(rig.window.radial == nil)
+
+        runtime.webView.noteClick(click(at: NSPoint(x: 100, y: 100), in: window))
+        #expect(runtime.presentRadialMenu(RadialFixture.linkMenu(MenuTarget())), "a later plain click: the ring")
+    }
+
+    @Test func aClickLongPastIsNotWhereTheMenuIsAskedFor() throws {
+        let (_, runtime, window) = try rigWithWindow()
+        let old = NSEvent.mouseEvent(with: .rightMouseDown, location: NSPoint(x: 5, y: 5), modifierFlags: .option, timestamp: ProcessInfo.processInfo.systemUptime - 30,
+                                     windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+        runtime.webView.noteClick(old)
+        #expect(runtime.webView.recentClick() == nil, "a menu from the keyboard's menu key is not tied to a click from half a minute ago")
+        runtime.webView.noteClick(click(at: NSPoint(x: 9, y: 9), in: window))
+        #expect(runtime.webView.recentClick()?.location == NSPoint(x: 9, y: 9))
+    }
+
     @Test func withoutAWindowOrWhenTurnedOffTheSystemMenuIsUsed() throws {
         let (rig, runtime, window) = try rigWithWindow()
         report(runtime, ["link": "https://example.com/a", "x": 10.0, "y": 10.0])
@@ -390,5 +498,86 @@ enum RadialFixture {
 
     @Test func aShortcutWithAModifierIsLeftForWhoeverOwnsIt() {
         #expect(command(0, modified: true, characters: "3") == nil, "⌘3 is not slice 3")
+    }
+}
+
+/// What the ring does with the mouse and keys it is given while it is open. (The AppKit monitor only turns events into
+/// these; none of this was reachable from the automation harness, which sends events around the monitors.)
+@MainActor
+@Suite struct RadialInputTests {
+    private func open(_ target: MenuTarget) -> (RadialSession, RadialFixture.Recorder, RadialSessionTests.Counter) {
+        _ = NSApplication.shared
+        let (haptics, recorder) = RadialFixture.haptics()
+        let session = RadialSession(menu: RadialFixture.linkMenu(target), context: .link, center: CGPoint(x: 400, y: 300), windowSize: CGSize(width: 800, height: 600), custom: nil, haptics: haptics)
+        let counter = RadialSessionTests.Counter()
+        session.onFinish = { counter.finished += 1 }
+        return (session, recorder, counter)
+    }
+
+    private func over(_ index: Int, of session: RadialSession, radius: Double = 90) -> CGPoint {
+        let o = RadialGeometry.offset(of: index, count: session.ring.count, radius: radius)
+        return CGPoint(x: session.origin.x + o.x, y: session.origin.y + o.y)
+    }
+
+    @Test func lettingGoOfTheButtonOverASliceChoosesItAndTheEventGoesOn() async throws {
+        let target = MenuTarget()
+        let (session, _, counter) = open(target)
+        let index = try #require(session.ring.firstIndex { $0.action == .copyLink })
+
+        #expect(!session.receive(.rightDragged(over(index, of: session))))
+        #expect(session.hovered == index)
+        #expect(!session.receive(.rightUp(over(index, of: session))), "the release is not consumed")
+        #expect(counter.finished == 1)
+        try await Task.sleep(for: .milliseconds(80))
+        #expect(target.fired == ["copyLink"])
+    }
+
+    @Test func lettingGoInTheHubLeavesTheRingOpenForAClick() {
+        let (session, _, counter) = open(MenuTarget())
+        _ = session.receive(.rightUp(session.origin))
+        #expect(counter.finished == 0)
+        #expect(!session.buttonIsDown)
+        // A second release (the button of a later click) is not the one that opened it.
+        _ = session.receive(.rightUp(over(0, of: session)))
+        #expect(counter.finished == 0)
+    }
+
+    @Test func aFlickPastTheRingStillChoosesOnRelease() async throws {
+        let target = MenuTarget()
+        let (session, _, counter) = open(target)
+        let index = try #require(session.ring.firstIndex { $0.action == .copyLink })
+        let far = over(index, of: session, radius: 300)
+        _ = session.receive(.rightDragged(far))
+        _ = session.receive(.rightUp(far))
+        #expect(counter.finished == 1)
+        try await Task.sleep(for: .milliseconds(80))
+        #expect(target.fired == ["copyLink"])
+    }
+
+    @Test func aNewRightClickOrAScrollPutsTheRingAway() {
+        let (first, _, firstCounter) = open(MenuTarget())
+        #expect(first.receive(.rightDown), "the click that closes it is used up, so it does not open another menu on top")
+        #expect(firstCounter.finished == 1)
+        let (second, _, secondCounter) = open(MenuTarget())
+        #expect(!second.receive(.scroll))
+        #expect(secondCounter.finished == 1)
+    }
+
+    @Test func returnPicksOnlyWhatIsLitAndOtherwiseIsNotTheRings() {
+        let (session, _, counter) = open(MenuTarget())
+        #expect(!session.receive(.key(.chooseHovered)), "nothing lit: Return and Space go to whoever they were for")
+        #expect(counter.finished == 0)
+        #expect(session.receive(.key(.step(1))))
+        #expect(session.receive(.key(.chooseHovered)))
+        #expect(counter.finished == 1)
+    }
+
+    @Test func numberKeysPickAndEscapeGoesBack() {
+        let (session, _, counter) = open(MenuTarget())
+        #expect(session.receive(.key(.choose(1))))
+        #expect(counter.finished == 1)
+        let (other, _, otherCounter) = open(MenuTarget())
+        #expect(other.receive(.key(.back)))
+        #expect(otherCounter.finished == 1)
     }
 }

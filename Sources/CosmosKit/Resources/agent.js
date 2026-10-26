@@ -41,28 +41,36 @@
   }, true));
 
   // What is under the pointer on right click / hover (for the context menu and the status bubble).
-  function linkOf(node) { while (node && node !== document) { if (node.tagName === 'A' && node.href) return node; node = node.parentNode; } return null; }
+  // The address of the link the node is in: an HTML <a>, or an SVG <a> (whose href is an animated string).
+  function linkHref(node) {
+    for (; node && node !== document; node = node.parentNode) {
+      if (node.tagName === 'A' && node.href) return node.href;
+      if (typeof SVGAElement !== 'undefined' && node instanceof SVGAElement && node.href && node.href.baseVal) {
+        try { return new URL(node.href.baseVal, document.baseURI).href; } catch (err) { /* not an address */ }
+      }
+    }
+    return null;
+  }
   // Capturing, so it runs before the page's own handlers; it only reports and never calls preventDefault, so a site
   // that draws its own right-click menu keeps it (and then WebKit shows no system menu for Cosmos to replace).
   const editableOf = (n) => !!(n && (n.isContentEditable || (n.closest && n.closest('input:not([type=button]):not([type=submit]):not([type=checkbox]):not([type=radio]), textarea, [contenteditable=""], [contenteditable="true"]'))));
   const mediaOf = (n) => !!(n && n.closest && n.closest('video, audio'));
   document.addEventListener('contextmenu', e => {
-    const a = linkOf(e.target);
+    const href = linkHref(e.target);
     const img = e.target && e.target.tagName === 'IMG' ? e.target.currentSrc || e.target.src : null;
-    post({ type: 'context', link: a ? a.href : null, image: img, selection: String(window.getSelection() || '').slice(0, 2000),
+    post({ type: 'context', link: href, image: img, selection: String(window.getSelection() || '').slice(0, 2000),
            editable: editableOf(e.target), media: mediaOf(e.target), x: e.clientX, y: e.clientY });
   }, true);
   // Force Touch: pressing hard on a link opens it in Peek, like ⇧-click. Only real presses count (a page can
   // dispatch these events itself), and the system's own link preview is switched off for links.
-  document.addEventListener('webkitmouseforcewillbegin', e => { if (e.isTrusted && linkOf(e.target)) e.preventDefault(); }, true);
+  document.addEventListener('webkitmouseforcewillbegin', e => { if (e.isTrusted && linkHref(e.target)) e.preventDefault(); }, true);
   document.addEventListener('webkitmouseforcedown', e => {
-    const a = e.isTrusted ? linkOf(e.target) : null;
-    if (a) post({ type: 'peekLink', href: a.href });
+    const href = e.isTrusted ? linkHref(e.target) : null;
+    if (href) post({ type: 'peekLink', href });
   }, true);
   let lastHover = null;
   document.addEventListener('mouseover', e => {
-    const a = linkOf(e.target);
-    const h = a ? a.href : null;
+    const h = linkHref(e.target);
     if (h !== lastHover) { lastHover = h; post({ type: 'hover', href: h }); }
   }, true);
   document.addEventListener('mouseleave', () => { if (lastHover) { lastHover = null; post({ type: 'hover', href: null }); } }, true);
@@ -75,7 +83,9 @@
 
   // Modified clicks are handled natively; plain clicks on target=_blank links go through createWebView.
   // Keyboard: Escape closes overlays the browser owns even while a page has focus.
+  // After the page's own handlers have run: a site that used Escape for something of its own (a modal, a menu) and said
+  // so with preventDefault keeps it.
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && isTop) post({ type: 'escape' });
+    if (e.key === 'Escape' && isTop) setTimeout(() => { if (!e.defaultPrevented) post({ type: 'escape' }); }, 0);
   }, true);
 })();

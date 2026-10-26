@@ -5,6 +5,12 @@ import WebKit
 @testable import CosmosKit
 @testable import CosmosCore
 
+/// What WebKit hands over for `window.open(url, name, "width=480,height=640")`.
+private final class SizedFeatures: WKWindowFeatures {
+    override var width: NSNumber? { 480 }
+    override var height: NSNumber? { 640 }
+}
+
 /// The page behind the menu-bar browser: the same profile data store as the browser windows, so the cookies and logins
 /// are shared, and the small differences a panel needs.
 @MainActor
@@ -179,6 +185,43 @@ import WebKit
         session.teardown()
     }
 
+    /// A page that asks for a script-sized window (an OAuth sign-in, a payment sheet) needs its opener, so it gets a
+    /// window of its own, as in the browser. Only plain "open in a new tab" requests are loaded in the panel.
+    @Test func aScriptSizedPopupGetsItsOwnWindowButAPlainNewWindowLoadsInPlace() throws {
+        let rig = Rig()
+        var shown: [TabRuntime] = []
+        rig.store.onPopupWindow = { runtime, _ in shown.append(runtime) }
+        let session = MenuBarSession(store: rig.store)
+        let runtime = session.prepare()
+
+        let plain = WKWindowFeatures()
+        let sized = SizedFeatures()
+        #expect(sized.width != nil, "the test's popup features should carry a size")
+        #expect(TabRuntime.loadsNewWindowInPlace(hostOpensInPlace: true, features: plain))
+        #expect(!TabRuntime.loadsNewWindowInPlace(hostOpensInPlace: true, features: sized))
+        #expect(!TabRuntime.loadsNewWindowInPlace(hostOpensInPlace: false, features: plain))
+
+        let popup = runtime.host?.tab(runtime, createChildWith: WKWebViewConfiguration(), features: sized)
+        #expect(popup != nil)
+        #expect(shown.count == 1 && shown.first?.isEphemeral == true)
+        #expect(shown.first?.webView === popup)
+        session.teardown()
+    }
+
+    @Test func aDownloadFromThePanelDoesNotNeedABrowserWindow() {
+        let rig = Rig()
+        let session = MenuBarSession(store: rig.store)
+        let runtime = session.prepare()
+        // No browser window is active, which is what used to make the store drop the request.
+        rig.store.activeWindow = nil
+        var asked: [URL] = []
+        rig.store.downloadStarter = { url, _ in asked.append(url) }
+        let file = URL(string: "https://example.com/file.zip")!
+        runtime.host?.tab(runtime, open: file, as: .download)
+        #expect(asked == [file])
+        session.teardown()
+    }
+
     @Test func pagesForTheBrowserWindowsGoThereAndTheRestStaysInThePanel() {
         let rig = Rig()
         let session = MenuBarSession(store: rig.store)
@@ -281,6 +324,29 @@ import WebKit
 
     /// The page the panel is on is saved as it loads. That is bookkeeping, not a change of settings: acting on it would
     /// bring the panel back to the front (and take the keyboard) every time a page finished loading in the background.
+    @Test func clearingHistoryForgetsTheMenuBarPageToo() {
+        let rig = Rig()
+        var cleared = 0
+        rig.store.onHistoryCleared = { cleared += 1 }
+        rig.store.settings.menuBar.remember(URL(string: "https://example.com/a?private=1"))
+        #expect(rig.store.settings.menuBar.lastAddress != nil)
+
+        rig.store.clearHistory()
+
+        #expect(rig.store.settings.menuBar.lastAddress == nil)
+        #expect(cleared == 1, "the app is told, so it can drop the page that is still loaded")
+    }
+
+    @Test func clearingTheHistoryDropsThePageThePanelStillHolds() {
+        let rig = Rig()
+        let browser = MenuBarBrowser(store: rig.store, openInCosmos: { _ in }, showSettings: {}, showBrowser: {})
+        rig.store.onHistoryCleared = { [weak browser] in browser?.forgetPage() }
+        _ = browser.session.prepare()
+        #expect(browser.session.runtime != nil)
+        rig.store.clearHistory()
+        #expect(browser.session.runtime == nil, "its back and forward list went with it")
+    }
+
     @Test func rememberingThePageTheyAreOnDoesNotTellTheApp() {
         let rig = Rig()
         var told = 0
@@ -291,5 +357,19 @@ import WebKit
         #expect(rig.store.settings.menuBar.lastAddress == "https://example.com/b")
         rig.store.settings.menuBar.homeAddress = "example.org"
         #expect(told == 1)
+    }
+}
+
+@MainActor
+@Suite struct MenuBarCommandTests {
+    /// With the panel holding the keyboard, ⌘T, ⌘D, ⌘F and the rest of the menu would run on the last browser window,
+    /// which is somewhere the person is not looking. Commands that need a browser window are off while the panel is key.
+    @Test func windowCommandsAreOffWhileThePanelHasTheKeyboard() {
+        _ = NSApplication.shared
+        let panel = MenuBarPanel(contentRect: NSRect(x: 0, y: 0, width: 10, height: 10), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+        let other = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 10, height: 10), styleMask: [.titled], backing: .buffered, defer: true)
+        #expect(!CosmosAppDelegate.windowCommandsApply(keyWindow: panel))
+        #expect(CosmosAppDelegate.windowCommandsApply(keyWindow: other))
+        #expect(CosmosAppDelegate.windowCommandsApply(keyWindow: nil))
     }
 }

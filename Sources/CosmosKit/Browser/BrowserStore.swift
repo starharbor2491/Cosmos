@@ -53,6 +53,10 @@ public final class BrowserStore: TabHost {
     @ObservationIgnored var onShowSettingsTab: ((SettingsTab) -> Void)?
     /// Shows an overlay in a browser window and brings that window forward.
     @ObservationIgnored var onPresent: ((Overlay) -> Void)?
+    /// Where a download starts. Tests replace it to see that one was asked for.
+    @ObservationIgnored var downloadStarter: ((URL, TabRuntime) -> Void)?
+    /// History was cleared: whatever the app keeps of where you have been (the menu-bar browser's page) goes too.
+    @ObservationIgnored var onHistoryCleared: (() -> Void)?
     /// The menu-bar browser's settings changed: the app shows, hides or rebuilds it.
     @ObservationIgnored var onMenuBarChange: (() -> Void)?
     @ObservationIgnored var onPopupWindow: ((TabRuntime, WKWindowFeatures) -> Void)?
@@ -151,12 +155,21 @@ public final class BrowserStore: TabHost {
         }
     }
 
-    /// Forgets where you have been: the visited pages, what the Command Bar learned from picking them, and the logos
-    /// fetched for those sites (the cache would otherwise still list every host).
+    /// Forgets where you have been: the visited pages, what the Command Bar learned from picking them, the logos
+    /// fetched for those sites (the cache would otherwise still list every host) and the page the menu-bar browser was on.
     public func clearHistory() {
         history.clear(since: nil)
         learned = LearnedSelections()
         favicons.removeAll()
+        settings.menuBar.lastAddress = nil
+        onHistoryCleared?()
+    }
+
+    /// An incognito window is a store of its own with default settings. It takes over the choices that are about how the
+    /// browser behaves rather than what it remembers, so a private window honours them too.
+    func inheritPreferences(from parent: BrowserStore) {
+        settings.radialMenu = parent.settings.radialMenu
+        settings.trackpadHaptics = parent.settings.trackpadHaptics
     }
 
     func saveSession() {

@@ -60,6 +60,21 @@ import Testing
         #expect(settings.lastAddress == "https://example.com/", "an address that long is not kept")
     }
 
+    @Test func turningRememberingOffForgetsTheStoredPageAtOnce() {
+        var settings = MenuBarSettings()
+        settings.remember(URL(string: "https://example.com/private?q=secret"))
+        #expect(settings.lastAddress != nil)
+        settings.rememberPage = false
+        #expect(settings.lastAddress == nil, "not at the next page load: now")
+        settings.rememberPage = true
+        #expect(settings.lastAddress == nil, "and turning it back on does not bring it back")
+    }
+
+    @Test func aFileThatKeepsAPageWhileNotRememberingDropsIt() throws {
+        let file = Data(#"{"rememberPage": false, "lastAddress": "https://example.com/?q=1"}"#.utf8)
+        #expect(try JSONDecoder().decode(MenuBarSettings.self, from: file).lastAddress == nil)
+    }
+
     @Test func notRememberingForgetsWhatWasKept() {
         var settings = MenuBarSettings()
         settings.remember(URL(string: "https://example.com/"))

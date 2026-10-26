@@ -37,7 +37,7 @@ struct GeneralPane: View {
                         Option(value: .light, label: "Light", symbol: "sun.max"),
                         Option(value: .dark, label: "Dark", symbol: "moon"),
                     ])
-                    .frame(width: 270)
+                    .frame(width: Metrics.Control.segmentedWidth)
                 }
                 Hairline()
                 SettingRow(title: "Show the link under the pointer", detail: "A small bubble with the address when you hover a link.") {
@@ -167,7 +167,7 @@ struct PrivacyPane: View {
 
     private func clearHistory() {
         Task {
-            let ok = await model.confirm(.init(title: "Clear your history?", message: "Visited pages, what the Command Bar learned from them and the saved site icons are removed. This can't be undone.",
+            let ok = await model.confirm(.init(title: "Clear your history?", message: "Visited pages, what the Command Bar learned from them, the saved site icons and the page the menu bar browser was on are removed. This can't be undone.",
                                                confirmTitle: "Clear History", destructive: true))
             guard ok else { return }
             store.clearHistory()

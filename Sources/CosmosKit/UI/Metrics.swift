@@ -90,5 +90,16 @@ enum Metrics {
         /// The window's navigation column and a question's width.
         static let navWidth: CGFloat = 212
         static let dialogWidth: CGFloat = 400
+        /// A switch's knob sits this far in from the track's edge.
+        static let knobInset: CGFloat = (switchHeight - knob) / 2
+        /// The square behind a pane's symbol, the column a row's symbol sits in, and the line of text inside a field.
+        static let paneIcon: CGFloat = 40
+        static let rowSymbol: CGFloat = 22
+        static let fieldText: CGFloat = 20
+        /// How far a scrolling pane's ends fade, and how much of the top of the window the title bar takes.
+        static let edgeFade: CGFloat = 28
+        static let titleBarClearance: CGFloat = 52
+        /// A choice of two or three sits in this much width.
+        static let segmentedWidth: CGFloat = 270
     }
 }

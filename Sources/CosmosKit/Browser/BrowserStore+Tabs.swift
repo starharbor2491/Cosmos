@@ -523,15 +523,29 @@ extension BrowserStore {
             w.showToast("Opened in the background", symbol: "arrow.up.right.square")
         case .peek: openPeek(url, from: tab.itemID, in: w)
         case .split: addSplit(in: w, with: url)
-        case .download:
-            tab.webView.startDownload(using: URLRequest(url: url)) { [weak self] download in
-                MainActor.assumeIsolated {
-                    guard let self else { return }
-                    download.delegate = self.downloads
-                    self.downloads.began(download, from: tab.webView)
-                }
+        case .download: startDownload(of: url, from: tab)
+        }
+    }
+
+    /// Downloads `url` through the page `tab` is showing (its cookies go with the request). Needs no window.
+    func startDownload(of url: URL, from tab: TabRuntime) {
+        if let downloadStarter { downloadStarter(url, tab); return }
+        tab.webView.startDownload(using: URLRequest(url: url)) { [weak self] download in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                download.delegate = self.downloads
+                self.downloads.began(download, from: tab.webView)
             }
         }
+    }
+
+    /// A script-sized window (an OAuth sign-in, a payment sheet) gets a small window of its own, like a real popup. It
+    /// needs no browser window, so a page in the menu-bar panel can have one too.
+    func openPopup(from tab: TabRuntime, configuration: WKWebViewConfiguration, features: WKWindowFeatures) -> WKWebView {
+        let rt = TabRuntime(itemID: UUID(), profileID: tab.profileID, configuration: configuration, host: self)
+        rt.isEphemeral = true
+        onPopupWindow?(rt, features)
+        return rt.webView
     }
 
     public func tab(_ tab: TabRuntime, showRadialMenu menu: NSMenu, context: RadialContext, center: CGPoint, windowSize: CGSize) -> Bool {
@@ -548,15 +562,8 @@ extension BrowserStore {
     }
 
     public func tab(_ tab: TabRuntime, createChildWith configuration: WKWebViewConfiguration, features: WKWindowFeatures) -> WKWebView? {
+        if TabRuntime.isScriptSizedPopup(features) { return openPopup(from: tab, configuration: configuration, features: features) }
         guard let w = window(showing: tab.itemID) ?? activeWindow else { return nil }
-        // Script-sized windows (OAuth consent, payment sheets) get their own small window, like a real popup.
-        let isPopup = features.width != nil || features.height != nil
-        if isPopup {
-            let rt = TabRuntime(itemID: UUID(), profileID: tab.profileID, configuration: configuration, host: self)
-            rt.isEphemeral = true
-            onPopupWindow?(rt, features)
-            return rt.webView
-        }
         // The page must be made from WebKit's configuration, so its runtime has to exist before selecting the tab
         // (selecting creates one from the profile's own configuration otherwise).
         guard let space = workspace.space(w.focusedSpaceID),
