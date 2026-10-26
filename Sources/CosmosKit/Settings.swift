@@ -30,13 +30,15 @@ public struct Settings: Codable, Equatable {
     public var memorySaverMinutes: Int = 30
     public var showStatusBubble = true
     public var closeWindowOnLastTab = false
+    /// Ticks under the finger on a Force Touch trackpad (a drop landing, a space changing).
+    public var trackpadHaptics = true
 
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
         case searchEngineID, appearance, sidebarWidth, sidebarSide, revealSidebarOnHover, adBlockingEnabled, enabledFilterLists
         case autoPictureInPicture, restoreTabsOnLaunch, showSearchSuggestions, peekFromPinned, permissionDecisions
-        case adBlockAllowlist, hasCompletedOnboarding, memorySaverMinutes, showStatusBubble, closeWindowOnLastTab
+        case adBlockAllowlist, hasCompletedOnboarding, memorySaverMinutes, showStatusBubble, closeWindowOnLastTab, trackpadHaptics
     }
 
     // Tolerant decoding: a settings file written by an older/newer build must never lock the user out.
@@ -52,5 +54,6 @@ public struct Settings: Codable, Equatable {
         get(.permissionDecisions, &permissionDecisions); get(.adBlockAllowlist, &adBlockAllowlist)
         get(.hasCompletedOnboarding, &hasCompletedOnboarding); get(.memorySaverMinutes, &memorySaverMinutes)
         get(.showStatusBubble, &showStatusBubble); get(.closeWindowOnLastTab, &closeWindowOnLastTab)
+        get(.trackpadHaptics, &trackpadHaptics)
     }
 }

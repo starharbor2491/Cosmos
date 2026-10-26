@@ -113,7 +113,7 @@ struct RowDropDelegate: DropDelegate {
 
     /// Updates the marker, with a tick under the finger each time it snaps to a new place.
     private func moveIndicator(_ new: DropIndicator) {
-        if indicator != new { Haptics.alignment() }
+        if indicator != new { store.haptics.alignment() }
         indicator = new
     }
     func dropExited(info: DropInfo) { if indicator?.id == targetID { indicator = nil } }
@@ -145,13 +145,13 @@ struct RowDropDelegate: DropDelegate {
         if let dragged = store.draggingItemID {
             if z == .into, target.isTab, ws.item(dragged)?.isTab == true {
                 store.splitWith(targetID, dragged: dragged, in: window)
-                Haptics.levelChange()
+                store.haptics.levelChange()
                 return true
             }
             guard let dest = destination(z) else { return false }
             let idx = DropActions.finalIndex(ws, dragged: dragged, parent: dest.parent, insertBefore: dest.index)
             store.dropMove(dragged, under: dest.parent, at: idx)
-            Haptics.levelChange()
+            store.haptics.levelChange()
             return true
         }
         return DropActions.externalURL(info) { url in
@@ -180,7 +180,7 @@ struct ContainerDropDelegate: DropDelegate {
         if let dragged = store.draggingItemID {
             let idx = atStart ? 0 : count
             store.dropMove(dragged, under: rootID, at: DropActions.finalIndex(ws, dragged: dragged, parent: rootID, insertBefore: idx))
-            Haptics.levelChange()
+            store.haptics.levelChange()
             return true
         }
         return DropActions.externalURL(info) { url in
@@ -194,7 +194,7 @@ extension BrowserStore {
     /// A drag that is cancelled never reports back, so this also watches the mouse button and clears itself once it is up.
     func beginDrag(_ id: UUID) -> NSItemProvider {
         draggingItemID = id
-        Haptics.generic()
+        haptics.generic()
         Task { @MainActor [weak self] in
             var upSince: Date?
             while let self, self.draggingItemID == id {

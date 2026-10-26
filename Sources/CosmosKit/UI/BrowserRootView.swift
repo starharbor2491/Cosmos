@@ -31,8 +31,8 @@ struct BrowserRootView: View {
         }
         .environment(\.palette, palette)
         .animation(.easeInOut(duration: 0.45), value: space.id)
-        .animation(.easeInOut(duration: 0.2), value: window.sidebarVisible)
-        .animation(.easeOut(duration: 0.16), value: window.overlay)
+        .animation(Motion.standard, value: window.sidebarVisible)
+        .animation(Motion.quick, value: window.overlay)
         .preferredColorScheme(palette.isDark ? .dark : .light)
         .frame(minWidth: 760, minHeight: 480)
     }

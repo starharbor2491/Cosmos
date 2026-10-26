@@ -187,6 +187,9 @@ public final class TabRuntime: NSObject {
             }
             self.host?.favicons.update(host: host, candidates: icons.map { FaviconStore.Candidate(href: $0.0, sizes: $0.1, rel: $0.2) }, pageURL: pageURL)
             themeColor = (body["themeColor"] as? String).flatMap(Self.parseCSSColor)
+        case "peekLink":
+            guard let href = (body["href"] as? String).flatMap(URL.init(string:)), ["http", "https"].contains(href.scheme?.lowercased() ?? "") else { break }
+            host?.tab(self, open: href, as: .peek)
         case "media":
             let key = (body["frame"] as? String) == "top" ? "top" : "sub-\(fromMainFrame)"
             mediaFrames[key] = (body["playing"] as? Bool) ?? false

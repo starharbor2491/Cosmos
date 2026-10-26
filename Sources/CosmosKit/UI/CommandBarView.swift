@@ -8,6 +8,7 @@ struct CommandBarView: View {
     let window: WindowState
     @Environment(\.palette) private var palette
     @Local private var modelBox: ModelBox?
+    @Namespace private var highlightNamespace
 
     final class ModelBox {
         let model: CommandBarModel
@@ -65,13 +66,14 @@ struct CommandBarView: View {
                         SectionLabel(text: "Jump back in")
                     }
                     ForEach(Array(model.rows.enumerated()), id: \.element.id) { index, row in
-                        CommandRow(store: store, row: row, selected: index == model.selected, query: model.text)
+                        CommandRow(store: store, row: row, selected: index == model.selected, query: model.text, namespace: highlightNamespace)
                             .contentShape(Rectangle())
                             .onTapGesture { model.activate(row, newTabOverride: NSEvent.modifierFlags.contains(.command)) }
                             .onHover { inside in if inside, model.selected != index, NSEvent.pressedMouseButtons == 0 { model.selected = index } }
                     }
                 }
                 .padding(8)
+                .animation(Motion.quick, value: model.selected)
             }
         }
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous))
@@ -99,6 +101,8 @@ private struct CommandRow: View {
     let row: CommandCandidate
     let selected: Bool
     let query: String
+    /// The highlight is one shape shared by all rows, so it glides to the row you move to.
+    let namespace: Namespace.ID
     @Environment(\.palette) private var palette
 
     var body: some View {
@@ -127,7 +131,13 @@ private struct CommandRow: View {
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 7)
-        .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(selected ? palette.accent.opacity(palette.isDark ? 0.34 : 0.22) : .clear))
+        .background {
+            if selected {
+                RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous)
+                    .fill(palette.accent.opacity(palette.isDark ? 0.34 : 0.22))
+                    .matchedGeometryEffect(id: "command.selection", in: namespace)
+            }
+        }
     }
 
     @ViewBuilder private var icon: some View {

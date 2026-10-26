@@ -11,6 +11,10 @@ struct SidebarView: View {
     @Local private var renaming: UUID?
     @Local private var indicator: DropIndicator?
     @Local private var hoveringToday = false
+    @Namespace private var selectionNamespace
+    @Local private var swipe = SwipeTracker()
+    /// How far the list is pulled along by a two-finger swipe (see `swipeMoved`).
+    @Local private var swipeOffset: CGFloat = 0
 
     private var space: Space { store.workspace.space(window.focusedSpaceID) ?? store.workspace.spaces[0] }
 
@@ -32,11 +36,34 @@ struct SidebarView: View {
                 .padding(.horizontal, Metrics.Sidebar.gutter)
                 .padding(.bottom, Metrics.Space.m)
             }
+            .offset(x: swipeOffset)
+            .opacity(1 - Double(min(abs(swipeOffset) / 240, 0.4)))
             SpacesBar(store: store, window: window)
         }
         .frame(width: window.sidebarWidth)
         .environment(\.palette, palette)
+        .environment(\.selectionNamespace, selectionNamespace)
+        .animation(Motion.standard, value: window.selectedItemID)
+        .background(SwipeCatcher(onMove: swipeMoved, onEnd: swipeEnded))
         .recordsSpatialFrames()
+    }
+
+    // MARK: Swiping between spaces
+
+    /// The list follows two fingers across the sidebar with growing resistance, ticks under the finger when the swipe
+    /// has gone far enough to count (and again if you pull back), and gives way at the first and last space.
+    private func swipeMoved(_ delta: CGFloat) {
+        let index = store.workspace.spaceIndex(window.focusedSpaceID) ?? 0
+        swipe.canGoPrevious = index > 0
+        swipe.canGoNext = index < store.workspace.spaces.count - 1
+        if swipe.update(delta: delta) != .none { store.haptics.alignment() }
+        swipeOffset = swipe.offset
+    }
+
+    private func swipeEnded() {
+        let direction = swipe.finish()
+        withAnimation(Motion.spring) { swipeOffset = 0 }
+        if let direction { store.cycleSpace(direction, in: window) }
     }
 }
 
@@ -46,6 +73,10 @@ struct ToolbarButton: View {
     let symbol: String
     var size: CGFloat = 13.5
     var enabled = true
+    /// A turn the icon makes when something happens (reload).
+    var rotation: Double = 0
+    /// The icon bounces when this changes (a download started).
+    var bounce = 0
     var help: String
     let action: () -> Void
     @Environment(\.palette) private var palette
@@ -55,11 +86,15 @@ struct ToolbarButton: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: size, weight: .medium))
+                .contentTransition(.symbolEffect(.replace))
+                .symbolEffect(.bounce, value: bounce)
+                .rotationEffect(.degrees(rotation))
                 .frame(width: Metrics.Height.button, height: Metrics.Height.button)
                 .background(RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous).fill(hover && enabled ? palette.hover : .clear))
                 .contentShape(Rectangle())
+                .animation(Motion.quick, value: hover)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressableStyle(scale: 0.88))
         .foregroundStyle(enabled ? palette.secondary : palette.tertiary.opacity(0.6))
         .disabled(!enabled)
         .onHover { hover = $0 }
@@ -70,6 +105,7 @@ struct ToolbarButton: View {
 struct SidebarToolbar: View {
     let store: BrowserStore
     let window: WindowState
+    @Local private var reloadTurns = 0.0
 
     var body: some View {
         let rt = store.currentRuntime(in: window)
@@ -80,9 +116,12 @@ struct SidebarToolbar: View {
             Spacer(minLength: 0)
             ToolbarButton(symbol: "chevron.left", enabled: rt?.canGoBack ?? false, help: "Back (⌘[)") { rt?.goBack() }
             ToolbarButton(symbol: "chevron.right", enabled: rt?.canGoForward ?? false, help: "Forward (⌘])") { rt?.goForward() }
-            ToolbarButton(symbol: (rt?.isLoading ?? false) ? "xmark" : "arrow.clockwise", enabled: rt != nil,
+            ToolbarButton(symbol: (rt?.isLoading ?? false) ? "xmark" : "arrow.clockwise", enabled: rt != nil, rotation: reloadTurns,
                           help: (rt?.isLoading ?? false) ? "Stop (⌘.)" : "Reload (⌘R)") {
-                if rt?.isLoading == true { rt?.stop() } else { rt?.reload() }
+                if rt?.isLoading == true { rt?.stop() } else {
+                    withAnimation(Motion.spring) { reloadTurns += 360 }
+                    rt?.reload()
+                }
             }
         }
         .padding(.trailing, Metrics.Sidebar.gutter)
@@ -97,6 +136,7 @@ struct URLPill: View {
     let window: WindowState
     @Environment(\.palette) private var palette
     @Local private var hover = false
+    @Local private var copied = false
 
     var body: some View {
         let rt = store.currentRuntime(in: window)
@@ -112,6 +152,7 @@ struct URLPill: View {
                     } label: {
                         Image(systemName: Self.symbol(for: url, rt: rt))
                             .font(.system(size: 11, weight: .semibold))
+                            .contentTransition(.symbolEffect(.replace))
                             .foregroundStyle(palette.tertiary)
                             .frame(width: 22, height: 22)
                             .contentShape(Rectangle())
@@ -128,13 +169,15 @@ struct URLPill: View {
                     .padding(.horizontal, 22)
                 HStack {
                     Spacer(minLength: 0)
-                    if hover, url != nil {
-                        Button {
-                            if let url { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(url.absoluteString, forType: .string); window.showToast("Link copied", symbol: "link") }
-                        } label: {
-                            Image(systemName: "link").font(.system(size: 11, weight: .semibold)).foregroundStyle(palette.secondary)
+                    if hover || copied, url != nil {
+                        Button { copyLink(url) } label: {
+                            Image(systemName: copied ? "checkmark" : "link")
+                                .font(.system(size: 11, weight: .semibold))
+                                .contentTransition(.symbolEffect(.replace))
+                                .foregroundStyle(copied ? palette.accent : palette.secondary)
                         }
-                        .buttonStyle(.plain).help("Copy Link (⇧⌘C)")
+                        .buttonStyle(PressableStyle(scale: 0.85)).help("Copy Link (⇧⌘C)")
+                        .transition(Motion.pop)
                     }
                 }
             }
@@ -153,10 +196,25 @@ struct URLPill: View {
             .overlay(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).strokeBorder(palette.stroke, lineWidth: 0.5))
             .contentShape(Rectangle())
             .spatial("pill")
+            .animation(Motion.quick, value: hover)
+            .animation(Motion.quick, value: copied)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressableStyle(scale: 0.985))
         .onHover { hover = $0 }
         .help("Open Command Bar (⌘L)")
+    }
+
+    private func copyLink(_ url: URL?) {
+        guard let url else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url.absoluteString, forType: .string)
+        window.showToast("Link copied", symbol: "link")
+        store.haptics.generic()
+        copied = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.2))
+            copied = false
+        }
     }
 
     static func symbol(for url: URL?, rt: TabRuntime?) -> String {

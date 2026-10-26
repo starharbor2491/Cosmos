@@ -22,6 +22,7 @@ public final class BrowserStore: TabHost {
 
     public let history: HistoryStore
     public let favicons: FaviconStore
+    let haptics = Haptics()
     public let downloads = DownloadsManager()
     public let catalog = SearchCatalog.bundled
     public let isIncognito: Bool
@@ -111,6 +112,7 @@ public final class BrowserStore: TabHost {
             history = try! HistoryStore(path: nil)
             favicons = FaviconStore(directory: FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-incognito-\(UUID().uuidString)"))
         }
+        haptics.isEnabled = settings.trackpadHaptics
         startTimers()
     }
 
@@ -229,6 +231,7 @@ public final class BrowserStore: TabHost {
             blocker?.settingsDidChange()
         }
         if old.appearance != settings.appearance { NSApp?.appearance = settings.appearance.nsAppearance }
+        haptics.isEnabled = settings.trackpadHaptics
     }
 
     // MARK: Timers (auto-archive, memory saver)
