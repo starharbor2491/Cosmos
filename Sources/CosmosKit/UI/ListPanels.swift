@@ -5,11 +5,35 @@ import CosmosCore
 // MARK: - Archive
 
 /// Everything that left the sidebar: auto-archived tabs, closed tabs and cleared ones. Searchable and restorable.
+/// A strip under a panel's header that asks before something that cannot be undone, in words that say what goes.
+private struct ConfirmStrip: View {
+    let message: String
+    let confirmTitle: String
+    let label: String
+    let cancel: () -> Void
+    let confirm: () -> Void
+    @Environment(\.palette) private var palette
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(message).font(.system(size: 12)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            ActionButton(title: "Cancel", kind: .quiet, action: cancel)
+            ActionButton(title: confirmTitle, kind: .destructive, action: confirm)
+        }
+        .padding(.horizontal, 16).padding(.vertical, 10)
+        .overlay(alignment: .bottom) { Rectangle().fill(palette.stroke).frame(height: 0.5) }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(label)
+    }
+}
+
 struct ArchivePanel: View {
     let store: BrowserStore
     let window: WindowState
     @Environment(\.palette) private var palette
     @Local private var query = ""
+    @Local private var confirmingClear = false
 
     var body: some View {
         let entries = store.archive.search(query)
@@ -25,11 +49,16 @@ struct ArchivePanel: View {
                     .font(.system(size: 11.5, weight: .medium))
             }
             .menuStyle(.borderlessButton).fixedSize()
-            Button("Clear All") { store.clearArchive() }
+            Button("Clear All") { confirmingClear = true }
                 .buttonStyle(.plain).font(.system(size: 11.5, weight: .medium)).foregroundStyle(palette.secondary)
                 .disabled(store.archive.entries.isEmpty)
         }) {
             VStack(spacing: 0) {
+                if confirmingClear {
+                    ConfirmStrip(message: "Clear the Archive? Every closed tab in it is removed, with its address. This can't be undone.",
+                                 confirmTitle: "Clear Archive", label: "Confirm clearing the archive",
+                                 cancel: { confirmingClear = false }, confirm: { store.clearArchive(); confirmingClear = false })
+                }
                 PanelSearchField(text: $query, prompt: "Search archived tabs").padding(12)
                 if entries.isEmpty {
                     EmptyPanelMessage(symbol: "archivebox", title: query.isEmpty ? "Nothing archived yet" : "No matches",
@@ -132,6 +161,15 @@ private enum HistoryRange: CaseIterable {
         }
     }
 
+    var confirmTitle: String {
+        switch self {
+        case .lastHour: "Clear Last Hour"
+        case .today: "Clear Today"
+        case .lastWeek: "Clear 7 Days"
+        case .all: "Clear All History"
+        }
+    }
+
     var question: String {
         switch self {
         case .lastHour: "Clear the last hour of history?"
@@ -168,7 +206,10 @@ struct HistoryPanel: View {
             .menuStyle(.borderlessButton).fixedSize().font(.system(size: 11.5, weight: .medium))
         }) {
             VStack(spacing: 0) {
-                if let range = pendingRange { clearConfirmation(for: range) }
+                if let range = pendingRange {
+                    ConfirmStrip(message: "\(range.question) \(range.detail)", confirmTitle: range.confirmTitle, label: "Confirm clearing history",
+                                 cancel: { pendingRange = nil }, confirm: { store.clearHistory(since: range.since); revision += 1; pendingRange = nil })
+                }
                 PanelSearchField(text: $query, prompt: "Search history").padding(12)
                 if entries.isEmpty {
                     EmptyPanelMessage(symbol: "clock", title: query.isEmpty ? "No history yet" : "No matches")
@@ -190,21 +231,6 @@ struct HistoryPanel: View {
             if !query.isEmpty { try? await Task.sleep(for: .milliseconds(120)) }
             entries = query.isEmpty ? store.history.recent(limit: 400) : store.history.search(query, limit: 200)
         }
-    }
-
-    /// Clearing is not undone, and it takes more than the visited pages with it, so it asks first.
-    private func clearConfirmation(for range: HistoryRange) -> some View {
-        HStack(spacing: 10) {
-            Text("\(range.question) \(range.detail)")
-                .font(.system(size: 12)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 8)
-            ActionButton(title: "Cancel", kind: .quiet) { pendingRange = nil }
-            ActionButton(title: "Clear History", kind: .destructive) { store.clearHistory(since: range.since); revision += 1; pendingRange = nil }
-        }
-        .padding(.horizontal, 16).padding(.vertical, 10)
-        .overlay(alignment: .bottom) { Rectangle().fill(palette.stroke).frame(height: 0.5) }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Confirm clearing history")
     }
 
     private var grouped: [(String, [HistoryEntry])] {
