@@ -20,8 +20,9 @@ struct SiteControlsPanel: View {
                 FaviconView(store: store, url: url, size: 24)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(host.isEmpty ? "No page" : host).font(.system(size: 14, weight: .semibold)).foregroundStyle(palette.text)
-                    Text(url?.scheme == "https" ? "Connection is secure" : (url == nil ? "" : "Connection is not secure"))
-                        .font(.system(size: 11.5)).foregroundStyle(url?.scheme == "https" ? palette.secondary : Color.orange)
+                    let connection = URLInput.connection(of: url)
+                    Text(connection == .secure ? "Connection is secure" : (connection == .notSecure ? "Connection is not secure" : ""))
+                        .font(.system(size: 11.5)).foregroundStyle(connection == .notSecure ? palette.warning : palette.secondary)
                 }
                 Spacer()
             }
@@ -37,7 +38,7 @@ struct SiteControlsPanel: View {
                             rt?.reload()
                         }), label: "Ad and tracker blocking on this site")
                         .opacity(store.settings.adBlockingEnabled ? 1 : 0.4)
-                        .allowsHitTesting(store.settings.adBlockingEnabled)
+                        .disabled(!store.settings.adBlockingEnabled)
                     }
                     ControlRow(symbol: "plus.magnifyingglass", title: "Page zoom", detail: "\(Int(((rt?.zoom ?? 1) * 100).rounded()))%") {
                         HStack(spacing: 2) {
@@ -105,7 +106,7 @@ struct ShortcutsPanel: View {
     @Environment(\.palette) private var palette
 
     private static let groups: [(String, [(String, String)])] = [
-        ("Command Bar", [("⌘T", "New tab / open the Command Bar"), ("⌘L", "Search or edit the address"), ("⌘↩", "Open the result in a new tab"), ("Tab", "Search inside a site"), ("⎋", "Close the Command Bar")]),
+        ("Command Bar", [("⌘T", "New tab / open the Command Bar"), ("⌘L", "Search or edit the address"), ("⌘↩", "Open the result in a new tab"), ("Tab", "Search inside a site"), ("esc", "Close the Command Bar")]),
         ("Tabs", [("⌘W", "Close tab"), ("⇧⌘T", "Reopen closed tab"), ("⌘D", "Pin or unpin"), ("⇧⌘D", "Add to Favorites"), ("⇧⌘K", "Archive all Today tabs"), ("⌃⇥", "Next recent tab"), ("⌘1–9", "Jump to a Favorite")]),
         ("Spaces", [("⌥⌘←  ⌥⌘→", "Previous / next space"), ("⌃1–9", "Go to space"), ("⌘S", "Toggle sidebar")]),
         ("Split View", [("⌃⇧=", "Add a split"), ("⌃⇧-", "Close the focused pane")]),

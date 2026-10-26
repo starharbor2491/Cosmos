@@ -4,9 +4,23 @@ import Testing
 @testable import CosmosCore
 
 /// The Settings window draws every control itself. This keeps it that way: no source file under Settings/ may use a
-/// system button, switch, picker, form, tab view, list, text field, alert or menu.
+/// system button, switch, picker, form, tab view, list, text field, alert, menu, tooltip or colour/date picker.
+/// Two things cannot be drawn by Cosmos and are allowed in exactly one file each: the text-editing engine inside the
+/// text field (an AppKit field with no chrome, so typing, selection and input methods work) and the file chooser that
+/// picks an extension folder.
 @Suite struct NoSystemControlsInSettingsTests {
+    private static let allowed: [String: Set<String>] = [
+        "NSTextField": ["SettingsControls.swift"], "NSTextView": ["SettingsControls.swift"], "NSTextFieldDelegate": ["SettingsControls.swift"],
+        "NSOpenPanel": ["ExtensionsPane.swift"],
+    ]
+
     private static let forbidden: [(name: String, pattern: String)] = [
+        ("ColorPicker", #"\bColorPicker\b"#), ("DatePicker", #"\bDatePicker\b"#), ("Table", #"(?<![A-Za-z_])Table\s*[({]"#),
+        ("contextMenu", #"\.contextMenu"#), ("fileImporter", #"\.file(Importer|Exporter|Mover)"#), ("help tooltip", #"\.help\s*\("#),
+        ("NSOpenPanel", #"\bNSOpenPanel\b"#), ("NSSavePanel", #"\bNSSavePanel\b"#), ("NSColorPanel", #"\bNSColorPanel\b"#),
+        ("NSTextField", #"\bNSTextField\b"#), ("NSTextView", #"\bNSTextView\b"#), ("NSTextFieldDelegate", #"\bNSTextFieldDelegate\b"#),
+        ("Gauge", #"\bGauge\s*[({]"#), ("NavigationStack", #"\bNavigation(Stack|SplitView|View)\b"#), ("toolbar", #"\.toolbar\s*[({]"#),
+        ("NSSegmentedControl", #"\bNSSegmentedControl\b"#), ("NSPopover", #"\bNSPopover\b"#), ("NSMenu", #"\bNSMenu\b"#),
         ("Toggle", #"\bToggle\s*[({]"#), ("Picker", #"\bPicker\s*[({]"#), ("Form", #"\bForm\s*[({]"#), ("TabView", #"\bTabView\b"#),
         ("List", #"\bList\s*[({]"#), ("Button", #"(?<![A-Za-z_])Button\s*[({]"#), ("TextField", #"\bTextField\s*[({]"#),
         ("SecureField", #"\bSecureField\b"#), ("TextEditor", #"\bTextEditor\b"#), ("Slider", #"\bSlider\s*[({]"#),
@@ -19,26 +33,52 @@ import Testing
         ("popover", #"\.popover\s*\("#), ("NSPopUpButton", #"\bNSPopUpButton\b"#), ("NSButton", #"\bNSButton\b"#), ("NSSwitch", #"\bNSSwitch\b"#),
     ]
 
+    /// Every forbidden use in `text`, as "file:line uses Name".
+    static func violations(in text: String, file: String) throws -> [String] {
+        let patterns = try forbidden.map { ($0.name, try NSRegularExpression(pattern: $0.pattern)) }
+        var found: [String] = []
+        for (index, line) in text.components(separatedBy: "\n").enumerated() {
+            let code = line.trimmingCharacters(in: .whitespaces)
+            if code.hasPrefix("//") { continue }
+            let range = NSRange(code.startIndex..., in: code)
+            for (name, regex) in patterns where regex.firstMatch(in: code, range: range) != nil {
+                if allowed[name]?.contains(file) == true { continue }
+                found.append("\(file):\(index + 1) uses \(name)")
+            }
+        }
+        return found
+    }
+
     @Test func settingsSourcesUseNoSystemControls() throws {
         let sources = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/CosmosKit/Settings", isDirectory: true)
         let files = try FileManager.default.contentsOfDirectory(at: sources, includingPropertiesForKeys: nil).filter { $0.pathExtension == "swift" }
         #expect(files.count >= 5, "expected the settings sources at \(sources.path)")
-        let patterns = try Self.forbidden.map { ($0.name, try NSRegularExpression(pattern: $0.pattern)) }
         var offenders: [String] = []
         for file in files {
-            let text = try String(contentsOf: file, encoding: .utf8)
-            for (index, line) in text.components(separatedBy: "\n").enumerated() {
-                let code = line.trimmingCharacters(in: .whitespaces)
-                if code.hasPrefix("//") { continue }
-                let range = NSRange(code.startIndex..., in: code)
-                for (name, regex) in patterns where regex.firstMatch(in: code, range: range) != nil {
-                    offenders.append("\(file.lastPathComponent):\(index + 1) uses \(name)")
-                }
-            }
+            offenders += try Self.violations(in: String(contentsOf: file, encoding: .utf8), file: file.lastPathComponent)
         }
         #expect(offenders.isEmpty, "system controls in Settings: \(offenders.joined(separator: "; "))")
+    }
+
+    @Test func theScanFindsWhatItLooksFor() throws {
+        let bad = """
+        Toggle("x", isOn: $a)
+        Text("y").help("tooltip")
+        ColorPicker("c", selection: $c)
+        let f = NSTextField()
+        // Button { } is only a comment
+        """
+        let found = try Self.violations(in: bad, file: "SomePane.swift")
+        #expect(found == ["SomePane.swift:1 uses Toggle", "SomePane.swift:2 uses help tooltip", "SomePane.swift:3 uses ColorPicker", "SomePane.swift:4 uses NSTextField"])
+    }
+
+    @Test func theTwoAllowedSystemPiecesStayInTheirOwnFiles() throws {
+        #expect(try Self.violations(in: "let f = NSTextField()", file: "SettingsControls.swift").isEmpty)
+        #expect(try Self.violations(in: "let f = NSTextField()", file: "GeneralPane.swift").count == 1)
+        #expect(try Self.violations(in: "let p = NSOpenPanel()", file: "ExtensionsPane.swift").isEmpty)
+        #expect(try Self.violations(in: "let p = NSOpenPanel()", file: "SettingsPanes.swift").count == 1)
     }
 }
 
@@ -112,5 +152,43 @@ import Testing
         }
         #expect(SettingsTab.allCases.first == .general)
         #expect(SettingsTab(rawValue: "blocking") == .blocking, "automation and links address tabs by name")
+    }
+}
+
+@Suite struct ScrollEdgesTests {
+    @Test func contentThatFitsFadesNowhere() {
+        let edges = ScrollEdges(offset: 0, contentHeight: 300, viewport: 400)
+        #expect(edges.top == 1 && edges.bottom == 1, "1 means the edge is solid")
+    }
+
+    @Test func atTheTopOnlyTheBottomFades() {
+        let edges = ScrollEdges(offset: 0, contentHeight: 1000, viewport: 400)
+        #expect(edges.top == 1)
+        #expect(edges.bottom == 0)
+    }
+
+    @Test func inTheMiddleBothEdgesFade() {
+        let edges = ScrollEdges(offset: 300, contentHeight: 1000, viewport: 400)
+        #expect(edges.top == 0 && edges.bottom == 0)
+    }
+
+    @Test func atTheEndOnlyTheTopFades() {
+        let edges = ScrollEdges(offset: 600, contentHeight: 1000, viewport: 400)
+        #expect(edges.top == 0)
+        #expect(edges.bottom == 1)
+    }
+
+    @Test func theFadeGrowsAsYouApproachAnEdge() {
+        let half = ScrollEdges(offset: 12, contentHeight: 1000, viewport: 400, fade: 24)
+        #expect(abs(half.top - 0.5) < 0.001)
+        let nearEnd = ScrollEdges(offset: 588, contentHeight: 1000, viewport: 400, fade: 24)
+        #expect(abs(nearEnd.bottom - 0.5) < 0.001)
+    }
+
+    @Test func overscrollAndUnmeasuredSizesStayInRange() {
+        for edges in [ScrollEdges(offset: -50, contentHeight: 1000, viewport: 400), ScrollEdges(offset: 5000, contentHeight: 1000, viewport: 400),
+                      ScrollEdges(offset: 0, contentHeight: 0, viewport: 0)] {
+            #expect((0...1).contains(edges.top) && (0...1).contains(edges.bottom))
+        }
     }
 }

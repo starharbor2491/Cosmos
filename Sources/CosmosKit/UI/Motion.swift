@@ -11,6 +11,8 @@ enum Motion {
     static var standard: Animation? { reduced ? nil : .smooth(duration: 0.26) }
     /// Things that land: a tab opening, a swipe settling.
     static var spring: Animation? { reduced ? nil : .spring(duration: 0.38, bounce: 0.22) }
+    /// The whole window changing mood: crossing to another space's sky.
+    static var glide: Animation? { reduced ? nil : .easeInOut(duration: 0.42) }
 
     /// A row entering or leaving a list: it grows out of (and shrinks into) the row above it.
     static let row: AnyTransition = .opacity.combined(with: .scale(scale: 0.94, anchor: .top))
@@ -131,7 +133,7 @@ struct RowBackground: View {
     }
 
     private var wash: Color {
-        if resting { return hover ? palette.hover.opacity(1.8) : palette.hover }
+        if resting { return hover ? palette.hoverStrong : palette.hover }
         return hover ? palette.hover : .clear
     }
 

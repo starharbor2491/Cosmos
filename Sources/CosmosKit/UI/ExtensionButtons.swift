@@ -54,9 +54,9 @@ struct ExtensionActionButton: View {
                 }
                 if !display.badge.isEmpty {
                     Text(display.badge)
-                        .font(.system(size: 8, weight: .bold)).foregroundStyle(.white)
+                        .font(.system(size: 8, weight: .bold)).foregroundStyle(palette.onAccent)
                         .padding(.horizontal, 3).padding(.vertical, 1)
-                        .background(Capsule().fill(palette.accent))
+                        .background(Capsule().fill(palette.accentFill))
                         .offset(x: 6, y: -5)
                 }
             }

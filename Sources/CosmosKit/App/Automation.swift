@@ -95,6 +95,11 @@ final class Automation {
             } else { note("  key: no text view has focus") }
         case "space":
             if let s = store, let st = state { s.switchSpace(number: (step["index"] as? Int ?? 1), in: st) }
+        case "setTheme":
+            // Gives the focused space a preset by name, to look at a theme without opening the editor.
+            if let s = store, let st = state, let name = step["name"] as? String, let preset = SpaceTheme.presets.first(where: { $0.name == name }) {
+                s.updateSpace(st.focusedSpaceID) { $0.theme = preset }
+            }
         case "sidebar":
             state?.sidebarVisible = (step["visible"] as? Bool) ?? true
         case "peek":

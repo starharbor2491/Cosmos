@@ -62,6 +62,18 @@ public enum URLInput {
         case search(String)
     }
 
+    /// What the page's address says about the connection. Only web addresses have one: a blank page, a local file or an
+    /// internal page is not "insecure", it is not on the network at all.
+    public enum Connection: Equatable, Sendable { case secure, notSecure, none }
+
+    public static func connection(of url: URL?) -> Connection {
+        switch url?.scheme?.lowercased() {
+        case "https": .secure
+        case "http": .notSecure
+        default: .none
+        }
+    }
+
     static let tlds: Set<String> = {
         guard let url = Bundle.module.url(forResource: "tlds", withExtension: "txt"),
               let text = try? String(contentsOf: url, encoding: .utf8) else { return ["com", "org", "net", "io", "dev", "app"] }

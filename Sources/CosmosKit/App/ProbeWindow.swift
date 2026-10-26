@@ -98,8 +98,8 @@ private struct ProbeView: View {
                         Label("Open in Space", systemImage: "arrow.up.right.square")
                             .font(.system(size: 12, weight: .semibold))
                             .padding(.horizontal, 11).padding(.vertical, 5)
-                            .background(Capsule().fill(palette.accent.opacity(0.92)))
-                            .foregroundStyle(.white)
+                            .background(Capsule().fill(palette.accentFill))
+                            .foregroundStyle(palette.onAccent)
                     }
                     .buttonStyle(.plain)
                     .keyboardShortcut(.return, modifiers: .command)

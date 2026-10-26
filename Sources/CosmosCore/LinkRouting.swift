@@ -61,6 +61,27 @@ public struct LinkRule: Codable, Hashable, Identifiable, Sendable {
     }
 
     public func applies(to url: URL) -> Bool { !matches.isEmpty && matches.allSatisfy { $0.matches(url) } }
+
+    /// The host a typed or pasted address stands for: no scheme, credentials, port, path or leading "www.", lowercased.
+    /// A `.host` match is the host itself or any subdomain, so `www.github.com` would never match a link to github.com.
+    /// Nil when the text is not a host (spaces, empty labels, a path with no host, an absurd length).
+    public static func normalizedHost(_ input: String) -> String? {
+        var text = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !text.isEmpty, text.count <= 300 else { return nil }
+        if let scheme = text.range(of: "://") { text = String(text[scheme.upperBound...]) }
+        if let end = text.firstIndex(where: { "/?#".contains($0) }) { text = String(text[..<end]) }
+        if let at = text.lastIndex(of: "@") { text = String(text[text.index(after: at)...]) }
+        if let colon = text.lastIndex(of: ":"), text[text.index(after: colon)...].allSatisfy(\.isNumber) { text = String(text[..<colon]) }
+        if text.hasSuffix(".") { text.removeLast() }
+        if text.hasPrefix("www.") { text.removeFirst(4) }
+        guard !text.isEmpty, text.count <= 253 else { return nil }
+        let labels = text.split(separator: ".", omittingEmptySubsequences: false)
+        let valid = labels.allSatisfy { label in
+            !label.isEmpty && label.count <= 63 && !label.hasPrefix("-") && !label.hasSuffix("-")
+                && label.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" }
+        }
+        return valid ? text : nil
+    }
 }
 
 /// Link routing: first matching rule wins, otherwise `defaultDestination`.

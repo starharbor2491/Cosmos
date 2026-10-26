@@ -93,6 +93,9 @@ struct SettingsView: View {
                 nav(palette)
                 content(palette)
             }
+            // While a question is open nothing behind it can be reached, with the pointer, Tab or VoiceOver.
+            .disabled(model.dialog != nil)
+            .accessibilityHidden(model.dialog != nil)
             if let dialog = model.dialog {
                 dialogLayer(dialog, palette)
             }
@@ -103,13 +106,15 @@ struct SettingsView: View {
         .frame(width: Self.size.width, height: Self.size.height)
         .ignoresSafeArea()
         .animation(Motion.quick, value: model.dialog?.id)
+        // A question still open when the window closes is answered "no", so whoever asked is not left waiting.
+        .onDisappear { model.resolve(false) }
     }
 
     // MARK: Navigation
 
     private func nav(_ palette: Palette) -> some View {
         VStack(alignment: .leading, spacing: Metrics.Space.hair) {
-            HStack(spacing: Metrics.Space.s + 2) {
+            HStack(spacing: Metrics.Space.m) {
                 CosmosLogo(size: 26)
                 Text("Settings").font(.system(size: 16, weight: .bold, design: .rounded)).foregroundStyle(palette.text)
             }
@@ -120,17 +125,17 @@ struct SettingsView: View {
             ForEach(SettingsTab.allCases) { item in
                 let selected = item == tab
                 TapTarget(label: item.title, scale: 0.97, feel: .step, traits: .isButton, action: { tab = item }) { state in
-                    HStack(spacing: Metrics.Sidebar.gap + 2) {
+                    HStack(spacing: Metrics.Sidebar.gap) {
                         Image(systemName: item.symbol)
                             .font(.system(size: 13, weight: .medium))
                             .frame(width: Metrics.Icon.row)
-                            .foregroundStyle(selected ? palette.accent : palette.secondary)
+                            .foregroundStyle(selected ? palette.text : palette.secondary)
                         Text(item.title).font(.system(size: 13.5, weight: selected ? .semibold : .medium))
                             .foregroundStyle(selected ? palette.text : palette.secondary)
                         Spacer(minLength: 0)
                     }
                     .padding(.horizontal, Metrics.Space.m)
-                    .frame(height: Metrics.Height.row + 4)
+                    .frame(height: Metrics.Height.field)
                     .background {
                         let shape = RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous)
                         if selected {
@@ -148,7 +153,7 @@ struct SettingsView: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, Metrics.Space.s)
-        .frame(width: 212)
+        .frame(width: Metrics.Control.navWidth)
         .animation(Motion.standard, value: tab)
     }
 
@@ -164,8 +169,8 @@ struct SettingsView: View {
             .background(shape.fill(palette.panel))
             .clipShape(shape)
             .overlay(shape.strokeBorder(palette.stroke, lineWidth: 0.8))
-            .padding(.trailing, Metrics.Space.s + 2)
-            .padding(.vertical, Metrics.Space.s + 2)
+            .padding(.trailing, Metrics.Space.m)
+            .padding(.vertical, Metrics.Space.m)
             .animation(Motion.standard, value: tab)
     }
 
@@ -213,8 +218,8 @@ struct SettingsView: View {
                 }
                 .padding(.top, Metrics.Space.xs)
             }
-            .padding(Metrics.Space.l + 4)
-            .frame(width: 400)
+            .padding(Metrics.Space.xl)
+            .frame(width: Metrics.Control.dialogWidth)
             .background(.regularMaterial, in: shape)
             .background(shape.fill(palette.panel))
             .overlay(shape.strokeBorder(palette.stroke, lineWidth: 0.8))

@@ -176,7 +176,7 @@ struct ThemeEditorPanel: View {
             Button("Done") { window.overlay = nil }
                 .buttonStyle(.plain).font(.system(size: 13, weight: .semibold))
                 .padding(.horizontal, 18).padding(.vertical, 7)
-                .background(Capsule().fill(palette.accent.opacity(0.9))).foregroundStyle(.white)
+                .background(Capsule().fill(palette.accentFill)).foregroundStyle(palette.onAccent)
                 .keyboardShortcut(.return, modifiers: [])
         }
     }

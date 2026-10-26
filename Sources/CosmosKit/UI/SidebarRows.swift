@@ -11,7 +11,7 @@ struct FavoritesGrid: View {
     @Binding var indicator: DropIndicator?
     @Environment(\.palette) private var palette
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: Metrics.Space.s), count: 3)
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: Metrics.Space.s), count: Metrics.Sidebar.favoriteColumns)
 
     var body: some View {
         let favorites = store.workspace.favorites
@@ -20,7 +20,7 @@ struct FavoritesGrid: View {
             if favorites.isEmpty {
                 if dragging {
                     RoundedRectangle(cornerRadius: Metrics.Radius.tile, style: .continuous)
-                        .strokeBorder(palette.tertiary, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                        .strokeBorder(palette.faint, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
                         .overlay(Text("Drop here to add a Favorite").font(.system(size: 11, weight: .medium)).foregroundStyle(palette.tertiary))
                         .frame(height: Metrics.Height.tile)
                 }
@@ -77,7 +77,7 @@ struct FavoriteTile: View {
         .onDrag({ store.beginDrag(item.id) }, preview: {
             DragPreview(store: store, url: url, title: store.title(forItem: item.id, in: window)).environment(\.palette, palette)
         })
-        .onDrop(of: SidebarDrop.types, delegate: RowDropDelegate(store: store, window: window, targetID: item.id, axis: .horizontal, rowSize: 80, indicator: $indicator))
+        .onDrop(of: SidebarDrop.types, delegate: RowDropDelegate(store: store, window: window, targetID: item.id, axis: .horizontal, rowSize: Metrics.Sidebar.tileWidth(sidebarWidth: window.sidebarWidth), indicator: $indicator))
     }
 }
 
@@ -96,7 +96,7 @@ struct PinnedSection: View {
             if rows.isEmpty {
                 if dragging {
                     RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous)
-                        .strokeBorder(palette.tertiary, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                        .strokeBorder(palette.faint, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
                         .overlay(Text("Drop here to pin").font(.system(size: 11, weight: .medium)).foregroundStyle(palette.tertiary))
                         .frame(height: Metrics.Height.row)
                 }
@@ -240,6 +240,8 @@ struct TabRow: View {
     @Environment(\.palette) private var palette
     @Local private var hover = false
 
+    private var splitBorder: CGFloat { inSplit ? Metrics.Space.hair : 0 }
+
     var body: some View {
         let _ = store.runtimeRevision
         let rt = store.runtime(forItem: item.id, in: window)
@@ -269,23 +271,28 @@ struct TabRow: View {
             Spacer(minLength: 2)
             trailing(rt: rt, pinned: pinned)
         }
-        .padding(.leading, Metrics.Sidebar.inset + CGFloat(depth) * Metrics.Sidebar.indent)
-        .padding(.trailing, Metrics.Sidebar.inset)
+        // A split group pads its panes by its own border, so they give that much back to keep icons in the column.
+        .padding(.leading, Metrics.Sidebar.inset - splitBorder + CGFloat(depth) * Metrics.Sidebar.indent)
+        .padding(.trailing, Metrics.Sidebar.inset - splitBorder)
         .frame(height: Metrics.Height.row)
         .background(RowBackground(selected: selected && !inSplit, hover: hover, radius: Metrics.Radius.row, plainSelected: focusedPane))
         .overlay(DropMarker(indicator: indicator, id: item.id, axis: .vertical))
         .contentShape(Rectangle())
         .spatial(inSplit ? "split.row" : "row")
         .pressEffect()
-        .onTapGesture(count: 2) { if pinned { renaming = item.id } }
-        .onTapGesture { store.select(item.id, in: window) }
+        // One gesture: with a separate double-tap recognizer SwiftUI holds every single click back to see if a second
+        // is coming. The click count says whether this was the second.
+        .onTapGesture {
+            store.select(item.id, in: window)
+            if pinned, NSApp.currentEvent?.clickCount == 2 { renaming = item.id }
+        }
         .onHover { hover = $0 }
         .help(item.tab?.url?.absoluteString ?? "")
         .contextMenu { ItemContextMenu(store: store, window: window, itemID: item.id, renaming: $renaming) }
         .onDrag({ store.beginDrag(item.id) }, preview: {
             DragPreview(store: store, url: url, title: store.title(forItem: item.id, in: window)).environment(\.palette, palette)
         })
-        .onDrop(of: SidebarDrop.types, delegate: RowDropDelegate(store: store, window: window, targetID: item.id, axis: .vertical, rowSize: 32, indicator: $indicator))
+        .onDrop(of: SidebarDrop.types, delegate: RowDropDelegate(store: store, window: window, targetID: item.id, axis: .vertical, rowSize: Metrics.Height.row, indicator: $indicator))
     }
 
     @ViewBuilder
@@ -324,7 +331,9 @@ struct RowIconButton: View {
                 .contentTransition(.symbolEffect(.replace))
                 .foregroundStyle(hover ? palette.text : palette.secondary)
                 .frame(width: Metrics.Icon.row + 2, height: Metrics.Icon.row + 2)
-                .background(Circle().fill(hover ? palette.hover.opacity(2) : .clear))
+                .background(Circle().fill(hover ? palette.hoverStrong : .clear))
+                // Drawn small, but pressable across a 28 pt square (the neighbours' squares touch, never overlap).
+                .contentShape(Rectangle().inset(by: -(Metrics.Height.button - Metrics.Icon.row - 2) / 2))
                 .animation(Motion.quick, value: hover)
         }
         .buttonStyle(PressableStyle(scale: 0.88))
@@ -391,7 +400,7 @@ struct FolderRow: View {
         .onDrag({ store.beginDrag(item.id) }, preview: {
             DragPreview(store: store, url: nil, title: item.displayTitle, symbol: "folder.fill").environment(\.palette, palette)
         })
-        .onDrop(of: SidebarDrop.types, delegate: RowDropDelegate(store: store, window: window, targetID: item.id, axis: .vertical, rowSize: 32, indicator: $indicator))
+        .onDrop(of: SidebarDrop.types, delegate: RowDropDelegate(store: store, window: window, targetID: item.id, axis: .vertical, rowSize: Metrics.Height.row, indicator: $indicator))
     }
 }
 
@@ -502,7 +511,7 @@ struct SpacesBar: View {
             Spacer(minLength: 0)
             ToolbarButton(symbol: "plus", help: "New Space") { store.beginNewSpace(in: window) }
         }
-        .padding(.horizontal, Metrics.Sidebar.gutter)
+        .padding(.horizontal, Metrics.footerInset)
         .frame(height: Metrics.Height.bar)
         .overlay(alignment: .top) { Rectangle().fill(palette.stroke).frame(height: 0.5).padding(.horizontal, Metrics.Sidebar.gutter) }
     }
@@ -518,7 +527,7 @@ struct SpaceButton: View {
     var body: some View {
         let selected = space.id == window.focusedSpaceID
         Button {
-            withAnimation(.easeInOut(duration: 0.4)) { store.switchSpace(to: space.id, in: window) }
+            withAnimation(Motion.glide) { store.switchSpace(to: space.id, in: window) }
         } label: {
             SpaceIconView(icon: space.icon, size: 14)
                 .symbolEffect(.bounce, value: selected)
@@ -549,6 +558,7 @@ struct DownloadsButton: View {
         let d = store.downloads
         ZStack {
             ToolbarButton(symbol: "arrow.down.circle", bounce: d.items.count, help: "Downloads (⇧⌘J)") { window.overlay = window.overlay == .downloads ? nil : .downloads }
+                .spatial("footer.glyph")
             if d.hasActive {
                 Circle().trim(from: 0, to: max(0.05, d.overallFraction)).stroke(palette.accent, style: StrokeStyle(lineWidth: 2, lineCap: .round))
                     .rotationEffect(.degrees(-90)).frame(width: 22, height: 22).allowsHitTesting(false)

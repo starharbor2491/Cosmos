@@ -13,7 +13,7 @@ struct ThemeBackground: View {
                 gradient
                 glows(in: geo.size)
                 if theme.starfield > 0.01 {
-                    StarfieldView(density: theme.starfield, seed: UInt64(truncatingIfNeeded: abs(theme.name.hashValue)), animated: animated, light: !theme.prefersLightForeground)
+                    StarfieldView(density: theme.starfield, seed: UInt64(truncatingIfNeeded: abs(theme.name.hashValue)), animated: animated && !Motion.reduced, light: !theme.prefersLightForeground)
                 }
                 if theme.intensity < 0.999 {
                     Color(nsColor: .windowBackgroundColor).opacity(1 - theme.intensity)
@@ -26,13 +26,14 @@ struct ThemeBackground: View {
 
     private var gradient: some View {
         let (start, end) = Self.points(angle: theme.angle)
-        let colors = theme.colors.map { Color($0) }
+        let colors = theme.legible.colors.map { Color($0) }
         return LinearGradient(colors: colors.count == 1 ? [colors[0], colors[0].opacity(0.85)] : colors, startPoint: start, endPoint: end)
     }
 
     private func glows(in size: CGSize) -> some View {
-        let a = Color(theme.accent)
-        let other = Color(theme.colors.last ?? theme.accent)
+        let painted = theme.legible
+        let a = Color(painted.accent)
+        let other = Color(painted.colors.last ?? painted.accent)
         return ZStack {
             RadialGradient(colors: [a.opacity(0.34), .clear], center: UnitPoint(x: 0.85, y: 0.05), startRadius: 0, endRadius: max(size.width, size.height) * 0.55)
             RadialGradient(colors: [other.opacity(0.28), .clear], center: UnitPoint(x: 0.05, y: 0.98), startRadius: 0, endRadius: max(size.width, size.height) * 0.5)
@@ -69,6 +70,8 @@ struct StarfieldView: View {
     var light = false
 
     private let stars: [Star]
+    /// A window that is not in front does not need its stars to twinkle.
+    @Environment(\.controlActiveState) private var activeState
 
     init(density: Double, seed: UInt64, animated: Bool = true, light: Bool = false) {
         self.density = density; self.seed = seed; self.animated = animated; self.light = light
@@ -84,7 +87,7 @@ struct StarfieldView: View {
 
     var body: some View {
         if animated {
-            TimelineView(.animation(minimumInterval: 1.0 / 12.0)) { ctx in
+            TimelineView(.animation(minimumInterval: 1.0 / 12.0, paused: activeState == .inactive)) { ctx in
                 canvas(time: ctx.date.timeIntervalSinceReferenceDate)
             }
         } else {

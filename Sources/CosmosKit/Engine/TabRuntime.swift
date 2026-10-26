@@ -12,6 +12,8 @@ public protocol TabHost: AnyObject {
     var settings: Settings { get }
     var favicons: FaviconStore { get }
     var downloads: DownloadsManager { get }
+    /// True while a tab or folder dragged out of the sidebar is in flight.
+    var isDraggingSidebarItem: Bool { get }
     func tabDidChange(_ tab: TabRuntime)
     func tabDidFinishLoading(_ tab: TabRuntime)
     func tabIsPinnedOrFavorite(_ tab: TabRuntime) -> Bool

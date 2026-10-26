@@ -4,6 +4,7 @@
 #
 #   scripts/stress.sh [seed] [steps]       defaults: seed 1, 300 steps
 #   STRESS_WINDOWS=1 scripts/stress.sh 7 # also opens, closes and incognito-es windows and Probes
+#   STRESS_ONLINE=1 scripts/stress.sh 7  # lets the app use the network (favicons, filter lists); offline by default
 #
 # Builds the debug app first. The app window flickers while it runs; nothing is recorded.
 set -euo pipefail
@@ -56,8 +57,10 @@ for i in range(steps):
 s += [{"do": "closeSettings"}, {"do": "state"}, {"do": "wait", "seconds": 2}, {"do": "state"}, {"do": "quit"}]
 json.dump(s, open(out, "w"))
 PY
+NETWORK=(--offline)
+[[ -n ${STRESS_ONLINE:-} ]] && NETWORK=()
 set +e
-perl -e 'alarm 600; exec @ARGV' .build/debug/Cosmos --demo --offline --data-dir "$WORK/data" --automation "$WORK/script.json" >"$WORK/stderr.txt" 2>&1
+perl -e 'alarm 600; exec @ARGV' .build/debug/Cosmos --demo "${NETWORK[@]}" --data-dir "$WORK/data" --automation "$WORK/script.json" >"$WORK/stderr.txt" 2>&1
 rc=$?
 if (( rc == 0 )); then
   echo "seed $SEED, $STEPS steps: survived ($(grep -c . "$WORK/script.json.log") log lines)"

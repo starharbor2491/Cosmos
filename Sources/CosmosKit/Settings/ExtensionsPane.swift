@@ -46,7 +46,7 @@ struct ExtensionsPane: View {
             } else {
                 DividedRows(center.items) { item in
                     SettingRow(title: item.name, detail: ["Version \(item.version) · from \(item.origin)", center.loadErrors[item.id]].compactMap { $0 }.joined(separator: "\n")) {
-                        HStack(spacing: Metrics.Space.s + 2) {
+                        HStack(spacing: Metrics.Space.m) {
                             ActionButton(title: "Remove", kind: .quiet) { center.remove(item.id) }
                             SwitchControl(isOn: Binding(get: { item.enabled }, set: { center.setEnabled(item.id, $0) }), label: item.name)
                         }
@@ -60,7 +60,7 @@ struct ExtensionsPane: View {
                     Text(center.busy ? "Working…" : (center.message ?? "")).font(.system(size: 12)).foregroundStyle(palette.secondary)
                     Spacer(minLength: 0)
                 }
-                .padding(.horizontal, Metrics.Space.l).padding(.vertical, Metrics.Space.s + 2)
+                .padding(.horizontal, Metrics.Space.l).padding(.vertical, Metrics.Space.m)
             }
         }
         .animation(Motion.standard, value: center.items.map(\.id))
@@ -68,7 +68,7 @@ struct ExtensionsPane: View {
 
     private func add(_ center: ExtensionCenter) -> some View {
         SettingsGroup(title: "Add an extension") {
-            VStack(alignment: .leading, spacing: Metrics.Space.s + 2) {
+            VStack(alignment: .leading, spacing: Metrics.Space.m) {
                 HStack(spacing: Metrics.Space.s) {
                     FieldInput(text: $link, placeholder: "Chrome Web Store link or extension id", onSubmit: { addFromWebStore(center) })
                     ActionButton(title: "Add", kind: .primary, enabled: !link.trimmingCharacters(in: .whitespaces).isEmpty && !center.busy) { addFromWebStore(center) }
@@ -79,10 +79,10 @@ struct ExtensionsPane: View {
                     Spacer(minLength: 0)
                 }
                 if let problem {
-                    Text(problem).font(.system(size: 12)).foregroundStyle(Color(red: 1, green: 0.42, blue: 0.40)).transition(.opacity)
+                    Text(problem).font(.system(size: 12)).foregroundStyle(palette.negative).transition(.opacity)
                 }
             }
-            .padding(Metrics.Space.m)
+            .cardInset()
             .animation(Motion.quick, value: problem)
         }
     }
@@ -103,7 +103,7 @@ struct ExtensionsPane: View {
                     Spacer(minLength: 0)
                     ActionButton(title: "Add Selected", kind: .primary, enabled: !picked.isEmpty && !center.busy) { addPicked(center, found.filter { picked.contains($0.id) }) }
                 }
-                .padding(Metrics.Space.m)
+                .cardInset()
             }
         }
     }

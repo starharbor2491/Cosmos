@@ -16,12 +16,26 @@ struct Palette {
     let isDark: Bool
     let text: Color
     let secondary: Color
+    /// The quietest text (hints, timestamps): 3:1, see `Legibility`.
     let tertiary: Color
+    /// Strokes, outlines and glyphs that are not text.
+    let faint: Color
     let hover: Color
+    /// A control under the pointer.
+    let hoverStrong: Color
     let selected: Color
     let stroke: Color
     let accent: Color
     let accentRaw: RGBA
+    /// The accent as a fill (primary buttons, switch tracks) and the colour of what sits on it.
+    let accentFill: Color
+    let onAccent: Color
+    /// The accent as text or a glyph on the theme.
+    let accentText: Color
+    /// Status text that reads on this theme.
+    let positive: Color
+    let negative: Color
+    let warning: Color
     /// A solid-ish panel colour for popovers and the command bar.
     let panel: Color
     let shadow: Color
@@ -29,15 +43,25 @@ struct Palette {
     init(theme: SpaceTheme) {
         let dark = theme.prefersLightForeground
         isDark = dark
-        let base: Color = dark ? .white : Color(red: 0.08, green: 0.07, blue: 0.14)
-        text = base.opacity(0.94)
-        secondary = base.opacity(0.66)
-        tertiary = base.opacity(0.42)
-        hover = base.opacity(dark ? 0.10 : 0.07)
-        selected = dark ? Color.white.opacity(0.20) : Color.white.opacity(0.62)
+        let base = Color(dark ? Legibility.white : Legibility.ink)
+        text = base.opacity(Legibility.primary.alpha)
+        secondary = base.opacity(Legibility.secondary.alpha)
+        tertiary = base.opacity(Legibility.tertiary.alpha)
+        faint = base.opacity(Legibility.faint.alpha)
+        hover = Color(Legibility.hover(lightInk: dark))
+        hoverStrong = Color(Legibility.hoverStrong(lightInk: dark))
+        selected = Color(Legibility.selected(lightInk: dark))
         stroke = base.opacity(dark ? 0.14 : 0.12)
         accentRaw = theme.accent
         accent = Color(theme.accent).opacity(1)
+        let filled = Legibility.filled(theme.accent)
+        accentFill = Color(filled.fill)
+        onAccent = Color(filled.label)
+        let ground = theme.worstStop
+        accentText = Color(Legibility.foreground(theme.accent, on: ground))
+        positive = Color(Legibility.foreground(RGBA(0.30, 0.85, 0.45), on: ground))
+        negative = Color(Legibility.foreground(RGBA(1, 0.42, 0.40), on: ground))
+        warning = Color(Legibility.foreground(RGBA(1, 0.62, 0.20), on: ground))
         panel = dark ? Color(red: 0.07, green: 0.06, blue: 0.14).opacity(0.72) : Color.white.opacity(0.74)
         shadow = Color.black.opacity(dark ? 0.45 : 0.18)
     }

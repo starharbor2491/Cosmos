@@ -20,6 +20,13 @@ import Testing
         f["row.title.d1"] = [rect(60, 293, 80, 16), rect(60, 361, 80, 16)]
         f["divider.title"] = [rect(16, 400, 40, 12)]
         f["divider.rule"] = [rect(66, 405, 178, 0.5)]
+        // a split group: its panes' icons sit in the same column as every other row's
+        f["split.row"] = [rect(10, 420, 240, 32), rect(10, 454, 240, 32)]
+        f["split.icon"] = [rect(16, 427, 18, 18), rect(16, 461, 18, 18)]
+        f["split.title"] = [rect(42, 429, 80, 16), rect(42, 463, 80, 16)]
+        // the toolbar and footer buttons are 28 pt squares; the footer's first glyph is centred on the icon column
+        f["toolbar.button"] = [rect(84, 8, 28, 28), rect(180, 8, 28, 28), rect(210, 8, 28, 28), rect(11, 560, 28, 28)]
+        f["footer.glyph"] = [rect(11, 560, 28, 28)]
         return f
     }
 
@@ -88,6 +95,42 @@ import Testing
         var f = aligned()
         f["divider.rule"] = [CGRect(x: 66, y: 405, width: 120, height: 0.5)]
         #expect(failures(f).contains("section rules reach the row edge"))
+    }
+
+    @Test func aSplitPaneOffTheIconColumnIsCaught() {
+        var f = aligned()
+        f["split.icon"] = [CGRect(x: 18, y: 427, width: 18, height: 18), CGRect(x: 18, y: 461, width: 18, height: 18)]
+        #expect(failures(f).contains("split panes' icons sit in the icon column"))
+    }
+
+    @Test func aSplitPaneTitleThatDriftsIsCaught() {
+        var f = aligned()
+        f["split.title"] = [CGRect(x: 44, y: 429, width: 80, height: 16), CGRect(x: 42, y: 463, width: 80, height: 16)]
+        #expect(failures(f).contains("split panes' titles follow their icon by one gap"))
+    }
+
+    @Test func aSplitPaneThatIsNotOneRowHighIsCaught() {
+        var f = aligned()
+        f["split.row"]![1].size.height = 36
+        #expect(failures(f).contains("split panes are one row high"))
+    }
+
+    @Test func aFooterGlyphOffTheIconColumnIsCaught() {
+        var f = aligned()
+        f["footer.glyph"] = [CGRect(x: 8, y: 560, width: 28, height: 28)]
+        #expect(failures(f).contains("the footer's first glyph is centred on the icon column"))
+    }
+
+    @Test func aToolbarButtonOfAnotherSizeIsCaught() {
+        var f = aligned()
+        f["toolbar.button"]![1].size = CGSize(width: 26, height: 26)
+        #expect(failures(f).contains("toolbar buttons are one square size"))
+    }
+
+    @Test func aFolderChevronOffItsColumnIsCaught() {
+        var f = aligned()
+        f["folder.chevron.d0"] = [CGRect(x: 13, y: 293, width: 10, height: 14)]
+        #expect(failures(f).contains("folder chevrons sit in their depth's icon column"))
     }
 
     @Test func missingTagsAreReportedNotSilentlyPassed() {

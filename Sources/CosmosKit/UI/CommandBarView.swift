@@ -51,7 +51,7 @@ struct CommandBarView: View {
                     HStack(spacing: 5) {
                         Text("Tab").font(.system(size: 10.5, weight: .bold, design: .rounded))
                             .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(RoundedRectangle(cornerRadius: Metrics.Radius.chip, style: .continuous).fill(palette.hover.opacity(1.8)))
+                            .background(RoundedRectangle(cornerRadius: Metrics.Radius.chip, style: .continuous).fill(palette.hoverStrong))
                         Text("to search \(model.tabHint?.name ?? "")").font(.system(size: 12))
                     }
                     .foregroundStyle(palette.secondary)
@@ -80,7 +80,7 @@ struct CommandBarView: View {
         .background(RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous).fill(palette.panel))
         .overlay(RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous).strokeBorder(palette.stroke, lineWidth: 0.8))
         .shadow(color: palette.shadow, radius: 36, y: 14)
-        .animation(.easeOut(duration: 0.12), value: model.rows.count)
+        .animation(Motion.quick, value: model.rows.count)
     }
 
     struct SectionLabel: View {

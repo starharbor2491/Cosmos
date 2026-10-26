@@ -35,6 +35,7 @@ public final class BrowserStore: TabHost {
     @ObservationIgnored var incognitoEnvironment: ProfileEnvironment?
     /// The sidebar item being dragged right now, in any window (drop targets read it; nil when no drag is in flight).
     var draggingItemID: UUID?
+    public var isDraggingSidebarItem: Bool { draggingItemID != nil }
     /// Bumped when a runtime is created or discarded so views that show "is this tab loaded?" refresh.
     public internal(set) var runtimeRevision = 0
     public private(set) var windows: [WindowState] = []
@@ -110,7 +111,7 @@ public final class BrowserStore: TabHost {
             linkRouting = LinkRouting()
             settings = Settings()
             history = try! HistoryStore(path: nil)
-            favicons = FaviconStore(directory: FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-incognito-\(UUID().uuidString)"))
+            favicons = FaviconStore(directory: nil)
         }
         haptics.isEnabled = settings.trackpadHaptics
         startTimers()
@@ -144,6 +145,14 @@ public final class BrowserStore: TabHost {
             case .learned: try? learnedFile?.save(learned)
             }
         }
+    }
+
+    /// Forgets where you have been: the visited pages, what the Command Bar learned from picking them, and the logos
+    /// fetched for those sites (the cache would otherwise still list every host).
+    public func clearHistory() {
+        history.clear(since: nil)
+        learned = LearnedSelections()
+        favicons.removeAll()
     }
 
     func saveSession() {

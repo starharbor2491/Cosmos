@@ -163,6 +163,88 @@ enum TestIcon {
         #expect(Date().timeIntervalSince(start) < 2, "took \(Date().timeIntervalSince(start)) s")
     }
 
+    /// The tag's own attributes were matched by a pattern that retried from every letter of a long word.
+    @Test func oneHugeLinkTagIsParsedQuickly() {
+        let base = URL(string: "https://example.com/")!
+        let html = "<link rel=icon href=/a.png><link " + String(repeating: "a", count: 16_000) + ">"
+        let start = Date()
+        #expect(FaviconStore.iconLinks(inHTML: html, base: base).count == 1)
+        #expect(Date().timeIntervalSince(start) < 1, "took \(Date().timeIntervalSince(start)) s")
+    }
+
+    @Test func aLongDataAddressIconIsStillFound() {
+        let base = URL(string: "https://example.com/")!
+        let data = "data:image/png;base64," + String(repeating: "QUJD", count: 25_000)
+        let found = FaviconStore.iconLinks(inHTML: "<link rel='shortcut icon' type=image/png href=\"\(data)\">", base: base)
+        #expect(found.count == 1)
+        #expect(found.first?.href.absoluteString.count == data.count)
+    }
+
+    @Test func attributesAreReadWhateverTheirQuoting() {
+        let base = URL(string: "https://example.com/")!
+        let html = "<LINK REL = \"icon\" sizes=48x48 href = '/a.png' title=\"x=y\" data-a=\"\" /><link rel=apple-touch-icon href=/b.png>"
+        let found = FaviconStore.iconLinks(inHTML: html, base: base)
+        #expect(found.map(\.href.path) == ["/a.png", "/b.png"])
+        #expect(found.first?.sizes == "48x48")
+    }
+
+    /// Incognito must not write the sites it visits anywhere, not even to a folder in the temp directory.
+    @Test func anIncognitoWindowLeavesNoFaviconFolderBehind() {
+        func incognitoFolders() -> Set<String> {
+            let names = (try? FileManager.default.contentsOfDirectory(atPath: FileManager.default.temporaryDirectory.path)) ?? []
+            return Set(names.filter { $0.hasPrefix("cosmos-incognito") })
+        }
+        let before = incognitoFolders()
+        let store = BrowserStore(directory: nil, incognito: true)
+        #expect(incognitoFolders().subtracting(before).isEmpty)
+        withExtendedLifetime(store) {}
+    }
+
+    @Test func aMemoryOnlyStoreKeepsTheLogoForTheSessionOnly() async throws {
+        let server = try await SiteServer(routes: ["/": html("<link rel=icon href=/l.png>"), "/l.png": image(TestIcon.png(side: 64, color: .systemTeal))])
+        let store = FaviconStore(directory: nil, offline: false)
+        store.ensure(url: URL(string: "http://127.0.0.1:\(server.port)/"))
+        #expect(await waitForIcon(store) != nil)
+        #expect(FaviconStore(directory: nil, offline: true).image(forHost: "127.0.0.1") == nil)
+    }
+
+    @Test func clearingHistoryForgetsTheLogosTheCommandBarLearnedAndTheVisits() throws {
+        let rig = Rig()
+        let png = TestIcon.png(side: 32, color: .systemOrange)
+        let folder = rig.dir.appendingPathComponent("Favicons", isDirectory: true)
+        try png.write(to: folder.appendingPathComponent("example.com.png"))
+        rig.store.history.record(url: URL(string: "https://example.com/")!, title: "Example")
+        rig.store.learned.record(query: "exa", candidateID: "tab:1")
+        #expect(rig.store.favicons.image(forHost: "example.com") != nil)
+
+        rig.store.clearHistory()
+
+        #expect(rig.store.history.count() == 0)
+        #expect(rig.store.learned.picks.isEmpty)
+        #expect(rig.store.favicons.image(forHost: "example.com") == nil)
+        #expect(((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []).isEmpty)
+    }
+
+    @Test func aLogoEmbeddedInThePageIsDecoded() async throws {
+        let embedded = "data:image/png;base64," + TestIcon.png(side: 48, color: .systemPink).base64EncodedString()
+        let server = try await SiteServer(routes: ["/": html("<html><head><link rel=\"icon\" href=\"\(embedded)\"></head></html>")])
+        let (store, _) = makeStore()
+        store.ensure(url: URL(string: "http://127.0.0.1:\(server.port)/"))
+        #expect(await waitForIcon(store) != nil)
+    }
+
+    @Test func aDownloadStopsAtItsLimit() async throws {
+        let server = try await SiteServer(routes: ["/small": image(Data(repeating: 7, count: 500)), "/big": image(Data(repeating: 7, count: 5_000))])
+        let session = URLSession(configuration: .ephemeral)
+        let base = "http://127.0.0.1:\(server.port)"
+        let small = await FaviconStore.download(URL(string: base + "/small")!, limit: 1_000, session: session)
+        let big = await FaviconStore.download(URL(string: base + "/big")!, limit: 1_000, session: session)
+        let missing = await FaviconStore.download(URL(string: base + "/nothing")!, limit: 1_000, session: session)
+        #expect(small?.count == 500)
+        #expect(big == nil)
+        #expect(missing == nil)
+    }
+
     @Test func aSmallFileThatUnpacksToAHugeImageIsRefused() {
         let bomb = Self.decompressionBomb(side: 30_000)
         #expect(bomb.count < 2_000_000)

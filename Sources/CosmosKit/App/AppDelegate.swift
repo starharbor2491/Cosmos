@@ -215,6 +215,7 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
     func newIncognitoWindow() {
         let incognito = BrowserStore(directory: nil, incognito: true)
         wire(incognito)
+        incognito.favicons.offline = store.favicons.offline
         incognito.blocker = store.blocker
         let state = incognito.makeWindowState()
         let c = openWindow(state: state, store: incognito)

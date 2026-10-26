@@ -54,8 +54,8 @@ struct BoostsPanel: View {
                         .font(.system(size: 12.5, weight: .semibold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
-                        .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(palette.accent.opacity(0.9)))
-                        .foregroundStyle(.white)
+                        .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(palette.accentFill))
+                        .foregroundStyle(palette.onAccent)
                 }
                 .buttonStyle(.plain)
                 .padding(12)
@@ -65,7 +65,7 @@ struct BoostsPanel: View {
                     store.boosts.boosts.append(b); selectedID = b.id
                 } label: {
                     Label("New Boost", systemImage: "plus").font(.system(size: 12.5, weight: .semibold)).frame(maxWidth: .infinity).padding(.vertical, 8)
-                        .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(palette.accent.opacity(0.9))).foregroundStyle(.white)
+                        .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(palette.accentFill)).foregroundStyle(palette.onAccent)
                 }
                 .buttonStyle(.plain).padding(12)
             }
@@ -276,8 +276,8 @@ private struct ZapTab: View {
                 Label(picking ? "Click an element on the page… (Esc to cancel)" : "Pick an Element to Zap", systemImage: "scope")
                     .font(.system(size: 13, weight: .semibold))
                     .padding(.horizontal, 14).padding(.vertical, 8)
-                    .background(Capsule().fill(palette.accent.opacity(picking ? 0.5 : 0.9)))
-                    .foregroundStyle(.white)
+                    .background(Capsule().fill(palette.accentFill.opacity(picking ? 0.5 : 1)))
+                    .foregroundStyle(palette.onAccent)
             }
             .buttonStyle(.plain).disabled(picking || store.currentRuntime(in: window) == nil)
             if boost.zapSelectors.isEmpty {
