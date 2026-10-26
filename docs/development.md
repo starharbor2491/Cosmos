@@ -105,12 +105,13 @@ The script is a JSON array of steps; the log goes to `script.json.log`. A snapsh
 | `settings` `closeSettings` `allowlist` | show Settings on a tab (`blocking`, `extensions`, `radialMenu`, …); turn blocking off for a host |
 | `dropdown` `scrollSettings` | open the nth dropdown in Settings (`index`, top to bottom; -1 closes it); scroll the Settings pane `y` points, so a snapshot can show the part below the fold |
 | `setTheme` | give the current space one of the preset themes by name, to check a screen on light and dark skies |
+| `menuBar` | drive the menu-bar browser: `action` is `enable`, `disable`, `configure` (`home`, `layout`, `remember`), `open`, `close`, `pin`, `go` (`text`) or `state`; snapshot it with `"window": "menubar"` |
 | `rightClick` `radial` | right-click the page at `x`,`y` as a real person would (with `flags`, `hold`); then `dump`, `hover`, `choose` or `back` on the radial menu that opened |
 | `extensions` `extensionAction` | add every extension found on this Mac, or click the nth extension button |
 | `eval` | run JavaScript in the current page and log the result |
 | `state` | log the space, overlay, tab, window and blocker state |
 | `spatial` | measure the sidebar and check its alignment rules (icons, titles, edges, gaps share columns); see below |
-| `snapshot` | write a PNG (`"window": "settings"` or `"probe"` for those windows) |
+| `snapshot` | write a PNG (`"window": "settings"`, `"probe"` or `"menubar"` for those windows) |
 | `quit` | quit |
 
 The verbs are in `Sources/CosmosKit/App/Automation.swift`. The automation script that checked ad blocking end to end, for example, loads a page on one site and has it load a Google ad script, an analytics script and a jQuery script from third parties: with blocking on the first two fail and the third loads; with the site allowlisted all three load.
