@@ -34,15 +34,16 @@ cp "$BIN/cosmos-cli" "$APP/Contents/MacOS/cosmos-cli"
 for bundle in "$BIN"/*.bundle(N); do cp -R "$bundle" "$APP/Contents/Resources/"; done
 
 echo "==> icon"
+ICON_SOURCE="cosmos icon/cosmos-galaxy-icon.png"
+[[ -f $ICON_SOURCE ]] || { echo "missing $ICON_SOURCE"; exit 1 }
 ICONSET=build/Cosmos.iconset
 rm -rf $ICONSET && mkdir -p $ICONSET
-"$APP/Contents/MacOS/Cosmos" --render-icon build/icon-1024.png
 for size in 16 32 128 256 512; do
-  sips -z $size $size build/icon-1024.png --out $ICONSET/icon_${size}x${size}.png >/dev/null
-  sips -z $((size*2)) $((size*2)) build/icon-1024.png --out $ICONSET/icon_${size}x${size}@2x.png >/dev/null
+  sips -z $size $size "$ICON_SOURCE" --out $ICONSET/icon_${size}x${size}.png >/dev/null
+  sips -z $((size*2)) $((size*2)) "$ICON_SOURCE" --out $ICONSET/icon_${size}x${size}@2x.png >/dev/null
 done
 iconutil -c icns $ICONSET -o "$APP/Contents/Resources/Cosmos.icns"
-rm -rf $ICONSET build/icon-1024.png
+rm -rf $ICONSET
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
