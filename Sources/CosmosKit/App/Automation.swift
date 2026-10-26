@@ -214,6 +214,26 @@ final class Automation {
             }
         case "settings":
             delegate?.showSettings(tab: (step["tab"] as? String).flatMap(SettingsTab.init(rawValue:)) ?? .general)
+        case "menuBar":
+            // Drives the menu-bar browser: enable/disable it, set `home`, `layout` ("phone" or "desktop") or `remember`, then
+            // open, close, pin, go (`text`) and state. Snapshot it with "window": "menubar".
+            guard let s = store, let browser = delegate?.menuBar else { note("  menuBar: not available"); break }
+            let action = step["action"] as? String ?? "state"
+            switch action {
+            case "enable": s.settings.menuBar.enabled = true
+            case "disable": s.settings.menuBar.enabled = false
+            case "configure":
+                if let home = step["home"] as? String { s.settings.menuBar.homeAddress = home }
+                if let layout = (step["layout"] as? String).flatMap(MenuBarSettings.Layout.init(rawValue:)) { s.settings.menuBar.layout = layout }
+                if let remember = step["remember"] as? Bool { s.settings.menuBar.rememberPage = remember }
+            case "open": browser.show()
+            case "close": browser.hide()
+            case "pin": browser.session.isPinned.toggle()
+            case "go": browser.session.go(step["text"] as? String ?? "")
+            default: break
+            }
+            let rt = browser.session.runtime
+            note("  menuBar \(action): enabled=\(s.settings.menuBar.enabled) icon=\(browser.statusItem != nil) open=\(browser.isOpen) pinned=\(browser.session.isPinned) layout=\(s.settings.menuBar.layout.rawValue) loading=\(rt?.isLoading ?? false) host=\(rt?.url?.host ?? "-") panel=\(browser.panel.map { "\(Int($0.frame.width))x\(Int($0.frame.height))" } ?? "-")")
         case "scrollSettings":
             // Scrolls the Settings pane `y` points down (the pane is taller than the window), so a snapshot can show the rest.
             if let content = delegate?.settingsWindow?.contentView {
@@ -315,6 +335,7 @@ final class Automation {
         switch which {
         case "probe": target = NSApp.windows.first(where: { $0 is NSPanel && $0.isVisible })
         case "settings": target = delegate?.settingsWindow
+        case "menubar": target = delegate?.menuBar?.panel
         default: target = controller?.window ?? NSApp.windows.first(where: { $0.isVisible })
         }
         guard let window = target, let content = window.contentView else {

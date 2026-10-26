@@ -61,6 +61,8 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
     private var settingsController: NSWindowController?
     /// The open Settings window's dropdown layer, so the automation script can open a list.
     var settingsDropdowns: DropdownHost?
+    /// The small browser under the menu-bar icon (the icon is there only while the setting is on).
+    private(set) var menuBar: MenuBarBrowser?
     private var automation: Automation?
     private var pendingURLs: [URL] = []
     private var launched = false
@@ -98,6 +100,7 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
         if store.isFirstLaunch && !store.settings.hasCompletedOnboarding, let first = controllers.first {
             first.state.overlay = .welcome
         }
+        installMenuBarBrowser()
         launched = true
         NSApp.activate(ignoringOtherApps: true)
         for url in pendingURLs { openExternal(url) }
@@ -211,6 +214,32 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
         let c = openWindow(state: state)
         state.overlay = .commandBar(.newTab)
         c.window?.makeKeyAndOrderFront(nil)
+    }
+
+    private func installMenuBarBrowser() {
+        let browser = MenuBarBrowser(store: store, openInCosmos: { [weak self] url in self?.openInBrowser(url) },
+                                     showSettings: { [weak self] in self?.showSettings(tab: .menuBar) },
+                                     showBrowser: { [weak self] in self?.showBrowserWindow() })
+        menuBar = browser
+        store.onMenuBarChange = { [weak browser] in browser?.sync() }
+        browser.sync()
+    }
+
+    /// Opens `url` as a new tab in the browser window the user last used, opening one if there is none.
+    func openInBrowser(_ url: URL) {
+        if active == nil { newWindow() }
+        guard let c = active ?? controllers.first else { return }
+        open(url, in: c)
+    }
+
+    /// Brings a browser window forward, opening one if there is none.
+    func showBrowserWindow() {
+        if let c = active ?? controllers.first {
+            c.window?.makeKeyAndOrderFront(nil)
+        } else {
+            newWindow()
+        }
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     /// Shows `overlay` in the browser window the user last used, opening one if there is none, and brings it forward.

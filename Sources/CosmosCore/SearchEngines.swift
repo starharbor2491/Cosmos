@@ -15,6 +15,13 @@ public struct SearchEngine: Codable, Hashable, Identifiable, Sendable {
 
     public func searchURL(for query: String) -> URL? { URLInput.searchURL(template: search, query: query) }
     public func suggestURL(for query: String) -> URL? { suggest.flatMap { URLInput.searchURL(template: $0, query: query) } }
+
+    /// The engine's front page: its search address without the path or the query.
+    public var homeURL: URL? {
+        guard var parts = searchURL(for: "x").flatMap({ URLComponents(url: $0, resolvingAgainstBaseURL: false) }) else { return nil }
+        parts.path = "/"; parts.query = nil; parts.fragment = nil
+        return parts.url
+    }
 }
 
 /// "Type the site's name, press Tab, then search inside it" (Arc's Site Search).

@@ -14,4 +14,16 @@ enum AppIcon {
     /// The artwork is a 822 pt tile centred on a 1024 pt canvas.
     static let canvas: CGFloat = 1024
     static let tile: CGFloat = 822
+
+    /// The tile alone (no margin or shadow) at a menu-bar size.
+    static func menuBarImage(side: CGFloat = 18) -> NSImage {
+        let source = image
+        let margin = (canvas - tile) / 2 / canvas
+        let inner = tile / canvas
+        let crop = NSRect(x: source.size.width * margin, y: source.size.height * margin, width: source.size.width * inner, height: source.size.height * inner)
+        return NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
+            source.draw(in: rect, from: crop, operation: .sourceOver, fraction: 1)
+            return true
+        }
+    }
 }

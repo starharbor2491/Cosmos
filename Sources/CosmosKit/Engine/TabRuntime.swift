@@ -26,6 +26,12 @@ public protocol TabHost: AnyObject {
     func tab(_ tab: TabRuntime, remember allowed: Bool?, forPermission key: String)
     /// Shows the radial menu for the system menu a page asked for; false leaves the system menu to be drawn.
     func tab(_ tab: TabRuntime, showRadialMenu menu: NSMenu, context: RadialContext, center: CGPoint, windowSize: CGSize) -> Bool
+    /// True where there is no room for another window or tab (the menu-bar panel): a link that asks for one loads in place.
+    var opensNewWindowsInPlace: Bool { get }
+}
+
+public extension TabHost {
+    var opensNewWindowsInPlace: Bool { false }
 }
 
 /// One live page: owns the `WKWebView`, mirrors its state into observable properties and implements the WebKit
@@ -435,6 +441,10 @@ extension TabRuntime: WKUIDelegate {
     public func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                         for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         guard let host else { return nil }
+        if host.opensNewWindowsInPlace {
+            if let url = navigationAction.request.url, ["http", "https"].contains(url.scheme?.lowercased() ?? "") { load(url) }
+            return nil
+        }
         // Popups from script (OAuth, payment flows) need the opener relationship, so they must use WebKit's configuration.
         return host.tab(self, createChildWith: configuration, features: windowFeatures)
     }

@@ -3,7 +3,7 @@ import AppKit
 import CosmosCore
 
 enum SettingsTab: String, CaseIterable, Identifiable {
-    case general, sidebar, blocking, extensions, privacy, links, radialMenu, about
+    case general, sidebar, blocking, extensions, privacy, links, radialMenu, menuBar, about
 
     var id: String { rawValue }
 
@@ -16,6 +16,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .privacy: "Privacy"
         case .links: "Links"
         case .radialMenu: "Radial Menu"
+        case .menuBar: "Menu Bar"
         case .about: "About"
         }
     }
@@ -29,6 +30,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .privacy: "hand.raised"
         case .links: "arrow.triangle.branch"
         case .radialMenu: "chart.pie"
+        case .menuBar: "menubar.rectangle"
         case .about: "sparkles"
         }
     }
@@ -90,10 +92,7 @@ struct SettingsView: View {
         _tab = Local(wrappedValue: tab)
     }
 
-    private var theme: SpaceTheme {
-        let focused = (store.activeWindow ?? store.windows.first)?.focusedSpaceID
-        return focused.flatMap { store.workspace.space($0)?.theme } ?? store.workspace.spaces.first?.theme ?? .nebula
-    }
+    private var theme: SpaceTheme { store.currentTheme }
 
     var body: some View {
         let palette = Palette(theme: theme)
@@ -203,6 +202,7 @@ struct SettingsView: View {
         case .privacy: PrivacyPane(store: store, model: model)
         case .links: LinksPane(store: store)
         case .radialMenu: RadialPane(store: store)
+        case .menuBar: MenuBarPane(store: store)
         case .about: AboutPane(store: store)
         }
     }

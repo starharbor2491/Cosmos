@@ -53,6 +53,8 @@ public final class BrowserStore: TabHost {
     @ObservationIgnored var onShowSettingsTab: ((SettingsTab) -> Void)?
     /// Shows an overlay in a browser window and brings that window forward.
     @ObservationIgnored var onPresent: ((Overlay) -> Void)?
+    /// The menu-bar browser's settings changed: the app shows, hides or rebuilds it.
+    @ObservationIgnored var onMenuBarChange: (() -> Void)?
     @ObservationIgnored var onPopupWindow: ((TabRuntime, WKWindowFeatures) -> Void)?
 
     // MARK: Persistence plumbing
@@ -217,6 +219,13 @@ public final class BrowserStore: TabHost {
         if let onPresent { onPresent(overlay) } else { activeWindow?.overlay = overlay }
     }
 
+    /// The sky of the space being looked at, for windows that are not part of a browser window (Settings, the menu-bar
+    /// browser) so they match it.
+    var currentTheme: SpaceTheme {
+        let focused = (activeWindow ?? windows.first)?.focusedSpaceID
+        return focused.flatMap { workspace.space($0)?.theme } ?? workspace.spaces.first?.theme ?? .nebula
+    }
+
     // MARK: Environments
 
     func environment(forProfile id: UUID?) -> ProfileEnvironment {
@@ -258,6 +267,7 @@ public final class BrowserStore: TabHost {
         }
         if old.appearance != settings.appearance { NSApp?.appearance = settings.appearance.nsAppearance }
         haptics.isEnabled = settings.trackpadHaptics
+        if old.menuBar != settings.menuBar { onMenuBarChange?() }
     }
 
     // MARK: Timers (auto-archive, memory saver)
