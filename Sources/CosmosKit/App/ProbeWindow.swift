@@ -122,7 +122,7 @@ private struct ProbeView: View {
 
 @MainActor
 enum PopupWindows {
-    static func present(_ runtime: TabRuntime, features: WKWindowFeaturesBox) {
+    static func present(_ runtime: TabRuntime, features: WKWindowFeaturesBox, bringForward: Bool) {
         let width = max(360, features.width ?? 520), height = max(320, features.height ?? 640)
         let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
                            styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
@@ -141,8 +141,9 @@ enum PopupWindows {
         let delegate = PopupDelegate(runtime: runtime)
         objc_setAssociatedObject(win, &PopupDelegate.key, delegate, .OBJC_ASSOCIATION_RETAIN)
         win.delegate = delegate
-        // A sign-in opened from the menu-bar panel appears while Cosmos is not the frontmost app.
-        NSApp.activate(ignoringOtherApps: true)
+        // A sign-in opened from the menu-bar panel appears while Cosmos is not the frontmost app. A page that asks for a
+        // window on its own (a background tab, a hidden panel) does not get to take the focus from what the user is doing.
+        if bringForward { NSApp.activate(ignoringOtherApps: true) }
         win.makeKeyAndOrderFront(nil)
     }
 }

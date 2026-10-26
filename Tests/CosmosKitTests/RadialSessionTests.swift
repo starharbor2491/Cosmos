@@ -365,6 +365,25 @@ enum RadialFixture {
         #expect(rig.window.radial == nil, "another space came up")
     }
 
+    @Test func theRingGoesWhenItsOwnPageIsReloadedOrLeaves() throws {
+        let rig = Rig(seed: true)
+        let current = try shown(rig)
+        #expect(show(rig, current, menu: RadialFixture.linkMenu(MenuTarget())))
+        #expect(rig.window.radial != nil)
+
+        current.webView(current.webView, didStartProvisionalNavigation: nil)
+
+        #expect(rig.window.radial == nil, "the page the ring was made over is going away")
+    }
+
+    @Test func longSliceNamesAreShortenedAndTheOthersAreLeftWhole() {
+        #expect(RadialMenuView.short("Spelling and Grammar") == "Spelling")
+        #expect(RadialMenuView.short("Paragraph Direction") == "Paragraph")
+        #expect(RadialMenuView.short("Open Link in New Tab") == "New Tab")
+        #expect(RadialMenuView.short("Open Link") == "Open Link")
+        #expect(RadialMenuView.short("Copy Link") == "Copy Link")
+    }
+
     @Test func aMenuWithNothingOnItIsLeftToTheSystem() throws {
         let rig = Rig()
         let runtime = try shown(rig)
@@ -499,6 +518,24 @@ enum RadialFixture {
         #expect(opened.map(\.0) == [URL(string: "https://example.com/target")!, URL(string: "https://example.com/target")!])
         #expect(opened.map(\.1) == [.peek, .split])
         withExtendedLifetime(recorder) {}
+        session.teardown()
+    }
+
+    /// A page can link to a file or a script; Peek and Split are for web pages, as the force-click Peek is.
+    @Test(arguments: ["file:///etc/hosts", "javascript:alert(1)", "ftp://example.com/a", "cosmos://settings"])
+    func peekAndSplitAreOfferedOnlyForWebLinks(link: String) throws {
+        _ = NSApplication.shared
+        let rig = Rig()
+        let session = MenuBarSession(store: rig.store)
+        let runtime = session.prepare()
+        report(runtime, ["link": link, "x": 5.0, "y": 5.0])
+        let target = MenuTarget()
+        let menu = RadialFixture.menu([RadialFixture.item("Open Link in New Window", id: "WKMenuItemIdentifierOpenLinkInNewWindow", action: #selector(MenuTarget.openLink), target: target)])
+
+        runtime.customiseContextMenu(menu)
+
+        #expect(!menu.items.contains { $0.identifier?.rawValue.hasPrefix("cosmos.openLinkIn") == true })
+        #expect(!TabRuntime.isWebLink(URL(string: link)!))
         session.teardown()
     }
 

@@ -180,8 +180,8 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
             guard let self, let store else { return }
             self.openProbe(url, store: store)
         }
-        store.onPopupWindow = { runtime, features in
-            PopupWindows.present(runtime, features: WKWindowFeaturesBox(features))
+        store.onPopupWindow = { runtime, features, bringForward in
+            PopupWindows.present(runtime, features: WKWindowFeaturesBox(features), bringForward: bringForward)
         }
         store.downloads.onEvent = { [weak self, weak store] item in
             guard let self, let store else { return }

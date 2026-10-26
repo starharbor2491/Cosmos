@@ -34,6 +34,7 @@ final class MenuBarBrowser: NSObject {
         session = MenuBarSession(store: store)
         super.init()
         session.onHide = { [weak self] in self?.hide() }
+        session.isPanelOpen = { [weak self] in self?.isOpen == true }
         session.onPinChange = { [weak self] in
             guard let self else { return }
             self.panel?.level = self.session.isPinned ? .floating : .statusBar

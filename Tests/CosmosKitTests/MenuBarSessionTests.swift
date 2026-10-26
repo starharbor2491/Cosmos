@@ -190,7 +190,8 @@ private final class SizedFeatures: WKWindowFeatures {
     @Test func aScriptSizedPopupGetsItsOwnWindowButAPlainNewWindowLoadsInPlace() throws {
         let rig = Rig()
         var shown: [TabRuntime] = []
-        rig.store.onPopupWindow = { runtime, _ in shown.append(runtime) }
+        var forward: [Bool] = []
+        rig.store.onPopupWindow = { runtime, _, bringForward in shown.append(runtime); forward.append(bringForward) }
         let session = MenuBarSession(store: rig.store)
         let runtime = session.prepare()
 
@@ -205,6 +206,11 @@ private final class SizedFeatures: WKWindowFeatures {
         #expect(popup != nil)
         #expect(shown.count == 1 && shown.first?.isEphemeral == true)
         #expect(shown.first?.webView === popup)
+        #expect(forward == [false], "a panel that is not on screen cannot have asked the user for a window")
+
+        session.isPanelOpen = { true }
+        _ = runtime.host?.tab(runtime, createChildWith: WKWebViewConfiguration(), features: sized)
+        #expect(forward == [false, true], "a window asked for from the open panel comes to the front")
         session.teardown()
     }
 
@@ -387,11 +393,70 @@ private final class SizedFeatures: WKWindowFeatures {
         #expect(rig.store.favicons.image(forHost: "example.com") == nil)
     }
 
-    @Test func clearingJustTheLastHourKeepsWhatIsNotTiedToATime() {
+    /// What was typed in the last hour is as much a record of it as the pages are: the Command Bar's picks carry the typed
+    /// search and the typed address, and they have dates.
+    @Test func clearingARangeForgetsWhatWasTypedInIt() throws {
         let rig = Rig()
-        rig.store.learned.record(query: "exa", candidateID: "tab:1")
+        rig.store.learned.record(query: "old", candidateID: "web:old", at: Date().addingTimeInterval(-86400 * 3))
+        rig.store.learned.record(query: "private search", candidateID: "web:private search")
+        rig.store.learned.record(query: "example.com/secret", candidateID: "url:https://example.com/secret")
+
         rig.store.clearHistory(since: Date().addingTimeInterval(-3600))
-        #expect(!rig.store.learned.picks.isEmpty, "picks have no date, so a partial clear leaves them")
+
+        #expect(rig.store.learned.picks.keys.sorted() == ["old"])
+        rig.store.saveNow()
+        let saved = try Data(contentsOf: rig.dir.appendingPathComponent("command-bar-learning.json"))
+        #expect(!saved.contains(Data("secret".utf8)) && !saved.contains(Data("private".utf8)))
+    }
+
+    @Test func clearingARangeDropsTheLogosOfSitesNothingUsesAnymore() throws {
+        let rig = Rig()
+        let folder = rig.dir.appendingPathComponent("Favicons", isDirectory: true)
+        for name in ["gone.example", "kept.example", "intab.example"] { try TestIcon.png(side: 32, color: .systemOrange).write(to: folder.appendingPathComponent("\(name).png")) }
+        rig.store.history.record(url: URL(string: "https://gone.example/x")!, title: "", at: Date().addingTimeInterval(-600))
+        rig.store.history.record(url: URL(string: "https://www.kept.example/")!, title: "", at: Date().addingTimeInterval(-86400 * 3))
+        let root = rig.space.unpinnedRootID
+        _ = rig.store.edit { $0.addTab(url: URL(string: "https://intab.example/page")!, under: root, at: 0) }
+
+        rig.store.clearHistory(since: Date().addingTimeInterval(-3600))
+
+        #expect(rig.store.favicons.image(forHost: "gone.example") == nil)
+        #expect(rig.store.favicons.image(forHost: "kept.example") != nil, "still in the history")
+        #expect(rig.store.favicons.image(forHost: "intab.example") != nil, "still has a tab")
+    }
+
+    /// Deleting one row is a clear of one address, and the address can be in more places than the history.
+    @Test func deletingOneHistoryRowForgetsItEverywhere() {
+        let rig = Rig()
+        let url = URL(string: "https://example.com/a?private=1")!
+        let other = URL(string: "https://example.com/b")!
+        var cleared = 0
+        rig.store.onHistoryCleared = { cleared += 1 }
+        rig.store.history.record(url: url, title: "A")
+        rig.store.history.record(url: other, title: "B")
+        rig.store.learned.record(query: "exa", candidateID: "hist:\(url.absoluteString)")
+        rig.store.learned.record(query: "exa", candidateID: "hist:\(other.absoluteString)")
+        rig.store.settings.menuBar.remember(url)
+
+        rig.store.deleteHistoryEntry(url)
+
+        #expect(rig.store.history.count() == 1)
+        #expect(rig.store.settings.menuBar.lastAddress == nil, "the panel would have opened on it again")
+        #expect(rig.store.learned.picks["exa"]?.keys.sorted() == ["hist:\(other.absoluteString)"])
+        #expect(cleared == 1)
+    }
+
+    @Test func deletingAnotherRowLeavesTheMenuBarPageAlone() {
+        let rig = Rig()
+        var cleared = 0
+        rig.store.onHistoryCleared = { cleared += 1 }
+        rig.store.history.record(url: URL(string: "https://example.com/b")!, title: "B")
+        rig.store.settings.menuBar.remember(URL(string: "https://example.com/a")!)
+
+        rig.store.deleteHistoryEntry(URL(string: "https://example.com/b")!)
+
+        #expect(rig.store.settings.menuBar.lastAddress == "https://example.com/a")
+        #expect(cleared == 0)
     }
 
     /// Every control that clears history goes through the store, which knows everything that has to be forgotten with it.
@@ -401,12 +466,12 @@ private final class SizedFeatures: WKWindowFeatures {
         for folder in ["Sources/CosmosKit/UI", "Sources/CosmosKit/Settings", "Sources/CosmosKit/App"] {
             let dir = root.appendingPathComponent(folder, isDirectory: true)
             for file in try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) where file.pathExtension == "swift" {
-                for (index, line) in try String(contentsOf: file, encoding: .utf8).components(separatedBy: "\n").enumerated() where line.contains("history.clear(") {
+                for (index, line) in try String(contentsOf: file, encoding: .utf8).components(separatedBy: "\n").enumerated() where line.contains("history.clear(") || line.contains("history.delete(") {
                     offenders.append("\(file.lastPathComponent):\(index + 1)")
                 }
             }
         }
-        #expect(offenders.isEmpty, "use store.clearHistory(since:): \(offenders.joined(separator: ", "))")
+        #expect(offenders.isEmpty, "use store.clearHistory(since:) or store.deleteHistoryEntry: \(offenders.joined(separator: ", "))")
     }
 
     @Test func clearingTheHistoryDropsThePageThePanelStillHolds() {

@@ -61,7 +61,7 @@ public final class BrowserStore: TabHost {
     @ObservationIgnored var onHistoryCleared: (() -> Void)?
     /// The menu-bar browser's settings changed: the app shows, hides or rebuilds it.
     @ObservationIgnored var onMenuBarChange: (() -> Void)?
-    @ObservationIgnored var onPopupWindow: ((TabRuntime, WKWindowFeatures) -> Void)?
+    @ObservationIgnored var onPopupWindow: ((TabRuntime, WKWindowFeatures, _ bringForward: Bool) -> Void)?
 
     // MARK: Persistence plumbing
 
@@ -161,17 +161,40 @@ public final class BrowserStore: TabHost {
     /// fetched for those sites (the cache would otherwise still list every host) and the page the menu-bar browser was on.
     public func clearHistory() { clearHistory(since: nil) }
 
-    /// Forgets the visits since `date` (everything for nil). The page the menu-bar browser was on is the most recent
-    /// page there is, so it goes whatever the range. What has no date (what the Command Bar learned, the logo cache) goes
-    /// only when everything does.
+    /// Forgets the visits since `date` (everything for nil), and with them what the Command Bar learned from what was typed
+    /// in that time, the logos of sites nothing uses any more, and the page the menu-bar browser was on (the most recent
+    /// page there is, whatever the range).
     public func clearHistory(since date: Date?) {
         history.clear(since: date)
-        if date == nil {
+        if let date {
+            learned.forget(since: date)
+            dropUnusedLogos()
+        } else {
             learned = LearnedSelections()
             favicons.removeAll()
         }
         settings.menuBar.lastAddress = nil
         onHistoryCleared?()
+    }
+
+    /// Forgets one page of the history: its row, what the Command Bar learned from picking or typing it, its logo when no
+    /// other page or tab needs it, and the menu-bar page when that is the one.
+    public func deleteHistoryEntry(_ url: URL) {
+        history.delete(url: url)
+        let address = url.absoluteString
+        learned.forget(candidateIDs: ["hist:\(address)", "url:\(address)"])
+        dropUnusedLogos()
+        guard settings.menuBar.lastAddress == address else { return }
+        settings.menuBar.lastAddress = nil
+        onHistoryCleared?()
+    }
+
+    /// Logos are kept for the sites that have a page in the history or a tab, archived or not.
+    private func dropUnusedLogos() {
+        var hosts = history.hosts()
+        for item in workspace.allTabs() { if let host = item.tab?.url?.host { hosts.insert(host) } }
+        for entry in archive.entries { for item in entry.items { if let host = item.tab?.url?.host { hosts.insert(host) } } }
+        favicons.keepOnly(hosts: hosts)
     }
 
     /// An incognito window is a store of its own with default settings. It takes over the choices that are about how the

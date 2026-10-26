@@ -116,6 +116,7 @@ struct HistoryPanel: View {
     @Local private var query = ""
     @Local private var entries: [HistoryEntry] = []
     @Local private var revision = 0
+    @Local private var confirmingAll = false
 
     var body: some View {
         PanelFrame(title: "History", symbol: "clock.fill", width: 700, height: 560, close: { window.overlay = nil }, accessory: {
@@ -124,11 +125,12 @@ struct HistoryPanel: View {
                 Button("Today") { store.clearHistory(since: Calendar.current.startOfDay(for: Date())); revision += 1 }
                 Button("Last 7 Days") { store.clearHistory(since: Date().addingTimeInterval(-7 * 86400)); revision += 1 }
                 Divider()
-                Button("All History") { store.clearHistory(); revision += 1 }
+                Button("All History…") { confirmingAll = true }
             }
             .menuStyle(.borderlessButton).fixedSize().font(.system(size: 11.5, weight: .medium))
         }) {
             VStack(spacing: 0) {
+                if confirmingAll { clearAllConfirmation }
                 PanelSearchField(text: $query, prompt: "Search history").padding(12)
                 if entries.isEmpty {
                     EmptyPanelMessage(symbol: "clock", title: query.isEmpty ? "No history yet" : "No matches")
@@ -150,6 +152,21 @@ struct HistoryPanel: View {
             if !query.isEmpty { try? await Task.sleep(for: .milliseconds(120)) }
             entries = query.isEmpty ? store.history.recent(limit: 400) : store.history.search(query, limit: 200)
         }
+    }
+
+    /// Clearing everything is not undone, and it takes more than the visited pages with it, so it asks first.
+    private var clearAllConfirmation: some View {
+        HStack(spacing: 10) {
+            Text("Clear all history? Visited pages, what the Command Bar learned from them, saved site icons and the page the menu bar browser was on are removed. This can't be undone.")
+                .font(.system(size: 12)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            ActionButton(title: "Cancel", kind: .quiet) { confirmingAll = false }
+            ActionButton(title: "Clear History", kind: .destructive) { store.clearHistory(); revision += 1; confirmingAll = false }
+        }
+        .padding(.horizontal, 16).padding(.vertical, 10)
+        .background(palette.hoverStrong)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Confirm clearing all history")
     }
 
     private var grouped: [(String, [HistoryEntry])] {
@@ -184,7 +201,7 @@ private struct HistoryRow: View {
             Text(URLInput.hostForDisplay(entry.url)).font(.system(size: 12)).foregroundStyle(palette.tertiary).lineLimit(1)
             Spacer()
             if hover {
-                Button { store.history.delete(url: entry.url); onDelete() } label: { Image(systemName: "xmark").font(.system(size: 10.5, weight: .bold)) }
+                Button { store.deleteHistoryEntry(entry.url); onDelete() } label: { Image(systemName: "xmark").font(.system(size: 10.5, weight: .bold)) }
                     .buttonStyle(.plain).foregroundStyle(palette.secondary)
             } else {
                 Text(entry.lastVisit, style: .time).font(.system(size: 11.5)).foregroundStyle(palette.tertiary)

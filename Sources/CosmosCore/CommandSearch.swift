@@ -72,6 +72,23 @@ public struct LearnedSelections: Codable, Equatable, Sendable {
         }
     }
 
+    /// Forgets what was picked at or after `date`, and every query left with no pick. A pick carries the search or the
+    /// address that was typed for it, so it is as much a record of the time as a visited page is.
+    public mutating func forget(since date: Date) {
+        for (query, forQuery) in picks {
+            let kept = forQuery.filter { $0.value.lastAt < date }
+            picks[query] = kept.isEmpty ? nil : kept
+        }
+    }
+
+    /// Forgets every pick of the given candidates (a page whose history row was deleted).
+    public mutating func forget(candidateIDs ids: Set<String>) {
+        for (query, forQuery) in picks {
+            let kept = forQuery.filter { !ids.contains($0.key) }
+            picks[query] = kept.isEmpty ? nil : kept
+        }
+    }
+
     /// 0...1 boost: exact query picks count fully, picks made for a longer query that this one prefixes count less
     /// ("gi" benefits from what you chose for "github").
     public func boost(query: String, candidateID: String, now: Date = Date()) -> Double {

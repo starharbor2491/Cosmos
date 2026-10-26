@@ -78,11 +78,12 @@ struct RadialMenuView: View {
                     if let symbol = entry.symbol {
                         Image(systemName: symbol).font(.system(size: 19, weight: .semibold)).frame(height: 22)
                     }
-                    // Every slice is named, so the ring can be read instead of recalled (a busier ring uses smaller type).
-                    Text(Self.short(entry.title)).font(.system(size: entry.symbol == nil ? 11 : (count > 6 ? 9.5 : 10), weight: .semibold))
-                        .multilineTextAlignment(.center).lineLimit(entry.symbol == nil ? 3 : 2).minimumScaleFactor(0.75)
+                    // Every slice is named, so the ring can be read instead of recalled (a busier ring uses slightly smaller type, and
+                    // never shrinks it below 9 pt: a long name is shortened, and the hub says it in full).
+                    Text(Self.short(entry.title)).font(.system(size: entry.symbol == nil ? 11 : (count > 6 ? 10 : 10.5), weight: .semibold))
+                        .multilineTextAlignment(.center).lineLimit(entry.symbol == nil ? 3 : 2).minimumScaleFactor(0.9)
                 }
-                .frame(width: count > 6 ? 62 : 72)
+                .frame(width: count > 6 ? 66 : 74)
                 .foregroundStyle(lit ? palette.onAccent : palette.text)
                 .animation(Motion.quick, value: lit)
                 .opacity(entry.isEnabled ? 1 : 0.35)
@@ -121,7 +122,10 @@ struct RadialMenuView: View {
     }
 
     /// Slices are narrow: long titles fit better without their lead-in.
-    private static func short(_ title: String) -> String {
+    static func short(_ title: String) -> String {
+        // The names WebKit gives its text submenus are the longest words on a ring.
+        let shorter = ["Spelling and Grammar": "Spelling", "Selection Direction": "Selection", "Paragraph Direction": "Paragraph", "Transformations": "Transform"]
+        if let name = shorter[title] { return name }
         // "Open Link" stays whole: without its noun it would just say "Link".
         for prefix in ["Open Link in ", "Open Image in ", "Open Frame in ", "Open in "] where title.hasPrefix(prefix) && title.count > prefix.count { return String(title.dropFirst(prefix.count)) }
         return title

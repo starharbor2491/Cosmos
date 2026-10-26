@@ -21,6 +21,8 @@ final class MenuBarSession {
     @ObservationIgnored var onHide: () -> Void = {}
     /// The pin was turned on or off: the panel floats above other windows while it is on.
     @ObservationIgnored var onPinChange: () -> Void = {}
+    /// Whether the panel is on screen: a window its page opens is the user's to see only then.
+    @ObservationIgnored var isPanelOpen: () -> Bool = { false }
     /// A page that belongs in a browser window (⌘-click, "Open in Cosmos").
     @ObservationIgnored var onOpenInCosmos: (URL) -> Void = { _ in }
     @ObservationIgnored private var host: MenuBarHost?
@@ -137,7 +139,7 @@ final class MenuBarHost: TabHost {
     /// Only a script-sized window gets here (the rest load in place, see `opensNewWindowsInPlace`): an OAuth sign-in needs
     /// its opener, so it is a window of its own.
     func tab(_ tab: TabRuntime, createChildWith configuration: WKWebViewConfiguration, features: WKWindowFeatures) -> WKWebView? {
-        store.openPopup(from: tab, configuration: configuration, features: features)
+        store.openPopup(from: tab, configuration: configuration, features: features, bringForward: session?.isPanelOpen() == true)
     }
 
     func tabRequestsClose(_ tab: TabRuntime) { session?.onHide() }
