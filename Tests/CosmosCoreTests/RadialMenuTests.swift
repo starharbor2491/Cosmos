@@ -197,6 +197,25 @@ import Testing
         #expect(settings.isActive(on: "figma.com"))
     }
 
+    @Test func theEntryThatTurnsASiteOffIsKnown() {
+        var settings = RadialSettings()
+        _ = settings.disable(host: "google.com")
+        #expect(settings.disablingEntry(for: "docs.google.com") == "google.com")
+        #expect(settings.disablingEntry(for: "https://www.google.com/search") == "google.com")
+        #expect(settings.disablingEntry(for: "example.com") == nil)
+        #expect(settings.disablingEntry(for: "not a site") == nil)
+    }
+
+    @Test func turningASiteBackOnClearsWhateverTurnedItOff() {
+        var settings = RadialSettings()
+        _ = settings.disable(host: "google.com")
+        _ = settings.disable(host: "example.com")
+        // The ring has to work on docs.google.com afterwards, so the entry for the whole of google.com goes.
+        settings.enable(host: "docs.google.com")
+        #expect(settings.isActive(on: "docs.google.com"))
+        #expect(settings.disabledHosts == ["example.com"])
+    }
+
     @Test func aRingIsCustomisedPerContext() {
         var settings = RadialSettings()
         #expect(settings.customRing(for: .link) == nil)
@@ -222,5 +241,76 @@ import Testing
         #expect(tolerant.disabledHosts.isEmpty || tolerant.disabledHosts == ["a.com"])
         #expect(tolerant.customRing(for: .link) == [.copyLink], "unknown actions and repeats are dropped")
         #expect(try JSONDecoder.cosmos.decode(RadialSettings.self, from: Data("{}".utf8)) == RadialSettings())
+    }
+
+    // MARK: Editing a ring
+
+    @Test func theActionsLeftToAddAreTheOnesForThatContextNotAlreadyOnItsRing() {
+        let settings = RadialSettings()
+        #expect(settings.available(for: .link) == [.inspect])
+        #expect(settings.available(for: .page) == [.openFrameInNewTab])
+        for context in RadialContext.allCases {
+            let left = settings.available(for: context)
+            #expect(left.allSatisfy { $0.contexts.contains(context) })
+            #expect(Set(left).isDisjoint(with: Set(settings.ring(for: context))))
+        }
+    }
+
+    @Test func addingStartsFromTheDefaultRingAndKeepsToTheContext() {
+        var settings = RadialSettings()
+        let customisedBefore = settings.isCustomised(.image)
+        let added = settings.add(.inspect, to: .image)
+        let again = settings.add(.inspect, to: .image)
+        let wrongContext = settings.add(.paste, to: .image)
+        #expect(!customisedBefore)
+        #expect(added)
+        #expect(settings.isCustomised(.image))
+        #expect(settings.ring(for: .image) == RadialAction.defaultRing(for: .image) + [.inspect])
+        #expect(!again, "already there")
+        #expect(!wrongContext, "a paste slice makes no sense on an image")
+        #expect(!settings.isCustomised(.link), "other contexts are untouched")
+    }
+
+    @Test func removingKeepsTheRestInOrderButNeverEmptiesARing() {
+        var settings = RadialSettings()
+        settings.setRing([.copyLink, .openLink, .share], for: .link)
+        let removedMiddle = settings.remove(at: 1, from: .link)
+        let afterMiddle = settings.ring(for: .link)
+        let tooFar = settings.remove(at: 9, from: .link)
+        let negative = settings.remove(at: -1, from: .link)
+        let removedFirst = settings.remove(at: 0, from: .link)
+        let removedLast = settings.remove(at: 0, from: .link)
+        #expect(removedMiddle)
+        #expect(afterMiddle == [.copyLink, .share])
+        #expect(!tooFar && !negative)
+        #expect(removedFirst)
+        #expect(!removedLast, "a ring with nothing on it would fall back to the default")
+        #expect(settings.ring(for: .link) == [.share])
+    }
+
+    @Test func movingSwapsWithTheNeighbourAndStopsAtTheEnds() {
+        var settings = RadialSettings()
+        settings.setRing([.openLink, .copyLink, .share], for: .link)
+        let up = settings.move(at: 2, by: -1, in: .link)
+        let afterUp = settings.ring(for: .link)
+        let pastStart = settings.move(at: 0, by: -1, in: .link)
+        let pastEnd = settings.move(at: 2, by: 1, in: .link)
+        let missing = settings.move(at: 5, by: 1, in: .link)
+        let jump = settings.move(at: 0, by: 2, in: .link)
+        #expect(up)
+        #expect(afterUp == [.openLink, .share, .copyLink])
+        #expect(!pastStart && !pastEnd && !missing)
+        #expect(jump)
+        #expect(settings.ring(for: .link) == [.share, .copyLink, .openLink])
+    }
+
+    @Test func resettingBringsBackTheDefaultAndLeavesTheOthers() {
+        var settings = RadialSettings()
+        settings.setRing([.copy], for: .selection)
+        settings.setRing([.copyLink], for: .link)
+        settings.resetRing(for: .selection)
+        #expect(!settings.isCustomised(.selection))
+        #expect(settings.ring(for: .selection) == RadialAction.defaultRing(for: .selection))
+        #expect(settings.isCustomised(.link))
     }
 }

@@ -43,6 +43,13 @@ struct SiteControlsPanel: View {
                         .opacity(store.settings.adBlockingEnabled ? 1 : 0.4)
                         .disabled(!store.settings.adBlockingEnabled)
                     }
+                    ControlRow(symbol: "chart.pie", title: "Radial menu", detail: radialDetail(host)) {
+                        SwitchControl(isOn: Binding(get: { !store.settings.radialMenu.isDisabled(host: host) }, set: { on in
+                            if on { store.settings.radialMenu.enable(host: host) } else { store.settings.radialMenu.disable(host: host) }
+                        }), label: "Radial menu on this site")
+                        .opacity(store.settings.radialMenu.enabled ? 1 : 0.4)
+                        .disabled(!store.settings.radialMenu.enabled)
+                    }
                     ControlRow(symbol: "plus.magnifyingglass", title: "Page zoom", detail: "\(Int(((rt?.zoom ?? 1) * 100).rounded()))%") {
                         HStack(spacing: 2) {
                             ToolbarButton(symbol: "minus", size: 12, help: "Zoom Out") { rt?.zoomOut() }
@@ -78,6 +85,13 @@ struct SiteControlsPanel: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(.leading, window.sidebarVisible ? Metrics.Sidebar.gutter : 90)
         .padding(.top, window.sidebarVisible ? Metrics.Height.toolbar + Metrics.Height.field + Metrics.Space.xs : 52)
+    }
+
+    private func radialDetail(_ host: String) -> String {
+        let radial = store.settings.radialMenu
+        guard radial.enabled else { return "Off everywhere" }
+        guard let entry = radial.disablingEntry(for: host) else { return "On for this site" }
+        return entry == host ? "Off for this site" : "Off for \(entry)"
     }
 
     struct ControlRow<Trailing: View>: View {

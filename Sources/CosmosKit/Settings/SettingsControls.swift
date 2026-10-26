@@ -223,13 +223,15 @@ struct Dropdown<Value: Hashable>: View {
     @Binding var selection: Value
     let options: [Option<Value>]
     var label: String?
+    /// Shown, quieter, while nothing in the list is the current choice (a list that adds things instead of choosing one).
+    var placeholder: String?
     var width: CGFloat = 232
     @Local private var id = UUID()
     @Environment(\.palette) private var palette
     @Environment(\.dropdownHost) private var host
     @Environment(\.settingTitle) private var rowTitle
 
-    private var selectedLabel: String { options.first { $0.value == selection }?.label ?? "" }
+    private var selectedLabel: String { options.first { $0.value == selection }?.label ?? placeholder ?? "" }
     private var selectedIndex: Int? { options.firstIndex { $0.value == selection } }
     private var open: Bool { host?.isOpen(id) == true }
 
@@ -245,6 +247,7 @@ struct Dropdown<Value: Hashable>: View {
         TapTarget(label: label ?? rowTitle, scale: 0.985, feel: .step, action: toggle) { state in
             HStack(spacing: Metrics.Space.s) {
                 Text(selectedLabel).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                    .foregroundStyle(selectedIndex == nil && placeholder != nil ? palette.secondary : palette.text)
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold)).foregroundStyle(palette.tertiary)
                     .rotationEffect(.degrees(open ? 180 : 0))

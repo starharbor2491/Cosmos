@@ -307,10 +307,7 @@ public struct RadialSettings: Codable, Equatable, Sendable {
         return !disabledHosts.contains { host == $0 || host.hasSuffix("." + $0) }
     }
 
-    public func isDisabled(host: String) -> Bool {
-        guard let host = LinkRule.normalizedHost(host) else { return false }
-        return disabledHosts.contains { host == $0 || host.hasSuffix("." + $0) }
-    }
+    public func isDisabled(host: String) -> Bool { disablingEntry(for: host) != nil }
 
     /// Switches the ring off for a site. Returns false when what was typed is not a site, or it is already off.
     @discardableResult
@@ -320,10 +317,17 @@ public struct RadialSettings: Codable, Equatable, Sendable {
         return true
     }
 
-    /// Switches the ring back on for a site (and for the sites under it).
+    /// The entry in the list that turns the ring off for `host`: the host itself or a site above it.
+    public func disablingEntry(for host: String) -> String? {
+        guard let host = LinkRule.normalizedHost(host) else { return nil }
+        return disabledHosts.first { host == $0 || host.hasSuffix("." + $0) }
+    }
+
+    /// Switches the ring back on for a site. Whatever entry turned it off goes, which can be one for the whole site
+    /// above it (turning it back on for docs.google.com when google.com is off clears google.com).
     public mutating func enable(host: String) {
         guard let host = LinkRule.normalizedHost(host) else { return }
-        disabledHosts.removeAll { $0 == host }
+        disabledHosts.removeAll { host == $0 || host.hasSuffix("." + $0) }
     }
 
     /// The actions the user chose for a context, in order; nil when it has not been customised.
@@ -343,4 +347,46 @@ public struct RadialSettings: Codable, Equatable, Sendable {
     }
 
     public mutating func resetRing(for context: RadialContext) { rings[context.rawValue] = nil }
+
+    public func isCustomised(_ context: RadialContext) -> Bool { rings[context.rawValue] != nil }
+
+    /// The actions that could still be added to a context's ring: the ones that make sense there and are not on it.
+    public func available(for context: RadialContext) -> [RadialAction] {
+        let on = Set(ring(for: context))
+        return RadialAction.allCases.filter { $0.contexts.contains(context) && !on.contains($0) }
+    }
+
+    /// Adds an action to the end of a context's ring (starting from the default if it was never customised). False when
+    /// the action does not belong in that context or is already on it.
+    @discardableResult
+    public mutating func add(_ action: RadialAction, to context: RadialContext) -> Bool {
+        var actions = ring(for: context)
+        guard action.contexts.contains(context), !actions.contains(action) else { return false }
+        actions.append(action)
+        setRing(actions, for: context)
+        return true
+    }
+
+    /// Takes the action at `index` off a context's ring. A ring is never left empty (an empty one would only fall back
+    /// to the default), so the last action stays.
+    @discardableResult
+    public mutating func remove(at index: Int, from context: RadialContext) -> Bool {
+        var actions = ring(for: context)
+        guard actions.indices.contains(index), actions.count > 1 else { return false }
+        actions.remove(at: index)
+        setRing(actions, for: context)
+        return true
+    }
+
+    /// Moves the action at `index` by `delta` places along the ring; false when it is already at that end.
+    @discardableResult
+    public mutating func move(at index: Int, by delta: Int, in context: RadialContext) -> Bool {
+        var actions = ring(for: context)
+        guard actions.indices.contains(index) else { return false }
+        let target = index + delta
+        guard actions.indices.contains(target), target != index else { return false }
+        actions.insert(actions.remove(at: index), at: target)
+        setRing(actions, for: context)
+        return true
+    }
 }

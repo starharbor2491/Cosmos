@@ -16,6 +16,7 @@ Arc stops working on 22 December 2026. [`arc-teardown/`](arc-teardown/) is the s
 - **Boosts.** Per-site colour filters, fonts, zoom, hidden elements (click to zap), your own CSS and JavaScript.
 - **Ad, tracker and cookie-banner blocking** with EasyList, EasyPrivacy and the Fanboy cookie list (downloaded, not bundled), compiled to WebKit content rules. One switch per site in Site Controls.
 - **Extensions** from Arc, Chrome, Brave, Edge and others, or by Chrome Web Store link, run with WebKit's extension engine (macOS 15.4+). See [docs/extensions.md](docs/extensions.md).
+- **Radial menu.** Right-click a link, an image, some text or a text field and a ring of that thing's actions opens around the pointer: flick toward a slice, or click one. It is built from the same actions WebKit's own right-click menu has, so nothing is lost (the rest wait under More). Choose what is on each ring and the order in Settings, switch it off for sites where you want the system menu (also from Site Controls), and hold ⌥ for the system menu at any time. A page that draws its own right-click menu keeps it.
 - **Link routing.** Links from other apps open in a Probe window, your current space, or a space chosen by site.
 - **Everything else you expect.** Downloads, history, find in page, Picture in Picture (also automatic when you leave a playing video), page zoom, incognito windows, a "Set as default browser" button, site permissions for camera and microphone that are remembered per site, and a memory saver that puts idle tabs to sleep.
 

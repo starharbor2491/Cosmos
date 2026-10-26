@@ -214,6 +214,19 @@ final class Automation {
             }
         case "settings":
             delegate?.showSettings(tab: (step["tab"] as? String).flatMap(SettingsTab.init(rawValue:)) ?? .general)
+        case "scrollSettings":
+            // Scrolls the Settings pane `y` points down (the pane is taller than the window), so a snapshot can show the rest.
+            if let content = delegate?.settingsWindow?.contentView {
+                var found: [NSScrollView] = []
+                func collect(_ v: NSView) { if let s = v as? NSScrollView { found.append(s) }; v.subviews.forEach(collect) }
+                collect(content)
+                if let scroller = found.max(by: { $0.frame.height < $1.frame.height }) {
+                    let room = max(0, (scroller.documentView?.frame.height ?? 0) - scroller.contentView.bounds.height)
+                    scroller.contentView.scroll(to: NSPoint(x: 0, y: min(step["y"] as? Double ?? 0, room)))
+                    scroller.reflectScrolledClipView(scroller.contentView)
+                }
+                note("  scrollSettings: \(found.count) scroll view(s)")
+            }
         case "dropdown":
             // Opens the nth dropdown in the Settings window, top to bottom, or closes the open one when `index` is -1.
             let index = step["index"] as? Int ?? 0
