@@ -65,6 +65,8 @@ final class SiteServer: @unchecked Sendable {
     struct Route {
         var type: String
         var body: Data
+        /// Seconds the server waits before answering, to be in the middle of a request when something else happens.
+        var delay: TimeInterval = 0
     }
 
     private final class Recorder: @unchecked Sendable {
@@ -91,7 +93,8 @@ final class SiteServer: @unchecked Sendable {
                 let route = routes[path.components(separatedBy: "?").first ?? path]
                 let body = route?.body ?? Data()
                 let head = "HTTP/1.1 \(route == nil ? "404 Not Found" : "200 OK")\r\nContent-Type: \(route?.type ?? "text/plain")\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
-                connection.send(content: Data(head.utf8) + body, completion: .contentProcessed { _ in connection.cancel() })
+                let send = { connection.send(content: Data(head.utf8) + body, completion: .contentProcessed { _ in connection.cancel() }) }
+                if let delay = route?.delay, delay > 0 { DispatchQueue.global().asyncAfter(deadline: .now() + delay, execute: send) } else { send() }
             }
         }
         port = try await withCheckedThrowingContinuation { (c: CheckedContinuation<UInt16, Error>) in

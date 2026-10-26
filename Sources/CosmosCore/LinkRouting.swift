@@ -64,7 +64,8 @@ public struct LinkRule: Codable, Hashable, Identifiable, Sendable {
 
     /// The host a typed or pasted address stands for: no scheme, credentials, port, path or leading "www.", lowercased.
     /// A `.host` match is the host itself or any subdomain, so `www.github.com` would never match a link to github.com.
-    /// Nil when the text is not a host (spaces, empty labels, a path with no host, an absurd length).
+    /// International names come back in their ASCII (punycode) form. Nil when the text is not a host (spaces, empty
+    /// labels, a path with no host, an absurd length).
     public static func normalizedHost(_ input: String) -> String? {
         var text = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !text.isEmpty, text.count <= 300 else { return nil }
@@ -80,7 +81,9 @@ public struct LinkRule: Codable, Hashable, Identifiable, Sendable {
             !label.isEmpty && label.count <= 63 && !label.hasPrefix("-") && !label.hasSuffix("-")
                 && label.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" }
         }
-        return valid ? text : nil
+        // `URL.host` is the ASCII form of an international name, so that is the form a rule has to hold to match.
+        guard valid, let ascii = URL(string: "https://" + text)?.host, ascii.count <= 253 else { return nil }
+        return ascii
     }
 }
 

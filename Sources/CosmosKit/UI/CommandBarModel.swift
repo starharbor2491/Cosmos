@@ -148,10 +148,21 @@ final class CommandBarModel {
         scheduleSuggestions(for: q, engine: engine)
     }
 
+    /// What you type is sent to your search engine and nowhere else: no cache entry on disk, no cookies kept or sent.
+    /// (`URLSession.shared` would write the request, query included, to a cache file outside the data folder.)
+    static let suggestionSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.urlCache = nil
+        config.httpCookieStorage = nil
+        config.httpShouldSetCookies = false
+        config.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        return URLSession(configuration: config)
+    }()
+
     private func scheduleSuggestions(for query: String, engine: SearchEngine) {
         suggestTask?.cancel()
         let q = query.trimmingCharacters(in: .whitespaces)
-        guard store.settings.showSearchSuggestions, !store.isIncognito || true, q.count >= 2, q != lastTyped.trimmingCharacters(in: .whitespaces) || suggestions.isEmpty else {
+        guard store.settings.showSearchSuggestions, q.count >= 2, q != lastTyped.trimmingCharacters(in: .whitespaces) || suggestions.isEmpty else {
             if q.count < 2 { suggestions = [] }
             return
         }
@@ -162,7 +173,7 @@ final class CommandBarModel {
             guard !Task.isCancelled else { return }
             var req = URLRequest(url: url, timeoutInterval: 4)
             req.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
-            guard let (data, _) = try? await URLSession.shared.data(for: req),
+            guard let (data, _) = try? await Self.suggestionSession.data(for: req),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [Any], json.count > 1,
                   let list = json[1] as? [Any] else { return }
             let strings = list.compactMap { $0 as? String }

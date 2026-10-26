@@ -101,6 +101,22 @@ import Testing
         }
     }
 
+    @Test(arguments: SpaceTheme.presets) func theAccentReadsOnAPanelAsTextAndAsAGlyph(theme: SpaceTheme) {
+        let ground = Legibility.panelGround(lightInk: theme.prefersLightForeground)
+        #expect(Legibility.contrast(theme.accent(onPanelMinimum: 4.5), ground) >= 4.49, "\(theme.name) text")
+        #expect(Legibility.contrast(theme.accent(onPanelMinimum: 3), ground) >= 2.99, "\(theme.name) glyph")
+    }
+
+    @Test func aPanelsTextReadsOnItsOwnGroundInBothInks() {
+        for light in [true, false] {
+            let ground = Legibility.panelGround(lightInk: light)
+            for role in [Legibility.primary, Legibility.secondary] {
+                #expect(Legibility.ratio(role, lightInk: light, over: ground) >= role.minimum, "light ink \(light)")
+            }
+            #expect(Legibility.ratio(Legibility.tertiary, lightInk: light, over: ground) >= Legibility.tertiary.minimum, "light ink \(light)")
+        }
+    }
+
     @Test func aDamagedThemeStillGetsAnAnswer() {
         var odd = SpaceTheme(name: "Odd", colors: [RGBA(2, -1, .nan)])
         odd.colors = [RGBA(0.5, 0.5, 0.5, 0)]

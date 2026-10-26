@@ -54,7 +54,7 @@ The longer list, with every shortcut, is in [docs/arc-to-cosmos.md](docs/arc-to-
 
 Cosmos is a browser, not a clone of everything Arc shipped.
 
-- **No sync between devices and no account.** Your data is a few JSON files on your Mac.
+- **No sync between devices and no account.** Your tabs and settings are a few files on your Mac (listed below); the cookies and site data that WebKit keeps for each profile are in WebKit's own folders.
 - **None of Arc's AI features** (Ask on page, summaries, Tidy Tabs by AI, AI renaming), and no Easels, Notes, Live Folders or calendar and mail previews.
 - **Arc's Boosts cannot be imported.** In the Arc profile used to build this, Boost definitions are not stored on disk (only an image cache), so Cosmos cannot read them. Recreate a Boost in about a minute from Site Controls.
 - **WebKit, not Chromium.** Sites behave as in Safari. Chromium-only web features are missing. Extensions that rely on Chrome-only APIs (history, bookmarks, downloads, notifications, sign-in through Chrome) will load but those parts will not work. The Add prompt warns when it sees this.
@@ -76,7 +76,10 @@ Cosmos is a browser, not a clone of everything Arc shipped.
 | `session.json` | windows to reopen |
 | `extensions.json`, `Extensions/` | the extensions you added and their files |
 | `FilterLists/`, `blocking.json` | downloaded filter lists and their compiled form |
+| `Favicons/` | the logos of sites in your sidebar; ones not renewed for 90 days are deleted |
 | `Backups/` | dated copies of the JSON files, kept automatically |
+
+That folder holds Cosmos's own files. Cookies, local storage and the page cache are kept by WebKit, one store per profile, under `~/Library/WebKit/` and `~/Library/Caches/` (in a folder named after the app's bundle id), and downloads go to `~/Downloads`. Incognito windows keep their cookies and site data in memory only.
 
 Nothing leaves your Mac except what you browse, the filter lists Cosmos downloads, the logos of sites that have a tab in your sidebar (fetched from the site itself, asking only for its home page and icon, never the page you were on), search suggestions (switch off in Settings) and Chrome Web Store downloads you ask for. There is no telemetry.
 

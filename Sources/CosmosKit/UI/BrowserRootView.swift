@@ -28,6 +28,13 @@ struct BrowserRootView: View {
             if !window.sidebarVisible { SidebarRevealLayer(store: store, window: window) }
 
             OverlayLayer(store: store, window: window)
+
+            if let radial = window.radial {
+                RadialMenuView(session: radial)
+                    .id(radial.id)
+                    .transition(.opacity)
+                    .zIndex(20)
+            }
         }
         .environment(\.palette, palette)
         .environment(\.haptics, store.haptics)
@@ -158,11 +165,11 @@ struct ToastView: View {
             Spacer()
             if let toast = window.toast {
                 HStack(spacing: 8) {
-                    Image(systemName: toast.symbol).font(.system(size: 13, weight: .semibold)).foregroundStyle(palette.accent)
+                    Image(systemName: toast.symbol).font(.system(size: 13, weight: .semibold)).foregroundStyle(palette.accentGlyph)
                     Text(toast.text).font(.system(size: 12.5, weight: .medium)).foregroundStyle(palette.text)
                     if let title = toast.actionTitle {
                         Button(title) { toast.action?(); window.toast = nil }
-                            .buttonStyle(.plain).font(.system(size: 12.5, weight: .bold)).foregroundStyle(palette.accent)
+                            .buttonStyle(.plain).font(.system(size: 12.5, weight: .bold)).foregroundStyle(palette.accentText)
                     }
                 }
                 .padding(.horizontal, 14).padding(.vertical, 9)
@@ -230,7 +237,7 @@ struct EmptyStateView: View {
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                     .foregroundStyle(palette.text)
                     .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(RoundedRectangle(cornerRadius: Metrics.Radius.chip, style: .continuous).fill(palette.hover.opacity(1.6)))
+                    .background(RoundedRectangle(cornerRadius: Metrics.Radius.chip, style: .continuous).fill(palette.hoverStrong))
                     .frame(minWidth: 96, alignment: .trailing)
                 Text(text).font(.system(size: 13)).foregroundStyle(palette.secondary)
             }

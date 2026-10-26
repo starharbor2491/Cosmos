@@ -20,9 +20,12 @@ struct SiteControlsPanel: View {
                 FaviconView(store: store, url: url, size: 24)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(host.isEmpty ? "No page" : host).font(.system(size: 14, weight: .semibold)).foregroundStyle(palette.text)
-                    let connection = URLInput.connection(of: url)
-                    Text(connection == .secure ? "Connection is secure" : (connection == .notSecure ? "Connection is not secure" : ""))
-                        .font(.system(size: 11.5)).foregroundStyle(connection == .notSecure ? palette.warning : palette.secondary)
+                    // Nothing to say about the connection of a page that isn't on the web, so no empty line either.
+                    switch URLInput.connection(of: url) {
+                    case .secure: Text("Connection is secure").font(.system(size: 11.5)).foregroundStyle(palette.secondary)
+                    case .notSecure: Text("Connection is not secure").font(.system(size: 11.5)).foregroundStyle(palette.warning)
+                    case .none: EmptyView()
+                    }
                 }
                 Spacer()
             }
@@ -86,7 +89,7 @@ struct SiteControlsPanel: View {
 
         var body: some View {
             HStack(spacing: 11) {
-                Image(systemName: symbol).font(.system(size: 14, weight: .medium)).foregroundStyle(palette.accent).frame(width: 24)
+                Image(systemName: symbol).font(.system(size: 14, weight: .medium)).foregroundStyle(palette.accentGlyph).frame(width: 24)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(palette.text)
                     if let detail { Text(detail).font(.system(size: 11.5)).foregroundStyle(palette.secondary) }
@@ -127,7 +130,7 @@ struct ShortcutsPanel: View {
                                         .font(.system(size: 12, weight: .semibold, design: .rounded))
                                         .foregroundStyle(palette.text)
                                         .padding(.horizontal, 7).padding(.vertical, 3)
-                                        .background(RoundedRectangle(cornerRadius: Metrics.Radius.chip, style: .continuous).fill(palette.hover.opacity(1.6)))
+                                        .background(RoundedRectangle(cornerRadius: Metrics.Radius.chip, style: .continuous).fill(palette.hoverStrong))
                                         .frame(minWidth: 96, alignment: .leading)
                                     Text(what).font(.system(size: 12.5)).foregroundStyle(palette.secondary)
                                     Spacer(minLength: 0)

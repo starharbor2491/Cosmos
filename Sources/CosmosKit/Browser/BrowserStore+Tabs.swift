@@ -534,6 +534,19 @@ extension BrowserStore {
         }
     }
 
+    public func tab(_ tab: TabRuntime, showRadialMenu menu: NSMenu, context: RadialContext, center: CGPoint, windowSize: CGSize) -> Bool {
+        guard settings.radialMenu.isActive(on: tab.webView.url?.host),
+              let w = window(showing: tab.itemID) ?? windows.first(where: { $0.peek?.runtime === tab }) else { return false }
+        let session = RadialSession(menu: menu, context: context, center: center, windowSize: windowSize,
+                                    custom: settings.radialMenu.customRing(for: context), haptics: haptics)
+        // A ring with nothing on it would only be in the way.
+        guard !session.isEmpty else { return false }
+        session.onFinish = { [weak w, weak session] in if let w, w.radial === session { w.radial = nil } }
+        w.radial = session
+        haptics.alignment()
+        return true
+    }
+
     public func tab(_ tab: TabRuntime, createChildWith configuration: WKWebViewConfiguration, features: WKWindowFeatures) -> WKWebView? {
         guard let w = window(showing: tab.itemID) ?? activeWindow else { return nil }
         // Script-sized windows (OAuth consent, payment sheets) get their own small window, like a real popup.

@@ -66,7 +66,7 @@ private struct ArchiveRow: View {
             Spacer()
             if hover {
                 Button("Restore") { store.restore(entry, in: window); window.overlay = nil }
-                    .buttonStyle(.plain).font(.system(size: 12, weight: .semibold)).foregroundStyle(palette.accent)
+                    .buttonStyle(.plain).font(.system(size: 12, weight: .semibold)).foregroundStyle(palette.accentText)
                 Button { store.deleteArchived(entry.id) } label: { Image(systemName: "trash").font(.system(size: 11.5)) }
                     .buttonStyle(.plain).foregroundStyle(palette.secondary)
             } else {

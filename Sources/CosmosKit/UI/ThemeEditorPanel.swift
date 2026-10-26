@@ -53,7 +53,7 @@ struct ThemeEditorPanel: View {
     private func nameAndIcon(_ space: Space) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Name", systemImage: "textformat").sectionLabel(palette)
-            TextField("Space name", text: Binding(get: { space.title }, set: { v in store.updateSpace(spaceID) { $0.title = v } }))
+            PromptTextField(text: Binding(get: { space.title }, set: { v in store.updateSpace(spaceID) { $0.title = v } }), prompt: "Space name")
                 .textFieldStyle(.plain).font(.system(size: 14))
                 .padding(.horizontal, 10).padding(.vertical, 7)
                 .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(palette.hover))
@@ -156,7 +156,7 @@ struct ThemeEditorPanel: View {
                 }
                 .labelsHidden().frame(width: 200)
                 Button("New Profile…") { promptNewProfile() }
-                    .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(palette.accent)
+                    .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(palette.accentText)
             }
             Text("Spaces that share a profile share logins and cookies. Give a space its own profile to stay signed in to two accounts at once.")
                 .font(.system(size: 11.5)).foregroundStyle(palette.tertiary).fixedSize(horizontal: false, vertical: true)
@@ -186,7 +186,7 @@ struct ThemeEditorPanel: View {
         alert.messageText = "New Profile"
         alert.informativeText = "A profile keeps its own logins and cookies."
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
-        field.placeholderString = "Work"
+        field.placeholderString = "Work"   // in a system alert, which draws its own surface
         alert.accessoryView = field
         alert.addButton(withTitle: "Create")
         alert.addButton(withTitle: "Cancel")

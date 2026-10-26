@@ -69,14 +69,22 @@ struct SettingsView: View {
     let store: BrowserStore
     @Local private var tab: SettingsTab
     @Local private var model = SettingsModel()
+    private let dropdowns: DropdownHost
     @Namespace private var navGlide
     @FocusState private var dialogFocused: Bool
 
     /// The whole window, title bar included: the sky runs edge to edge under the window buttons.
     static let size = CGSize(width: 840, height: 648)
+    /// The coordinates dropdown fields report their frames in, and their lists are placed in.
+    static let coordinateSpace = "settings.root"
 
-    init(store: BrowserStore, tab: SettingsTab = .general) {
+    /// `dropdowns` is the window's layer for open dropdown lists; whoever owns the window may keep it to open one.
+    @MainActor
+    init(store: BrowserStore, tab: SettingsTab = .general, dropdowns: DropdownHost? = nil) {
         self.store = store
+        let dropdowns = dropdowns ?? DropdownHost()
+        self.dropdowns = dropdowns
+        dropdowns.haptics = store.haptics
         _tab = Local(wrappedValue: tab)
     }
 
@@ -96,12 +104,21 @@ struct SettingsView: View {
             // While a question is open nothing behind it can be reached, with the pointer, Tab or VoiceOver.
             .disabled(model.dialog != nil)
             .accessibilityHidden(model.dialog != nil)
+            DropdownLayer(host: dropdowns)
             if let dialog = model.dialog {
                 dialogLayer(dialog, palette)
             }
         }
+        .coordinateSpace(name: Self.coordinateSpace)
+        .onPreferenceChange(DropdownFrameKey.self) { frames in
+            MainActor.assumeIsolated { dropdowns.setFrames(frames) }
+        }
+        // A list left open when the pane changes or a question appears would point at nothing.
+        .onChange(of: tab) { dropdowns.close() }
+        .onChange(of: model.dialog?.id) { dropdowns.close() }
         .environment(\.palette, palette)
         .environment(\.haptics, store.haptics)
+        .environment(\.dropdownHost, dropdowns)
         .preferredColorScheme(palette.isDark ? .dark : .light)
         .frame(width: Self.size.width, height: Self.size.height)
         .ignoresSafeArea()

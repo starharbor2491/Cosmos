@@ -30,8 +30,9 @@ struct Palette {
     /// The accent as a fill (primary buttons, switch tracks) and the colour of what sits on it.
     let accentFill: Color
     let onAccent: Color
-    /// The accent as text or a glyph on the theme.
+    /// The accent as text (4.5:1) and as a glyph (3:1) on a panel.
     let accentText: Color
+    let accentGlyph: Color
     /// Status text that reads on this theme.
     let positive: Color
     let negative: Color
@@ -58,11 +59,12 @@ struct Palette {
         accentFill = Color(filled.fill)
         onAccent = Color(filled.label)
         let ground = theme.worstStop
-        accentText = Color(Legibility.foreground(theme.accent, on: ground))
+        accentText = Color(theme.accent(onPanelMinimum: 4.5))
+        accentGlyph = Color(theme.accent(onPanelMinimum: 3))
         positive = Color(Legibility.foreground(RGBA(0.30, 0.85, 0.45), on: ground))
         negative = Color(Legibility.foreground(RGBA(1, 0.42, 0.40), on: ground))
         warning = Color(Legibility.foreground(RGBA(1, 0.62, 0.20), on: ground))
-        panel = dark ? Color(red: 0.07, green: 0.06, blue: 0.14).opacity(0.72) : Color.white.opacity(0.74)
+        panel = Color(Legibility.panelTint(lightInk: dark))
         shadow = Color.black.opacity(dark ? 0.45 : 0.18)
     }
 }

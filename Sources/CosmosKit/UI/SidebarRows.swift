@@ -328,7 +328,7 @@ struct RowIconButton: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 10, weight: .bold))
-                .contentTransition(.symbolEffect(.replace))
+                .symbolSwap()
                 .foregroundStyle(hover ? palette.text : palette.secondary)
                 .frame(width: Metrics.Icon.row + 2, height: Metrics.Icon.row + 2)
                 .background(Circle().fill(hover ? palette.hoverStrong : .clear))
@@ -530,7 +530,7 @@ struct SpaceButton: View {
             withAnimation(Motion.glide) { store.switchSpace(to: space.id, in: window) }
         } label: {
             SpaceIconView(icon: space.icon, size: 14)
-                .symbolEffect(.bounce, value: selected)
+                .symbolBounce(value: selected)
                 .foregroundStyle(selected ? palette.text : palette.secondary)
                 .frame(width: 30, height: Metrics.Height.button)
                 .background(

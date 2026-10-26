@@ -51,6 +51,8 @@ public final class BrowserStore: TabHost {
     @ObservationIgnored var onOpenIncognito: (() -> Void)?
     @ObservationIgnored var onShowSettings: (() -> Void)?
     @ObservationIgnored var onShowSettingsTab: ((SettingsTab) -> Void)?
+    /// Shows an overlay in a browser window and brings that window forward.
+    @ObservationIgnored var onPresent: ((Overlay) -> Void)?
     @ObservationIgnored var onPopupWindow: ((TabRuntime, WKWindowFeatures) -> Void)?
 
     // MARK: Persistence plumbing
@@ -207,6 +209,12 @@ public final class BrowserStore: TabHost {
             return state
         }
         return WindowState(focusedSpaceID: defaultSpace, sidebarWidth: settings.sidebarWidth, isIncognito: isIncognito)
+    }
+
+    /// Shows `overlay` in a browser window. Settings uses it: it has no overlays of its own, so the app brings a browser
+    /// window forward to show it in. Without the app (in tests) the active window just gets it.
+    func present(_ overlay: Overlay) {
+        if let onPresent { onPresent(overlay) } else { activeWindow?.overlay = overlay }
     }
 
     // MARK: Environments

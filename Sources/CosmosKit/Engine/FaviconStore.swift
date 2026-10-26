@@ -28,6 +28,8 @@ public final class FaviconStore {
     @ObservationIgnored private var failed: [String: Date] = [:]
     /// Hosts whose logo was confirmed recently (this session), so navigating around a site doesn't re-download it.
     @ObservationIgnored private var checked: [String: Date] = [:]
+    /// Bumped by `removeAll`, so a download that was already running when the logos were cleared can be told apart.
+    @ObservationIgnored private var generation = 0
     @ObservationIgnored private let directory: URL?
     @ObservationIgnored private let session: URLSession
     /// Set by the app for `--offline` runs; nothing is downloaded while it is true.
@@ -35,6 +37,8 @@ public final class FaviconStore {
 
     private static let maxParallel = 4
     private static let maxAge: TimeInterval = 14 * 24 * 3600
+    /// A logo that has not been downloaded again for this long belongs to a site that is no longer visited.
+    nonisolated private static let pruneAge: TimeInterval = 90 * 24 * 3600
     nonisolated private static let maxSide = 128
 
     /// - Parameter directory: where icons are cached; `nil` keeps them in memory only.
@@ -49,7 +53,24 @@ public final class FaviconStore {
         cfg.httpCookieStorage = nil
         cfg.httpAdditionalHeaders = ["User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15 Cosmos"]
         session = URLSession(configuration: cfg)
-        if let directory { try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
+        if let directory {
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            Task.detached(priority: .utility) { Self.prune(directory: directory) }
+        }
+    }
+
+    /// Deletes cached logos older than `age`, so the folder doesn't keep every site ever visited. A logo that is still
+    /// in use is downloaded again well within that time, which renews its date. Returns how many were deleted.
+    @discardableResult
+    nonisolated static func prune(directory: URL, age: TimeInterval = pruneAge, now: Date = Date()) -> Int {
+        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        var removed = 0
+        for file in files where file.pathExtension == "png" {
+            guard let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
+                  now.timeIntervalSince(modified) > age else { continue }
+            if (try? FileManager.default.removeItem(at: file)) != nil { removed += 1 }
+        }
+        return removed
     }
 
     private func key(_ host: String) -> String { host.lowercased().replacingOccurrences(of: "www.", with: "", options: .anchored) }
@@ -112,9 +133,10 @@ public final class FaviconStore {
         while inFlight.count < Self.maxParallel, !waiting.isEmpty {
             let next = waiting.removeFirst()
             inFlight.insert(next.key)
+            let started = generation
             Task { [session] in
                 let data = await Self.discover(origin: next.origin, session: session)
-                self.finish(key: next.key, data: data)
+                self.finish(key: next.key, data: data, generation: started)
                 self.pump()
             }
         }
@@ -128,15 +150,18 @@ public final class FaviconStore {
         if let when = checked[k], Date().timeIntervalSince(when) < 3600, memory[k] != nil { return }
         guard !inFlight.contains(k) else { return }
         inFlight.insert(k)
+        let started = generation
         let list = candidates + Self.defaults(for: pageURL)
         Task { [session] in
             let data = await Self.bestIcon(from: list, session: session)
-            self.finish(key: k, data: data)
+            self.finish(key: k, data: data, generation: started)
             self.pump()
         }
     }
 
-    private func finish(key k: String, data: Data?) {
+    func finish(key k: String, data: Data?, generation started: Int) {
+        // Cleared while this download ran: what it found belongs to a history that no longer exists.
+        guard started == generation else { return }
         inFlight.remove(k)
         if let data, let image = NSImage(data: data) {
             remember(image, key: k)
@@ -353,6 +378,9 @@ public final class FaviconStore {
     }
 
     public func removeAll() {
+        generation += 1
+        inFlight.removeAll()
+        waiting.removeAll()
         memory.removeAll()
         backings.removeAll()
         failed.removeAll()

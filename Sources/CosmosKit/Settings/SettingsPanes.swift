@@ -299,7 +299,7 @@ struct AboutPane: View {
                 .font(.system(size: 13.5)).multilineTextAlignment(.center).foregroundStyle(palette.secondary)
                 .padding(.bottom, Metrics.Space.s)
             HStack(spacing: Metrics.Space.m) {
-                ActionButton(title: "Show Welcome", symbol: "sparkles", kind: .secondary) { store.activeWindow?.overlay = .welcome }
+                ActionButton(title: "Show Welcome", symbol: "sparkles", kind: .secondary) { store.present(.welcome) }
                 ActionButton(title: "Reveal Data Folder", symbol: "folder", kind: .secondary) {
                     if let dir = store.dataDirectory { NSWorkspace.shared.activateFileViewerSelecting([dir]) }
                 }
