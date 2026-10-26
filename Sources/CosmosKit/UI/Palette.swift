@@ -18,6 +18,8 @@ struct Palette {
     let secondary: Color
     /// The quietest text (hints, timestamps): 3:1, see `Legibility`.
     let tertiary: Color
+    /// The hint in an empty text field the system draws, solid because it cannot draw a translucent one.
+    let placeholder: Color
     /// Strokes, outlines and glyphs that are not text.
     let faint: Color
     let hover: Color
@@ -48,6 +50,7 @@ struct Palette {
         text = base.opacity(Legibility.primary.alpha)
         secondary = base.opacity(Legibility.secondary.alpha)
         tertiary = base.opacity(Legibility.tertiary.alpha)
+        placeholder = Color(Legibility.placeholder(lightInk: dark))
         faint = base.opacity(Legibility.faint.alpha)
         hover = Color(Legibility.hover(lightInk: dark))
         hoverStrong = Color(Legibility.hoverStrong(lightInk: dark))

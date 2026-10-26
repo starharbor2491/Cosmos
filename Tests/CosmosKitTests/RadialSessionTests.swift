@@ -355,3 +355,40 @@ enum RadialFixture {
         withExtendedLifetime(window) {}
     }
 }
+
+/// Which key does what while a ring is open. (A `where` on one key of a combined `case` once made only Tab depend on
+/// Shift, so Shift-Tab went on to move the focus out from under the ring.)
+@Suite struct RadialKeyCommandTests {
+    private func command(_ code: UInt16, shift: Bool = false, modified: Bool = false, characters: String? = nil) -> RadialKeyCommand? {
+        RadialKeyCommand.from(keyCode: code, shift: shift, otherModifiers: modified, characters: characters)
+    }
+
+    @Test func escapeGoesBackAndReturnOrSpaceChoosesTheLitSlice() {
+        #expect(command(53) == .back)
+        for code: UInt16 in [36, 76, 49] { #expect(command(code) == .chooseHovered) }
+    }
+
+    @Test func rightAndDownStepForwardLeftAndUpStepBack() {
+        #expect(command(124) == .step(1) && command(125) == .step(1))
+        #expect(command(123) == .step(-1) && command(126) == .step(-1))
+        // Shift does not change an arrow.
+        #expect(command(125, shift: true) == .step(1))
+    }
+
+    @Test func tabStepsForwardAndShiftTabBack() {
+        #expect(command(48) == .step(1))
+        #expect(command(48, shift: true) == .step(-1))
+    }
+
+    @Test func aNumberKeyPicksThatSliceUpToEight() {
+        for n in 1...8 { #expect(command(0, characters: "\(n)") == .choose(n - 1)) }
+        #expect(command(0, characters: "9") == nil)
+        #expect(command(0, characters: "0") == nil)
+        #expect(command(0, characters: "a") == nil)
+        #expect(command(0, characters: nil) == nil)
+    }
+
+    @Test func aShortcutWithAModifierIsLeftForWhoeverOwnsIt() {
+        #expect(command(0, modified: true, characters: "3") == nil, "⌘3 is not slice 3")
+    }
+}

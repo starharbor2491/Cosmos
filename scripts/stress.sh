@@ -30,7 +30,7 @@ if os.environ.get("STRESS_WINDOWS"): chords += ["cmd+n", "cmd+shift+n", "cmd+alt
 overlays = ["commandBar", "archive", "history", "downloads", "boosts", "welcome", "shortcuts", "siteControls", "find", "theme", "none"]
 words = ["", "a", "github", "new space", "mute", "1+1", "((((((", "%%%", "日本語", "🙂", "x" * 3000, "yt cats", "boosts", "javascript:alert(1)", "   "]
 keys = ["return", "tab", "escape", "down", "up", "backspace"]
-tabs = ["general", "sidebar", "blocking", "extensions", "privacy", "links", "about"]
+tabs = ["general", "sidebar", "blocking", "extensions", "privacy", "links", "radialMenu", "menuBar", "about"]
 sizes = [(320, 240), (200, 120), (800, 600), (1400, 900), (1000, 1000), (2400, 1400), (600, 2000)]
 url = lambda: r.choice(urls).replace("%d", str(r.randrange(100000)))
 s = [{"do": "wait", "seconds": 1.5}]
@@ -50,8 +50,24 @@ for i in range(steps):
     elif k < 0.94: s.append({"do": "select", "tab": r.randrange(0, 8)})
     elif k < 0.96:
         w, h = r.choice(sizes); s.append({"do": "resize", "width": w, "height": h})
-    elif k < 0.98: s.append({"do": "settings", "tab": r.choice(tabs)})
-    else: s.append({"do": "closeSettings"})
+    elif k < 0.975: s.append({"do": "settings", "tab": r.choice(tabs)})
+    elif k < 0.98: s.append({"do": "closeSettings"})
+    elif k < 0.985:
+        # a right click anywhere on the page, sometimes with ⌥ (the system menu) or the left button, then the ring is poked at
+        s.append({"do": "rightClick", "x": r.randrange(-50, 1500), "y": r.randrange(-50, 1000), "flags": r.choice([0, 0, 0, 524288, 131072]),
+                  "hold": r.choice([0, 0.05]), "left": r.random() < 0.15})
+        s.append({"do": "radial", "dump": True, "hover": r.randrange(-1, 10)})
+        s.append({"do": "radial", r.choice(["choose", "back"]): r.randrange(-1, 10) if r.random() < 0.5 else True})
+    elif k < 0.992:
+        a = r.choice(["enable", "open", "open", "close", "pin", "go", "go", "configure", "configure", "disable", "state"])
+        step = {"do": "menuBar", "action": a}
+        if a == "go": step["text"] = r.choice(words + ["github.com", "http://127.0.0.1:1/", "data:text/html,<h1>x</h1>"])
+        if a == "configure":
+            step["layout"] = r.choice(["phone", "desktop", "bogus"]); step["home"] = r.choice(["", "example.com", "two words", "javascript:alert(1)", "x" * 3000])
+            step["remember"] = r.random() < 0.5
+        s.append(step)
+    elif k < 0.997: s.append({"do": "dropdown", "index": r.randrange(-1, 4)})
+    else: s.append({"do": "setTheme", "name": r.choice(["Nebula", "Aurora", "Supernova", "Deep Field", "Pulsar", "Eclipse", "Moondust", "Solstice", "Nope"])})
     s.append({"do": "wait", "seconds": r.choice([0, 0.05, 0.1, 0.2])})
     if i % 25 == 24: s.append({"do": "state"})
 s += [{"do": "closeSettings"}, {"do": "state"}, {"do": "wait", "seconds": 2}, {"do": "state"}, {"do": "quit"}]

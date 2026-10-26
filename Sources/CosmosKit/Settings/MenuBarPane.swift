@@ -17,7 +17,7 @@ struct MenuBarPane: View {
         @Bindable var store = store
         let menuBar = store.settings.menuBar
         Pane(title: "Menu Bar", subtitle: "A small browser under an icon in the menu bar.", symbol: "menubar.rectangle") {
-            SettingsGroup(note: "Click the icon to open it and click anywhere else to put it away. The pin in its toolbar keeps it open over your other windows. Right-click the icon for Settings and to hide it.") {
+            SettingsGroup(note: "Click the icon to open it and click anywhere else to put it away. The pin in its toolbar keeps it open over your other windows. The page stays loaded while it is put away, so a video or song keeps playing. Right-click the icon for Settings and to hide it.") {
                 SettingRow(title: "Show Cosmos in the menu bar", detail: menuBar.enabled ? "On. Look for the Cosmos icon at the top of the screen." : "Off. No icon is added to the menu bar.", symbol: "menubar.rectangle") {
                     SwitchControl(isOn: $store.settings.menuBar.enabled, label: "Show Cosmos in the menu bar")
                 }

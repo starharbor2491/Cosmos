@@ -60,11 +60,17 @@ final class MenuBarBrowser: NSObject {
             return
         }
         if statusItem == nil { installStatusItem() }
-        if isOpen { show() }
+        // A panel that is open follows a change of layout or profile where it is, without taking the keyboard back.
+        if let panel, panel.isVisible {
+            session.prepare()
+            place(panel)
+        }
     }
 
     private func installStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        // macOS remembers where the user dragged it to (⌘-drag) under this name.
+        item.autosaveName = "CosmosMenuBarBrowser"
         if let button = item.button {
             button.image = AppIcon.menuBarImage()
             button.toolTip = "Cosmos menu bar browser"
@@ -120,14 +126,19 @@ final class MenuBarBrowser: NSObject {
         let blank = session.runtime?.url == nil
         session.prepare()
         let panel = makePanelIfNeeded()
+        place(panel)
+        panel.makeKeyAndOrderFront(nil)
+        if blank { session.focusAddress() }
+    }
+
+    /// Puts the panel under the icon (or at the top right with none), at the size the layout asks for.
+    private func place(_ panel: MenuBarPanel) {
         let button = statusItem?.button
         let anchor = button.flatMap { b in b.window.map { $0.convertToScreen(b.convert(b.bounds, to: nil)) } }
         let screen = button?.window?.screen ?? NSScreen.main
         let visible = screen?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
         panel.setFrame(MenuBarPlacement.frame(anchor: anchor, size: store.settings.menuBar.layout.size, visible: visible), display: true)
         panel.level = session.isPinned ? .floating : .statusBar
-        panel.makeKeyAndOrderFront(nil)
-        if blank { session.focusAddress() }
     }
 
     func hide() {
@@ -141,6 +152,7 @@ final class MenuBarBrowser: NSObject {
         let made = MenuBarPanel(contentRect: NSRect(origin: .zero, size: store.settings.menuBar.layout.size),
                                 styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         made.isReleasedWhenClosed = false
+        made.title = "Cosmos menu bar browser"
         made.isOpaque = false
         made.backgroundColor = .clear
         made.hasShadow = true

@@ -267,7 +267,10 @@ public final class BrowserStore: TabHost {
         }
         if old.appearance != settings.appearance { NSApp?.appearance = settings.appearance.nsAppearance }
         haptics.isEnabled = settings.trackpadHaptics
-        if old.menuBar != settings.menuBar { onMenuBarChange?() }
+        // The page the panel is on is saved as it loads; that is bookkeeping, not a change anyone has to act on.
+        var before = old.menuBar
+        before.lastAddress = settings.menuBar.lastAddress
+        if before != settings.menuBar { onMenuBarChange?() }
     }
 
     // MARK: Timers (auto-archive, memory saver)
