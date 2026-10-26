@@ -85,6 +85,14 @@ cat > "$APP/Contents/Info.plist" <<PLIST
       <key>LSItemContentTypes</key><array><string>com.apple.web-internet-location</string></array>
     </dict>
   </array>
+  <key>UTExportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key><string>app.cosmos.sidebar-item</string>
+      <key>UTTypeDescription</key><string>Cosmos sidebar item</string>
+      <key>UTTypeConformsTo</key><array><string>public.data</string></array>
+    </dict>
+  </array>
   <key>NSCameraUsageDescription</key><string>Websites you allow can use your camera.</string>
   <key>NSMicrophoneUsageDescription</key><string>Websites you allow can use your microphone.</string>
   <key>NSLocationWhenInUseUsageDescription</key><string>Websites you allow can use your location.</string>
