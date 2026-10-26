@@ -31,9 +31,13 @@ public enum TidyTitles {
     /// Anything shaped like "name@host.tld" in a title is account detail the sidebar doesn't need.
     private static let emailTail = try! NSRegularExpression(pattern: #"\s+[-–|·]\s+[\w.+-]+@[\w-]+(\.[\w-]+)+"#)
 
+    private static let maxTidiedLength = 500
+
     public static func tidy(title: String, url: URL?) -> String {
         var t = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return t }
+        // The rules backtrack, and a page picks its own title: past what a sidebar row can show, leave it alone.
+        guard t.utf16.count <= maxTidiedLength else { return t }
         if let host = url?.host?.lowercased() {
             for r in rules where host == r.host || host.hasSuffix("." + r.host) {
                 guard let re = try? NSRegularExpression(pattern: r.pattern) else { continue }

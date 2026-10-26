@@ -72,9 +72,14 @@ public final class WindowState: Identifiable {
     /// Hover status bubble text (bottom-left of the page).
     public var statusText: String?
 
+    /// The widths the sidebar's drag handle allows. A width read from a file is brought into it too: a sidebar wider
+    /// than the window cannot be dragged back, because its handle is off screen.
+    public static let sidebarWidthRange = 190.0...420.0
+
     public init(focusedSpaceID: UUID, sidebarWidth: Double, isIncognito: Bool = false) {
         self.focusedSpaceID = focusedSpaceID
-        self.sidebarWidth = sidebarWidth
+        self.sidebarWidth = sidebarWidth.isFinite
+            ? min(max(sidebarWidth, Self.sidebarWidthRange.lowerBound), Self.sidebarWidthRange.upperBound) : 248
         self.isIncognito = isIncognito
     }
 

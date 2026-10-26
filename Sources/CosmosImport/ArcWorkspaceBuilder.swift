@@ -24,7 +24,9 @@ final class ArcWorkspaceBuilder {
     private var out: [UUID: SidebarItem] = [:]
     private var visited = Set<UUID>()
     private var depth = 0
-    private static let maxDepth = 100
+    /// Real profiles nest folders a handful deep. The walk is recursive and runs on a worker thread (512 KB of stack),
+    /// where 100 levels already overflow in an address-sanitizer build.
+    private static let maxDepth = 40
     /// Items that no `childrenIds` lists but whose `parentID` names a parent: attached there, after its listed children.
     private var unlisted: [UUID: [ArcItem]] = [:]
 

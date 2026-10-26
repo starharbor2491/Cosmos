@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import WebKit
 @testable import CosmosKit
 @testable import CosmosCore
 
@@ -39,5 +40,27 @@ import Testing
         let scripts = BoostInjector.scripts(for: b)
         #expect(scripts.count == 2)
         #expect(scripts.allSatisfy { $0.source.contains("example.com") })
+    }
+
+    @Test func aBoostZoomIsHeldToTheRangeTheKeysUse() {
+        #expect(TabRuntime.clampedZoom(0) == 0.25)
+        #expect(TabRuntime.clampedZoom(-3) == 0.25)
+        #expect(TabRuntime.clampedZoom(1e9) == 5)
+        #expect(TabRuntime.clampedZoom(.nan) == 1)
+        #expect(TabRuntime.clampedZoom(1.5) == 1.5)
+    }
+
+    /// The name only labels console errors, so whatever it holds the Boost's own script must still run.
+    @Test(arguments: ["plain", "it's", "back\\slash\\", "two\nlines", "</script>", "quote\"", "\u{2028}"]) func aBoostRunsWhateverItIsCalled(_ name: String) async throws {
+        let server = try await PageServer(html: "<p>hello</p>")
+        let boost = Boost(name: name, hostPatterns: ["localhost"], js: "document.documentElement.setAttribute('data-boosted', 'yes')")
+        let configuration = WKWebViewConfiguration()
+        for script in BoostInjector.scripts(for: boost) { configuration.userContentController.addUserScript(script) }
+        let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), configuration: configuration)
+        let waiter = LoadWaiter()
+        await waiter.load(try #require(URL(string: "http://localhost:\(server.port)/")), in: web)
+        let ran = try await web.evaluateJavaScript("document.documentElement.getAttribute('data-boosted')") as? String
+        withExtendedLifetime(waiter) {}
+        #expect(ran == "yes")
     }
 }

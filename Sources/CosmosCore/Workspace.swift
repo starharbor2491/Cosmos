@@ -341,31 +341,35 @@ public struct Workspace: Codable, Equatable, Sendable {
     public mutating func pin(_ id: UUID) -> Bool {
         guard let item = items[id], case .unpinned(let sid)? = section(of: id), let space = space(sid) else { return false }
         guard item.isTab || item.isSplit else { return false }
+        guard move(id, under: space.pinnedRootID, at: nil) else { return false }
         for t in tabs(under: id) { updateTab(t.id) { $0.homeURL = $0.url } }
-        return move(id, under: space.pinnedRootID, at: nil)
+        return true
     }
 
     @discardableResult
     public mutating func unpin(_ id: UUID) -> Bool {
         guard items[id] != nil, case .pinned(let sid)? = section(of: id), let space = space(sid) else { return false }
         // A pinned tab inside a folder: unpinning moves it to the top of Today.
+        guard move(id, under: space.unpinnedRootID, at: 0) else { return false }
         for t in tabs(under: id) { updateTab(t.id) { $0.homeURL = nil } }
-        return move(id, under: space.unpinnedRootID, at: 0)
+        return true
     }
 
     @discardableResult
     public mutating func favorite(_ id: UUID) -> Bool {
         guard let item = items[id], item.isTab, section(of: id) != .favorites else { return false }
+        guard move(id, under: favoritesRootID, at: nil) else { return false }
         updateTab(id) { $0.homeURL = $0.url }
-        return move(id, under: favoritesRootID, at: nil)
+        return true
     }
 
     /// Takes a tab out of Favorites into a space's Today section.
     @discardableResult
     public mutating func unfavorite(_ id: UUID, into spaceID: UUID) -> Bool {
         guard section(of: id) == .favorites, let space = space(spaceID) else { return false }
+        guard move(id, under: space.unpinnedRootID, at: 0) else { return false }
         updateTab(id) { $0.homeURL = nil }
-        return move(id, under: space.unpinnedRootID, at: 0)
+        return true
     }
 
     // MARK: Split view
@@ -481,6 +485,8 @@ public struct Workspace: Codable, Equatable, Sendable {
     /// Human-readable violations of the tree invariants. Empty means healthy.
     public func problems() -> [String] {
         var out: [String] = []
+        if profiles.isEmpty { out.append("no profiles") }
+        if spaces.isEmpty { out.append("no spaces") }
         if items[favoritesRootID].map({ if case .container(.favorites) = $0.content { return false } else { return true } }) ?? true {
             out.append("favorites root missing or wrong kind")
         }
@@ -507,23 +513,58 @@ public struct Workspace: Codable, Equatable, Sendable {
         return out
     }
 
-    /// Best-effort repair for imported or hand-edited data: drops dangling references, fixes parent links,
-    /// dissolves undersized splits and re-homes orphans at the top of the first space's Today.
+    /// Best-effort repair for imported or hand-edited data. Whatever it is given, the result has at least one profile
+    /// and one space, every root exists, no reference dangles, nothing is its own ancestor, and anything left without
+    /// a home (including whatever hung under a damaged root) is re-homed in the first space.
     public mutating func repair() {
+        if profiles.isEmpty { profiles = [Profile(name: "Personal", isDefault: true)] }
+        for i in spaces.indices where profile(spaces[i].profileID) == nil {
+            spaces[i].profileID = (profiles.first(where: \.isDefault) ?? profiles[0]).id
+        }
+        func ensureRoot(_ id: UUID, _ kind: ContainerKind) {
+            if case .container(let existing)? = items[id]?.content, existing == kind { return }
+            items[id] = SidebarItem(id: id, content: .container(kind))
+        }
+        ensureRoot(favoritesRootID, .favorites)
+        for s in spaces {
+            ensureRoot(s.pinnedRootID, .pinned(spaceID: s.id))
+            ensureRoot(s.unpinnedRootID, .unpinned(spaceID: s.id))
+        }
+        if spaces.isEmpty { addSpace(title: "Home") }
+
+        // Each item belongs to the parent it names if that parent lists it, else to the first parent that does.
+        var listers: [UUID: [UUID]] = [:]
+        for (pid, parent) in items { for c in parent.childIDs where items[c] != nil { listers[c, default: []].append(pid) } }
+        var owner: [UUID: UUID] = [:]
+        for (id, item) in items where !item.isContainer {
+            let named = item.parentID.flatMap { listers[id]?.contains($0) == true ? $0 : nil }
+            if let o = named ?? listers[id]?.min(by: { $0.uuidString < $1.uuidString }) { owner[id] = o }
+        }
         for (id, var item) in items {
-            item.childIDs = item.childIDs.filter { items[$0] != nil }
+            var seen = Set<UUID>()
+            item.childIDs = item.childIDs.filter { owner[$0] == id && seen.insert($0).inserted }
+            item.parentID = item.isContainer ? nil : owner[id]
             items[id] = item
         }
-        for (id, item) in items {
-            for c in item.childIDs where items[c]?.parentID != id { items[c]?.parentID = id }
+        for id in Array(items.keys) where isAncestor(id, of: id) {
+            if let p = items[id]?.parentID { items[p]?.childIDs.removeAll { $0 == id } }
+            items[id]?.parentID = nil
         }
-        for (id, item) in items where item.parentID != nil && items[item.parentID!] == nil { items[id]?.parentID = nil }
-        for (id, item) in items where item.isSplit && item.childIDs.count < 2 { dissolveSplitIfNeeded(id) }
-        if let home = spaces.first {
-            for (id, item) in items where item.parentID == nil && !item.isContainer && items[id] != nil {
-                items[id]?.parentID = home.unpinnedRootID
-                insertChild(id, into: home.unpinnedRootID, at: 0)
-            }
+        for (id, var item) in items where item.isSplit && item.childIDs.count > Workspace.maxSplitPanes {
+            for extra in item.childIDs.dropFirst(Workspace.maxSplitPanes) { items[extra]?.parentID = nil }
+            item.childIDs = Array(item.childIDs.prefix(Workspace.maxSplitPanes))
+            items[id] = item
+        }
+        let home = spaces[0]
+        for (id, item) in items where item.parentID == nil && !item.isContainer && items[id] != nil {
+            let root = item.isFolder ? home.pinnedRootID : home.unpinnedRootID
+            items[id]?.parentID = root
+            insertChild(id, into: root, at: 0)
+        }
+        // Dissolving one split can leave the split around it short of panes, so go until none is.
+        for _ in 0..<items.count {
+            guard let id = items.first(where: { $0.value.isSplit && $0.value.childIDs.count < 2 })?.key else { break }
+            dissolveSplitIfNeeded(id)
         }
     }
 }

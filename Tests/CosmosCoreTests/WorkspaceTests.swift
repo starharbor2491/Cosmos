@@ -64,6 +64,15 @@ import Testing
         #expect(ws.problems().isEmpty)
     }
 
+    @Test func aRefusedUnpinLeavesHomeAddressesAlone() throws {
+        let (ws, space) = makeWS()
+        let f = try #require(ws.addFolder(title: "F", under: space.pinnedRootID))
+        let t = try #require(ws.addTab(url: URL(string: "https://home.example"), under: f))
+        ws.updateTab(t) { $0.homeURL = $0.url }
+        #expect(!ws.unpin(f))
+        #expect(ws.item(t)?.tab?.homeURL == URL(string: "https://home.example"))
+    }
+
     @Test func moveWithinSameParentReorders() throws {
         let (ws, space) = makeWS()
         let ids = try (0..<4).map { try #require(ws.addTab(url: URL(string: "https://\($0).com"), under: space.pinnedRootID)) }
@@ -192,6 +201,73 @@ import Testing
         #expect(!broken.problems().isEmpty)
         broken.repair()
         #expect(broken.problems().isEmpty)
+    }
+}
+
+@Suite struct WorkspaceRepairTests {
+    static let damage = ["no spaces", "no profiles", "nothing at all", "no favorites root", "favorites root of the wrong kind",
+                         "space roots gone", "space on a profile that is gone", "folders that contain each other"]
+
+    static func damaged(_ kind: String) -> Workspace {
+        let base = Workspace.fresh()
+        var profiles = base.profiles, spaces = base.spaces
+        var items = Array(base.items.values)
+        let space = base.spaces[0]
+        switch kind {
+        case "no spaces": spaces = []
+        case "no profiles": profiles = []
+        case "nothing at all": return Workspace(profiles: [], spaces: [], favoritesRootID: UUID(), items: [])
+        case "no favorites root": items.removeAll { $0.id == base.favoritesRootID }
+        case "favorites root of the wrong kind":
+            items = items.map { $0.id == base.favoritesRootID ? SidebarItem(id: $0.id, content: .folder(FolderData())) : $0 }
+        case "space roots gone": items.removeAll { $0.id == space.pinnedRootID || $0.id == space.unpinnedRootID }
+        case "space on a profile that is gone": spaces[0].profileID = UUID()
+        default:
+            let a = UUID(), b = UUID()
+            items.append(SidebarItem(id: a, parentID: b, childIDs: [b], content: .folder(FolderData())))
+            items.append(SidebarItem(id: b, parentID: a, childIDs: [a], content: .folder(FolderData())))
+        }
+        return Workspace(profiles: profiles, spaces: spaces, favoritesRootID: base.favoritesRootID, items: items)
+    }
+
+    /// Repair is the last line of defence for a file that decodes but makes no sense: the rest of the app indexes
+    /// `spaces[0]` and `profiles[0]` without asking.
+    @Test(arguments: damage) func repairLeavesAWorkspaceTheAppCanOpen(_ kind: String) throws {
+        var ws = Self.damaged(kind)
+        ws.repair()
+        #expect(ws.problems().isEmpty, "\(ws.problems().prefix(3))")
+        #expect(!ws.spaces.isEmpty && !ws.profiles.isEmpty)
+        #expect(ws.spaces.allSatisfy { ws.profile($0.profileID) != nil })
+        let space = ws.spaces[0]
+        #expect(ws.addTab(url: URL(string: "https://x.com"), under: space.unpinnedRootID) != nil)
+        let back = try JSONDecoder.cosmos.decode(Workspace.self, from: JSONEncoder.cosmos.encode(ws))
+        #expect(back.problems().isEmpty)
+    }
+}
+
+@Suite struct ThemeDecodingTests {
+    func decode(colors: Int) throws -> SpaceTheme {
+        let stop: [String: Any] = ["r": 0.2, "g": 0.4, "b": 0.8, "a": 1]
+        let json: [String: Any] = ["name": "x", "colors": Array(repeating: stop, count: colors), "angle": 90, "intensity": 0.5,
+                                   "grain": 0.1, "starfield": 0.1, "appearance": "dark"]
+        return try JSONDecoder.cosmos.decode(SpaceTheme.self, from: JSONSerialization.data(withJSONObject: json))
+    }
+
+    /// The sidebar asks a theme for its accent on every frame; a file with no gradient stops must not take it down.
+    @Test func aThemeFileWithNoColorsStillHasAnAccent() throws {
+        let theme = try decode(colors: 0)
+        #expect(theme.colors.count == 1)
+        _ = theme.accent
+        _ = theme.prefersLightForeground
+    }
+
+    @Test func aThemeFileWithTooManyColorsKeepsTheFirstFour() throws {
+        #expect(try decode(colors: 9).colors.count == 4)
+    }
+
+    @Test func aThemeSurvivesARoundTrip() throws {
+        let data = try JSONEncoder.cosmos.encode(SpaceTheme.nebula)
+        #expect(try JSONDecoder.cosmos.decode(SpaceTheme.self, from: data) == SpaceTheme.nebula)
     }
 }
 

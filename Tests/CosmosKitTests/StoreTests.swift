@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import WebKit
 @testable import CosmosKit
 @testable import CosmosCore
 
@@ -108,6 +109,34 @@ final class Rig {
         #expect(rig.window.focusedSpaceID != last)
         #expect(rig.store.archive.entries.count > 0)
         #expect(rig.store.workspace.allTabs().count < tabsBefore)
+        #expect(rig.store.workspace.problems().isEmpty)
+    }
+
+    @Test func pinningAPaneOfTheSelectedSplitLeavesTheWindowOnTheOtherPane() throws {
+        let rig = Rig()
+        let a = try #require(rig.store.newTab(url: URL(string: "about:blank?a"), in: rig.window))
+        let b = try #require(rig.store.newTab(url: URL(string: "about:blank?b"), in: rig.window))
+        rig.store.splitWith(a, dragged: b, in: rig.window)
+        let split = try #require(rig.window.selectedItemID)
+        #expect(rig.store.workspace.item(split)?.isSplit == true)
+        rig.store.togglePin(b, in: rig.window)
+        #expect(rig.store.workspace.item(split) == nil)
+        let selected = try #require(rig.window.selectedItemID)
+        #expect(selected == a)
+        #expect(rig.store.workspace.item(selected) != nil)
+    }
+
+    /// WebKit raises an exception, and the app dies, if the page it gets back for `window.open()` was not built from
+    /// the configuration it handed over.
+    @Test func aScriptOpenedWindowIsBuiltFromTheConfigurationWebKitGave() throws {
+        let rig = Rig()
+        let opener = try #require(rig.store.newTab(url: URL(string: "about:blank?opener"), in: rig.window))
+        let openerRuntime = try #require(rig.store.runtime(forItem: opener, in: rig.window))
+        let configuration = WKWebViewConfiguration()
+        let child = try #require(rig.store.tab(openerRuntime, createChildWith: configuration, features: WKWindowFeatures()))
+        // WebKit hands out a copy of a web view's configuration; the copy shares the process pool.
+        #expect(child.configuration.processPool === configuration.processPool)
+        #expect(rig.store.workspace.allTabs().count == 2)
         #expect(rig.store.workspace.problems().isEmpty)
     }
 

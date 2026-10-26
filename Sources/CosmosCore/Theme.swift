@@ -93,6 +93,17 @@ public struct SpaceTheme: Codable, Hashable, Sendable {
         self.appearance = appearance
     }
 
+    private enum CodingKeys: String, CodingKey { case name, colors, angle, intensity, grain, starfield, appearance }
+
+    /// Goes through the designated initializer, so a file with no colors (or nine) gets the same treatment as code does.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(name: try c.decode(String.self, forKey: .name), colors: try c.decode([RGBA].self, forKey: .colors),
+                  angle: try c.decode(Double.self, forKey: .angle), intensity: try c.decode(Double.self, forKey: .intensity),
+                  grain: try c.decode(Double.self, forKey: .grain), starfield: try c.decode(Double.self, forKey: .starfield),
+                  appearance: try c.decode(Appearance.self, forKey: .appearance))
+    }
+
     /// True when text over this theme should be light.
     public var prefersLightForeground: Bool {
         switch appearance {

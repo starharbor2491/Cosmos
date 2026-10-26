@@ -5,7 +5,8 @@ import Foundation
 public enum Calculator {
     public static func evaluate(_ input: String) -> Double? {
         var text = input.lowercased().trimmingCharacters(in: .whitespaces)
-        guard !text.isEmpty else { return nil }
+        // The parser recurses once per nesting level, so a pasted wall of brackets would overflow the stack.
+        guard !text.isEmpty, text.count <= 256 else { return nil }
         // "15% of 80" -> (15/100)*80
         if let r = text.range(of: #"^([0-9.]+)\s*%\s*of\s*([0-9.]+)$"#, options: .regularExpression) {
             let parts = text[r].components(separatedBy: CharacterSet(charactersIn: "% ")).filter { !$0.isEmpty && $0 != "of" }
