@@ -147,6 +147,12 @@ final class Automation {
                 let split = st.selectedItemID.flatMap { s.workspace.item($0) }?.isSplit == true
                 note("  space=\(s.workspace.space(st.focusedSpaceID)?.title ?? "?") overlay=\(Self.describe(st.overlay)) section=\(section) split=\(split) sidebar=\(st.sidebarVisible) tab=\(rt?.title.prefix(24) ?? "-") url=\(rt?.url?.host ?? "-") tabs=\(s.workspace.allTabs().count) archived=\(s.archive.entries.count) windows=\(delegate?.controllers.count ?? 0) probes=\(delegate?.probeCount ?? 0) blocker=\(s.blocker.map { "\($0.installedRuleCount) rules\($0.isUpdating ? ", updating" : "")" } ?? "off")")
             }
+        case "spatial":
+            // Checks the sidebar's alignment rules on the frames the views reported (see SpatialProbe).
+            await sleep(0.4)
+            let checks = SpatialProbe.check(SpatialProbe.frames)
+            for c in checks { note("  spatial \(c.passed ? "PASS" : "FAIL") \(c.name)\(c.detail.isEmpty ? "" : ": " + c.detail)") }
+            note("  spatial: \(checks.filter(\.passed).count) of \(checks.count) rules hold")
         case "extensions":
             // Adds extensions without prompting: from "arc"/other browsers on this Mac, or from a folder path.
             guard let center = store?.extensionCenter else { note("  extensions: unavailable"); break }

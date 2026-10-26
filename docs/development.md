@@ -83,10 +83,17 @@ The script is a JSON array of steps; the log goes to `script.json.log`. A snapsh
 | `extensions` `extensionAction` | add every extension found on this Mac, or click the nth extension button |
 | `eval` | run JavaScript in the current page and log the result |
 | `state` | log the space, overlay, tab, window and blocker state |
+| `spatial` | measure the sidebar and check its alignment rules (icons, titles, edges, gaps share columns); see below |
 | `snapshot` | write a PNG (`"window": "settings"` or `"probe"` for those windows) |
 | `quit` | quit |
 
 The verbs are in `Sources/CosmosKit/App/Automation.swift`. The automation script that checked ad blocking end to end, for example, loads a page on one site and has it load a Google ad script, an analytics script and a jQuery script from third parties: with blocking on the first two fail and the third loads; with the site allowlisted all three load.
+
+## Spacing and alignment
+
+Every measurement in the interface comes from `Sources/CosmosKit/UI/Metrics.swift`: a 4 pt spacing scale, five corner radii that nest concentrically, row and field heights, and one column system for the sidebar (gutter, inset, icon, gap, indent). Use a token instead of a local number.
+
+The `spatial` automation step checks that the sidebar actually follows them. Views tagged `.spatial("name")` report their frames while an automation run is recording, and `SpatialProbe.check` applies the rules (all icons share a column, a folder's children sit under its icon, titles sit one gap after their icon, rows share edges and height, the address pill and Favorites span the rows' width, section rules reach the edge). A rule is one line in `SpatialProbe.swift`, with a test in `SpatialProbeTests` that feeds it a deliberately misaligned layout.
 
 ## Layout of the package
 

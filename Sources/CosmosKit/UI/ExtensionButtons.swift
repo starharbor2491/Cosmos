@@ -61,7 +61,7 @@ struct ExtensionActionButton: View {
                 }
             }
             .frame(width: 28, height: 28)
-            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(hover && display.isEnabled ? palette.hover : .clear))
+            .background(RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous).fill(hover && display.isEnabled ? palette.hover : .clear))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

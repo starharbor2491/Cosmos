@@ -18,24 +18,25 @@ struct SidebarView: View {
         VStack(spacing: 0) {
             SidebarToolbar(store: store, window: window)
             URLPill(store: store, window: window)
-                .padding(.horizontal, 10)
-                .padding(.bottom, 10)
+                .padding(.horizontal, Metrics.Sidebar.gutter)
+                .padding(.bottom, Metrics.Space.s)
             ExtensionButtons(store: store, window: window)
 
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: Metrics.Space.s) {
                     FavoritesGrid(store: store, window: window, indicator: $indicator)
                     SpaceHeader(store: store, window: window, space: space)
                     PinnedSection(store: store, window: window, space: space, renaming: $renaming, indicator: $indicator)
                     TodaySection(store: store, window: window, space: space, renaming: $renaming, indicator: $indicator)
                 }
-                .padding(.horizontal, 10)
-                .padding(.bottom, 12)
+                .padding(.horizontal, Metrics.Sidebar.gutter)
+                .padding(.bottom, Metrics.Space.m)
             }
             SpacesBar(store: store, window: window)
         }
         .frame(width: window.sidebarWidth)
         .environment(\.palette, palette)
+        .recordsSpatialFrames()
     }
 }
 
@@ -54,8 +55,8 @@ struct ToolbarButton: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: size, weight: .medium))
-                .frame(width: 28, height: 28)
-                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(hover && enabled ? palette.hover : .clear))
+                .frame(width: Metrics.Height.button, height: Metrics.Height.button)
+                .background(RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous).fill(hover && enabled ? palette.hover : .clear))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -84,8 +85,8 @@ struct SidebarToolbar: View {
                 if rt?.isLoading == true { rt?.stop() } else { rt?.reload() }
             }
         }
-        .padding(.trailing, 6)
-        .frame(height: 40)
+        .padding(.trailing, Metrics.Sidebar.gutter)
+        .frame(height: Metrics.Height.toolbar)
     }
 }
 
@@ -137,9 +138,9 @@ struct URLPill: View {
                     }
                 }
             }
-            .padding(.horizontal, 10)
-            .frame(height: 34)
-            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(hover ? palette.hover.opacity(1.6) : palette.hover))
+            .padding(.horizontal, Metrics.Sidebar.inset)
+            .frame(height: Metrics.Height.field)
+            .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(hover ? palette.hover.opacity(1.6) : palette.hover))
             .overlay(alignment: .bottom) {
                 if let rt, rt.isLoading {
                     GeometryReader { g in
@@ -149,8 +150,9 @@ struct URLPill: View {
                     .frame(height: 2).padding(.horizontal, 8).clipped()
                 }
             }
-            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(palette.stroke, lineWidth: 0.5))
+            .overlay(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).strokeBorder(palette.stroke, lineWidth: 0.5))
             .contentShape(Rectangle())
+            .spatial("pill")
         }
         .buttonStyle(.plain)
         .onHover { hover = $0 }
@@ -179,13 +181,16 @@ struct SpaceHeader: View {
     @Local private var hover = false
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: Metrics.Sidebar.gap) {
             SpaceIconView(icon: space.icon, size: 13)
+                .frame(width: Metrics.Icon.row)
                 .foregroundStyle(palette.secondary)
+                .spatial("header.icon")
             Text(space.title)
                 .font(.system(size: 11.5, weight: .semibold, design: .rounded))
                 .foregroundStyle(palette.secondary)
                 .lineLimit(1)
+                .spatial("header.title")
             Spacer(minLength: 0)
             Menu {
                 SpaceMenuItems(store: store, window: window, space: space)
@@ -199,9 +204,8 @@ struct SpaceHeader: View {
             .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
             .opacity(hover ? 1 : 0)
         }
-        .padding(.horizontal, 6)
-        .padding(.top, 4)
-        .frame(height: 24)
+        .padding(.horizontal, Metrics.Sidebar.inset)
+        .frame(height: Metrics.Height.header)
         .contentShape(Rectangle())
         .onHover { hover = $0 }
     }
@@ -255,24 +259,35 @@ struct SectionDivider: View {
     @Environment(\.palette) private var palette
     @Local private var hover = false
 
+    /// Wide enough for "Archive All" at this size.
+    private static let actionWidth: CGFloat = 64
+
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 0) {
             Text(title)
                 .font(.system(size: 10.5, weight: .bold, design: .rounded))
                 .tracking(0.8)
                 .textCase(.uppercase)
                 .foregroundStyle(palette.tertiary)
+                .spatial("divider.title")
+            // The rule runs to the row's edge; the action makes room for itself by shortening it while you hover.
             Rectangle().fill(palette.stroke).frame(height: 0.5)
+                .padding(.leading, Metrics.Sidebar.gap)
+                .spatial("divider.rule")
             if let trailing {
                 Button(action: { trailingAction?() }) {
-                    Text(trailing).font(.system(size: 10.5, weight: .semibold)).foregroundStyle(palette.secondary)
+                    Text(trailing).font(.system(size: 10.5, weight: .semibold)).foregroundStyle(palette.secondary).fixedSize()
                 }
                 .buttonStyle(.plain)
+                .frame(width: hover ? Self.actionWidth : 0, alignment: .trailing)
+                .clipped()
                 .opacity(hover ? 1 : 0)
+                .padding(.leading, hover ? Metrics.Sidebar.gap : 0)
             }
         }
-        .padding(.horizontal, 6)
-        .frame(height: 20)
+        .animation(.easeOut(duration: 0.16), value: hover)
+        .padding(.horizontal, Metrics.Sidebar.inset)
+        .frame(height: Metrics.Height.header)
         .contentShape(Rectangle())
         .onHover { hover = $0 }
     }

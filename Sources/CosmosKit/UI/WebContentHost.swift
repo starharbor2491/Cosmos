@@ -20,7 +20,7 @@ final class WebContentHostView: NSView {
     private var lastFocusedID: ObjectIdentifier?
     var onWeightsChanged: (([Double]) -> Void)?
 
-    static let corner: CGFloat = 11
+    static let corner: CGFloat = Metrics.Radius.page
     static let gap: CGFloat = 8
 
     override var isFlipped: Bool { true }

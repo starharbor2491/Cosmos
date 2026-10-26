@@ -109,7 +109,7 @@ private struct ProbeView: View {
                 .frame(height: 44)
                 .background(WindowDragArea())
                 RuntimeWebHost(runtime: runtime)
-                    .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: Metrics.Radius.page, style: .continuous))
                     .padding(EdgeInsets(top: 0, leading: 8, bottom: 8, trailing: 8))
             }
         }

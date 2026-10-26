@@ -50,7 +50,7 @@ struct CommandBarView: View {
                     HStack(spacing: 5) {
                         Text("Tab").font(.system(size: 10.5, weight: .bold, design: .rounded))
                             .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(palette.hover.opacity(1.8)))
+                            .background(RoundedRectangle(cornerRadius: Metrics.Radius.chip, style: .continuous).fill(palette.hover.opacity(1.8)))
                         Text("to search \(model.tabHint?.name ?? "")").font(.system(size: 12))
                     }
                     .foregroundStyle(palette.secondary)
@@ -74,9 +74,9 @@ struct CommandBarView: View {
                 .padding(8)
             }
         }
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(palette.panel))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(palette.stroke, lineWidth: 0.8))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous))
+        .background(RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous).fill(palette.panel))
+        .overlay(RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous).strokeBorder(palette.stroke, lineWidth: 0.8))
         .shadow(color: palette.shadow, radius: 36, y: 14)
         .animation(.easeOut(duration: 0.12), value: model.rows.count)
     }
@@ -127,19 +127,19 @@ private struct CommandRow: View {
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 7)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(selected ? palette.accent.opacity(palette.isDark ? 0.34 : 0.22) : .clear))
+        .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(selected ? palette.accent.opacity(palette.isDark ? 0.34 : 0.22) : .clear))
     }
 
     @ViewBuilder private var icon: some View {
         switch row.kind {
         case .openTab, .sidebarItem, .archived, .history, .topDomain, .typedURL:
-            FaviconView(store: store, url: row.url, size: 20, cornerRadius: 5)
+            FaviconView(store: store, url: row.url, size: 20)
         case .command, .space, .calculation, .webSearch, .suggestion, .siteSearch:
             Image(systemName: row.symbol ?? "magnifyingglass")
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(palette.accent)
                 .frame(width: 22, height: 22)
-                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(palette.accent.opacity(0.16)))
+                .background(RoundedRectangle(cornerRadius: Metrics.Radius.chip, style: .continuous).fill(palette.accent.opacity(0.16)))
         }
     }
 

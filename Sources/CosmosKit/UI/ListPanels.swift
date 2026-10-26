@@ -74,7 +74,7 @@ private struct ArchiveRow: View {
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 7)
-        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(hover ? palette.hover : .clear))
+        .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(hover ? palette.hover : .clear))
         .contentShape(Rectangle())
         .onHover { hover = $0 }
         .onTapGesture(count: 2) { store.restore(entry, in: window); window.overlay = nil }
@@ -99,7 +99,7 @@ struct EmptyPanelMessage: View {
             Text(title).font(.system(size: 14, weight: .semibold)).foregroundStyle(palette.secondary)
             if let detail {
                 Text(detail).font(.system(size: 12.5)).foregroundStyle(palette.tertiary)
-                    .multilineTextAlignment(.center).frame(maxWidth: 320)
+                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true).frame(maxWidth: 320)
             }
             Spacer()
         }
@@ -191,7 +191,7 @@ private struct HistoryRow: View {
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 6)
-        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(hover ? palette.hover : .clear))
+        .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(hover ? palette.hover : .clear))
         .contentShape(Rectangle())
         .onHover { hover = $0 }
         .onTapGesture {
@@ -210,7 +210,7 @@ struct DownloadsPanel: View {
 
     var body: some View {
         let items = store.downloads.items
-        PanelFrame(title: "Downloads", symbol: "arrow.down.circle.fill", width: 380, height: min(420, 110 + CGFloat(max(1, items.count)) * 58),
+        PanelFrame(title: "Downloads", symbol: "arrow.down.circle.fill", width: 380, height: items.isEmpty ? 232 : min(420, 110 + CGFloat(items.count) * 58),
                    close: { window.overlay = nil }, accessory: {
             Button("Clear") { store.downloads.clearFinished() }
                 .buttonStyle(.plain).font(.system(size: 11.5, weight: .medium)).foregroundStyle(palette.secondary)
@@ -226,7 +226,7 @@ struct DownloadsPanel: View {
         }
         // Rises from the sidebar footer, where the Downloads button lives.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-        .padding(.leading, 12).padding(.bottom, 52)
+        .padding(.leading, Metrics.Sidebar.gutter).padding(.bottom, Metrics.Height.bar + Metrics.Space.s)
     }
 }
 
@@ -261,7 +261,7 @@ private struct DownloadRow: View {
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 7)
-        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(hover ? palette.hover : .clear))
+        .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(hover ? palette.hover : .clear))
         .contentShape(Rectangle())
         .onHover { hover = $0 }
         .onTapGesture(count: 2) { if case .finished = item.state { item.open() } }

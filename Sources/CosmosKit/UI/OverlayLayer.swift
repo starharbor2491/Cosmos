@@ -18,36 +18,42 @@ struct OverlayLayer: View {
                         .padding(.top, 86)
                     Spacer()
                 }
-                .transition(.scale(scale: 0.97, anchor: .top).combined(with: .opacity))
+                .transition(Self.pop(from: .top))
             case .archive:
                 Scrim(opacity: 0.30) { window.overlay = nil }
-                ArchivePanel(store: store, window: window).transition(.scale(scale: 0.97).combined(with: .opacity))
+                ArchivePanel(store: store, window: window).transition(Self.pop(from: .center))
             case .history:
                 Scrim(opacity: 0.30) { window.overlay = nil }
-                HistoryPanel(store: store, window: window).transition(.scale(scale: 0.97).combined(with: .opacity))
+                HistoryPanel(store: store, window: window).transition(Self.pop(from: .center))
             case .downloads:
                 Scrim(opacity: 0.18) { window.overlay = nil }
-                DownloadsPanel(store: store, window: window).transition(.scale(scale: 0.97).combined(with: .opacity))
+                DownloadsPanel(store: store, window: window).transition(Self.pop(from: .bottomLeading))
             case .themeEditor(let id):
                 Scrim(opacity: 0.30) { window.overlay = nil }
-                ThemeEditorPanel(store: store, window: window, spaceID: id).transition(.scale(scale: 0.97).combined(with: .opacity))
+                ThemeEditorPanel(store: store, window: window, spaceID: id).transition(Self.pop(from: .center))
             case .boosts:
                 Scrim(opacity: 0.30) { window.overlay = nil }
-                BoostsPanel(store: store, window: window).transition(.scale(scale: 0.97).combined(with: .opacity))
+                BoostsPanel(store: store, window: window).transition(Self.pop(from: .center))
             case .welcome:
                 Scrim(opacity: 0.45) { }
-                WelcomeView(store: store, window: window).transition(.scale(scale: 0.97).combined(with: .opacity))
+                WelcomeView(store: store, window: window).transition(Self.pop(from: .center))
             case .siteControls:
                 Scrim(opacity: 0.0) { window.overlay = nil }
-                SiteControlsPanel(store: store, window: window).transition(.scale(scale: 0.97, anchor: .topLeading).combined(with: .opacity))
+                SiteControlsPanel(store: store, window: window).transition(Self.pop(from: .topLeading))
             case .shortcuts:
                 Scrim(opacity: 0.30) { window.overlay = nil }
-                ShortcutsPanel(window: window).transition(.scale(scale: 0.97).combined(with: .opacity))
+                ShortcutsPanel(window: window).transition(Self.pop(from: .center))
             case .find, nil:
                 EmptyView()
             }
         }
         .background(OverlayEscapeCatcher(active: shouldCatchEscape) { window.overlay = nil })
+    }
+
+    /// A panel grows out of where it was asked for: the Command Bar from the top, Site Controls from the address pill,
+    /// Downloads from the button in the sidebar's footer, everything else from the middle.
+    private static func pop(from anchor: UnitPoint) -> AnyTransition {
+        .scale(scale: 0.96, anchor: anchor).combined(with: .opacity)
     }
 
     private var shouldCatchEscape: Bool {
@@ -129,10 +135,10 @@ struct PanelFrame<Content: View, Accessory: View>: View {
         }
         .frame(width: width)
         .frame(height: height)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(palette.panel))
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(palette.stroke, lineWidth: 0.8))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous))
+        .background(RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous).fill(palette.panel))
+        .clipShape(RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous).strokeBorder(palette.stroke, lineWidth: 0.8))
         .shadow(color: palette.shadow, radius: 36, y: 14)
     }
 }
@@ -162,6 +168,6 @@ struct PanelSearchField: View {
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 7)
-        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(palette.hover))
+        .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(palette.hover))
     }
 }
