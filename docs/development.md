@@ -11,7 +11,7 @@ scripts/build-app.sh --install     # also copy to ~/Applications
 swift build                        # just compile (debug); run with .build/debug/Cosmos
 ```
 
-The script runs `swift build`, then assembles the bundle by hand: it copies the executables and SwiftPM's resource bundles into `Contents/Resources`, draws the icon (`Cosmos --render-icon`, then `sips` and `iconutil`), writes `Info.plist` (http and https URL types, usage strings) from `VERSION`, and signs ad hoc. There is no Xcode project.
+The script runs `swift build`, then assembles the bundle by hand: it copies the executables and SwiftPM's resource bundles into `Contents/Resources`, makes the icon from `cosmos icon/cosmos-galaxy-icon.png` (`sips` and `iconutil`; the in-app copy is `Sources/CosmosKit/Resources/AppIcon.png`, made with `sips -z 512 512 "cosmos icon/cosmos-galaxy-icon.png" --out Sources/CosmosKit/Resources/AppIcon.png`), writes `Info.plist` (http and https URL types, usage strings) from `VERSION`, and signs ad hoc. There is no Xcode project.
 
 ## Test
 

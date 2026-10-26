@@ -238,26 +238,18 @@ struct EmptyStateView: View {
     }
 }
 
-/// The Cosmos mark: a planet with a tilted ring and a few stars.
+/// The Cosmos mark: the app icon, cropped to its tile so `size` is the tile's size.
 struct CosmosLogo: View {
     var size: CGFloat = 80
 
     var body: some View {
-        ZStack {
-            Circle()
-                .fill(LinearGradient(colors: [Color(red: 0.62, green: 0.50, blue: 1.0), Color(red: 0.36, green: 0.22, blue: 0.86), Color(red: 0.95, green: 0.45, blue: 0.72)],
-                                     startPoint: .topLeading, endPoint: .bottomTrailing))
-                .frame(width: size * 0.56, height: size * 0.56)
-                .shadow(color: Color(red: 0.55, green: 0.40, blue: 1).opacity(0.6), radius: size * 0.16)
-            Ellipse()
-                .stroke(LinearGradient(colors: [.white.opacity(0.9), Color(red: 0.8, green: 0.75, blue: 1).opacity(0.35)], startPoint: .leading, endPoint: .trailing), lineWidth: size * 0.045)
-                .frame(width: size * 1.02, height: size * 0.3)
-                .rotationEffect(.degrees(-22))
-            Circle().fill(.white).frame(width: size * 0.07, height: size * 0.07).offset(x: size * 0.4, y: -size * 0.3)
-            Circle().fill(.white.opacity(0.7)).frame(width: size * 0.045, height: size * 0.045).offset(x: -size * 0.42, y: size * 0.28)
-            Circle().fill(.white.opacity(0.5)).frame(width: size * 0.035, height: size * 0.035).offset(x: size * 0.1, y: size * 0.42)
-        }
-        .frame(width: size, height: size)
+        Image(nsImage: AppIcon.image)
+            .resizable()
+            .interpolation(.high)
+            .scaleEffect(AppIcon.canvas / AppIcon.tile)
+            .frame(width: size, height: size)
+            .clipped()
+            .accessibilityHidden(true)
     }
 }
 

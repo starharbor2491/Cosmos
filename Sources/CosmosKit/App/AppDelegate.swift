@@ -42,9 +42,6 @@ struct LaunchOptions {
 @MainActor
 public func runCosmos() {
     let app = NSApplication.shared
-    if let i = CommandLine.arguments.firstIndex(of: "--render-icon"), i + 1 < CommandLine.arguments.count {
-        exit(renderAppIcon(to: CommandLine.arguments[i + 1]) ? 0 : 1)
-    }
     let delegate = CosmosAppDelegate(options: LaunchOptions.parse(CommandLine.arguments, env: ProcessInfo.processInfo.environment))
     retainedDelegate = delegate
     app.delegate = delegate
@@ -76,6 +73,7 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Views read this while they are built, so it has to be set before the first window exists.
         SpatialProbe.isRecording = options.automationScript != nil
+        NSApp.applicationIconImage = AppIcon.image
         store = BrowserStore(directory: options.resolvedDataDirectory)
         store.favicons.offline = options.offline
         wire(store)
