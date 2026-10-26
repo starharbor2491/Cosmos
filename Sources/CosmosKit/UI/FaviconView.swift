@@ -8,13 +8,14 @@ import CosmosCore
 struct FaviconView: View {
     let store: BrowserStore
     let url: URL?
-    var size: CGFloat = 18
-    var cornerRadius: CGFloat = 4.5
+    var size: CGFloat = Metrics.Icon.row
+    var cornerRadius: CGFloat?
     var fetch = false
 
     var body: some View {
         let host = url?.host
-        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        let radius = cornerRadius ?? Metrics.Radius.icon(size)
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         ZStack {
             if let image = store.favicons.image(forHost: host) {
                 let backing = store.favicons.backing(forHost: host)
@@ -28,7 +29,7 @@ struct FaviconView: View {
                     .clipShape(shape)
                     .transition(.opacity)
             } else {
-                SiteGlyphTile(host: host, url: url, size: size, cornerRadius: cornerRadius)
+                SiteGlyphTile(host: host, url: url, size: size, cornerRadius: radius)
                     .transition(.opacity)
             }
         }

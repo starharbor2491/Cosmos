@@ -38,7 +38,7 @@ struct ThemeEditorPanel: View {
     private func preview(_ space: Space) -> some View {
         ZStack(alignment: .bottomLeading) {
             ThemeBackground(theme: space.theme, animated: false)
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: Metrics.Radius.tile, style: .continuous))
             HStack(spacing: 8) {
                 SpaceIconView(icon: space.icon, size: 15)
                 Text(space.title).font(.system(size: 14, weight: .semibold))
@@ -47,7 +47,7 @@ struct ThemeEditorPanel: View {
             .padding(14)
         }
         .frame(height: 118)
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(palette.stroke, lineWidth: 0.6))
+        .overlay(RoundedRectangle(cornerRadius: Metrics.Radius.tile, style: .continuous).strokeBorder(palette.stroke, lineWidth: 0.6))
     }
 
     private func nameAndIcon(_ space: Space) -> some View {
@@ -56,15 +56,15 @@ struct ThemeEditorPanel: View {
             TextField("Space name", text: Binding(get: { space.title }, set: { v in store.updateSpace(spaceID) { $0.title = v } }))
                 .textFieldStyle(.plain).font(.system(size: 14))
                 .padding(.horizontal, 10).padding(.vertical, 7)
-                .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(palette.hover))
+                .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(palette.hover))
             Label("Icon", systemImage: "face.smiling").sectionLabel(palette).padding(.top, 4)
             LazyVGrid(columns: Array(repeating: GridItem(.fixed(38), spacing: 6), count: 9), alignment: .leading, spacing: 6) {
                 ForEach(Array(SpaceIcon.suggested.enumerated()), id: \.offset) { _, icon in
                     Button { store.updateSpace(spaceID) { $0.icon = icon } } label: {
                         SpaceIconView(icon: icon, size: 16)
                             .frame(width: 38, height: 34)
-                            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(icon == space.icon ? palette.accent.opacity(0.3) : palette.hover))
-                            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(icon == space.icon ? palette.accent : .clear, lineWidth: 1.2))
+                            .background(RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous).fill(icon == space.icon ? palette.accent.opacity(0.3) : palette.hover))
+                            .overlay(RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous).strokeBorder(icon == space.icon ? palette.accent : .clear, lineWidth: 1.2))
                     }
                     .buttonStyle(.plain)
                 }
@@ -81,8 +81,8 @@ struct ThemeEditorPanel: View {
                         VStack(spacing: 4) {
                             ThemeBackground(theme: preset, animated: false)
                                 .frame(height: 48)
-                                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                                .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                .clipShape(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous))
+                                .overlay(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous)
                                     .strokeBorder(space.theme.name == preset.name ? palette.accent : palette.stroke, lineWidth: space.theme.name == preset.name ? 2 : 0.6))
                             Text(preset.name).font(.system(size: 11, weight: .medium)).foregroundStyle(palette.secondary)
                         }

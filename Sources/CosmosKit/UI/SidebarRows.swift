@@ -11,7 +11,7 @@ struct FavoritesGrid: View {
     @Binding var indicator: DropIndicator?
     @Environment(\.palette) private var palette
 
-    private let columns = [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)]
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: Metrics.Space.s), count: 3)
 
     var body: some View {
         let favorites = store.workspace.favorites
@@ -19,13 +19,13 @@ struct FavoritesGrid: View {
         Group {
             if favorites.isEmpty {
                 if dragging {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    RoundedRectangle(cornerRadius: Metrics.Radius.tile, style: .continuous)
                         .strokeBorder(palette.tertiary, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
                         .overlay(Text("Drop here to add a Favorite").font(.system(size: 11, weight: .medium)).foregroundStyle(palette.tertiary))
-                        .frame(height: 44)
+                        .frame(height: Metrics.Height.tile)
                 }
             } else {
-                LazyVGrid(columns: columns, spacing: 6) {
+                LazyVGrid(columns: columns, spacing: Metrics.Space.s) {
                     ForEach(favorites) { item in
                         FavoriteTile(store: store, window: window, item: item, indicator: $indicator)
                     }
@@ -53,7 +53,7 @@ struct FavoriteTile: View {
             store.select(item.id, in: window)
         } label: {
             ZStack(alignment: .topTrailing) {
-                FaviconView(store: store, url: url, size: 24, cornerRadius: 6, fetch: true)
+                FaviconView(store: store, url: url, size: Metrics.Icon.tile, fetch: true)
                     .opacity(rt == nil && !selected ? 0.82 : 1)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 if let rt {
@@ -64,15 +64,16 @@ struct FavoriteTile: View {
                     }
                 }
             }
-            .frame(height: 46)
+            .frame(height: Metrics.Height.tile)
             .background(
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                RoundedRectangle(cornerRadius: Metrics.Radius.tile, style: .continuous)
                     .fill(selected ? palette.selected : (hover ? palette.hover.opacity(1.8) : palette.hover))
                     .shadow(color: selected ? palette.shadow.opacity(0.5) : .clear, radius: 4, y: 1)
             )
-            .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(selected ? palette.stroke : .clear, lineWidth: 0.8))
+            .overlay(RoundedRectangle(cornerRadius: Metrics.Radius.tile, style: .continuous).strokeBorder(selected ? palette.stroke : .clear, lineWidth: 0.8))
             .overlay(DropMarker(indicator: indicator, id: item.id, axis: .horizontal))
             .contentShape(Rectangle())
+            .spatial("tile")
         }
         .buttonStyle(.plain)
         .onHover { hover = $0 }
@@ -94,20 +95,20 @@ struct PinnedSection: View {
     var body: some View {
         let rows = SidebarRows.flatten(store.workspace, root: space.pinnedRootID, expandedOnly: true)
         let dragging = store.draggingItemID != nil
-        VStack(spacing: 2) {
+        VStack(spacing: Metrics.Space.hair) {
             if rows.isEmpty {
                 if dragging {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous)
                         .strokeBorder(palette.tertiary, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
                         .overlay(Text("Drop here to pin").font(.system(size: 11, weight: .medium)).foregroundStyle(palette.tertiary))
-                        .frame(height: 34)
+                        .frame(height: Metrics.Height.row)
                 }
             } else {
                 ForEach(rows) { row in
                     SidebarItemView(store: store, window: window, itemID: row.id, depth: row.depth, renaming: $renaming, indicator: $indicator)
                 }
             }
-            Color.clear.frame(height: dragging ? 14 : 2)
+            Color.clear.frame(height: dragging ? Metrics.Space.m : Metrics.Space.hair)
         }
         .onDrop(of: SidebarDrop.types, delegate: ContainerDropDelegate(store: store, window: window, rootID: space.pinnedRootID, indicator: $indicator))
     }
@@ -123,13 +124,13 @@ struct TodaySection: View {
 
     var body: some View {
         let rows = store.workspace.unpinned(in: space)
-        VStack(spacing: 2) {
+        VStack(spacing: Metrics.Space.hair) {
             SectionDivider(title: "Today", trailing: "Archive All") { store.clearUnpinned(in: window) }
             NewTabRow(store: store, window: window)
             ForEach(rows) { item in
                 SidebarItemView(store: store, window: window, itemID: item.id, depth: 0, renaming: $renaming, indicator: $indicator)
             }
-            Color.clear.frame(height: 24)
+            Color.clear.frame(height: Metrics.Space.xl)
         }
         .onDrop(of: SidebarDrop.types, delegate: ContainerDropDelegate(store: store, window: window, rootID: space.unpinnedRootID, atStart: true, indicator: $indicator))
     }
@@ -146,16 +147,19 @@ struct NewTabRow: View {
             window.overlay = .commandBar(.newTab)
             window.commandBarFocusToken += 1
         } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "plus").font(.system(size: 12, weight: .semibold)).frame(width: 18, height: 18)
+            HStack(spacing: Metrics.Sidebar.gap) {
+                Image(systemName: "plus").font(.system(size: 12, weight: .semibold)).frame(width: Metrics.Icon.row, height: Metrics.Icon.row)
+                    .spatial("row.icon.d0")
                 Text("New Tab").font(.system(size: 13, weight: .medium))
+                    .spatial("row.title.d0")
                 Spacer()
             }
             .foregroundStyle(hover ? palette.text : palette.secondary)
-            .padding(.horizontal, 8)
-            .frame(height: 32)
-            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(hover ? palette.hover : .clear))
+            .padding(.horizontal, Metrics.Sidebar.inset)
+            .frame(height: Metrics.Height.row)
+            .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(hover ? palette.hover : .clear))
             .contentShape(Rectangle())
+            .spatial("row")
         }
         .buttonStyle(.plain)
         .onHover { hover = $0 }
@@ -244,9 +248,10 @@ struct TabRow: View {
         let asleep = rt == nil && pinned
         let url = rt?.url ?? item.tab?.url
 
-        HStack(spacing: 8) {
-            FaviconView(store: store, url: url, size: 18, fetch: true)
+        HStack(spacing: Metrics.Sidebar.gap) {
+            FaviconView(store: store, url: url, size: Metrics.Icon.row, fetch: true)
                 .opacity(asleep ? 0.65 : 1)
+                .spatial(inSplit ? "split.icon" : "row.icon.d\(depth)")
             if renaming == item.id {
                 RenameField(initial: store.title(forItem: item.id, in: window)) { new in
                     if let new { store.rename(item.id, to: new) }
@@ -258,21 +263,23 @@ struct TabRow: View {
                     .foregroundStyle(asleep ? palette.secondary.opacity(0.85) : palette.text)
                     .lineLimit(1)
                     .truncationMode(.tail)
+                    .spatial(inSplit ? "split.title" : "row.title.d\(depth)")
             }
             Spacer(minLength: 2)
             trailing(rt: rt, pinned: pinned)
         }
-        .padding(.leading, 8 + CGFloat(depth) * 14)
-        .padding(.trailing, 6)
-        .frame(height: 32)
+        .padding(.leading, Metrics.Sidebar.inset + CGFloat(depth) * Metrics.Sidebar.indent)
+        .padding(.trailing, Metrics.Sidebar.inset)
+        .frame(height: Metrics.Height.row)
         .background(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
+            RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous)
                 .fill(selected && !inSplit ? palette.selected : (focusedPane ? palette.selected : (hover ? palette.hover : .clear)))
                 .shadow(color: selected && !inSplit ? palette.shadow.opacity(0.4) : .clear, radius: 3, y: 1)
         )
-        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(selected && !inSplit ? palette.stroke : .clear, lineWidth: 0.8))
+        .overlay(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).strokeBorder(selected && !inSplit ? palette.stroke : .clear, lineWidth: 0.8))
         .overlay(DropMarker(indicator: indicator, id: item.id, axis: .vertical))
         .contentShape(Rectangle())
+        .spatial(inSplit ? "split.row" : "row")
         .onTapGesture(count: 2) { if pinned { renaming = item.id } }
         .onTapGesture { store.select(item.id, in: window) }
         .onHover { hover = $0 }
@@ -316,7 +323,7 @@ struct RowIconButton: View {
             Image(systemName: symbol)
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(hover ? palette.text : palette.secondary)
-                .frame(width: 20, height: 20)
+                .frame(width: Metrics.Icon.row + 2, height: Metrics.Icon.row + 2)
                 .background(Circle().fill(hover ? palette.hover.opacity(2) : .clear))
         }
         .buttonStyle(.plain)
@@ -337,16 +344,18 @@ struct FolderRow: View {
     @Local private var hover = false
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: Metrics.Sidebar.gap) {
             Image(systemName: "chevron.right")
                 .font(.system(size: 9, weight: .bold))
                 .rotationEffect(.degrees(folder.isExpanded ? 90 : 0))
                 .foregroundStyle(palette.tertiary)
-                .frame(width: 12)
+                .frame(width: Metrics.Sidebar.chevron)
+                .spatial("folder.chevron.d\(depth)")
             Image(systemName: folder.isExpanded ? "folder.fill" : "folder")
                 .font(.system(size: 13))
                 .foregroundStyle(palette.secondary)
-                .frame(width: 18)
+                .frame(width: Metrics.Icon.row)
+                .spatial("row.icon.d\(depth + 1)")
             if renaming == item.id {
                 RenameField(initial: item.title ?? "Folder") { new in
                     if let new { store.rename(item.id, to: new) }
@@ -357,6 +366,7 @@ struct FolderRow: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(palette.text)
                     .lineLimit(1)
+                    .spatial("row.title.d\(depth + 1)")
             }
             Spacer(minLength: 2)
             if !folder.isExpanded {
@@ -365,12 +375,13 @@ struct FolderRow: View {
                     .foregroundStyle(palette.tertiary)
             }
         }
-        .padding(.leading, 6 + CGFloat(depth) * 14)
-        .padding(.trailing, 8)
-        .frame(height: 32)
-        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(hover ? palette.hover : .clear))
+        .padding(.leading, Metrics.Sidebar.inset + CGFloat(depth) * Metrics.Sidebar.indent)
+        .padding(.trailing, Metrics.Sidebar.inset)
+        .frame(height: Metrics.Height.row)
+        .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(hover ? palette.hover : .clear))
         .overlay(DropMarker(indicator: indicator, id: item.id, axis: .vertical))
         .contentShape(Rectangle())
+        .spatial("row")
         .onTapGesture { withAnimation(.easeOut(duration: 0.16)) { store.folderToggle(item.id) } }
         .onHover { hover = $0 }
         .contextMenu { ItemContextMenu(store: store, window: window, itemID: item.id, renaming: $renaming) }
@@ -391,20 +402,20 @@ struct SplitRow: View {
     var body: some View {
         let selected = window.selectedItemID == item.id
         let panes = store.workspace.children(of: item.id)
-        VStack(spacing: 1) {
+        VStack(spacing: Metrics.Space.hair) {
             ForEach(panes) { pane in
                 TabRow(store: store, window: window, item: pane, depth: 0, renaming: $renaming, indicator: $indicator, inSplit: true)
             }
         }
-        .padding(2)
+        .padding(Metrics.Space.hair)
         .background(
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
+            RoundedRectangle(cornerRadius: Metrics.Radius.tile, style: .continuous)
                 .fill(selected ? palette.selected.opacity(0.6) : palette.hover)
         )
         .overlay(alignment: .leading) {
             Capsule().fill(palette.accent.opacity(selected ? 0.95 : 0.5)).frame(width: 2.5).padding(.vertical, 8).offset(x: -1)
         }
-        .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(selected ? palette.stroke : .clear, lineWidth: 0.8))
+        .overlay(RoundedRectangle(cornerRadius: Metrics.Radius.tile, style: .continuous).strokeBorder(selected ? palette.stroke : .clear, lineWidth: 0.8))
     }
 }
 
@@ -477,7 +488,7 @@ struct SpacesBar: View {
     @Environment(\.palette) private var palette
 
     var body: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: Metrics.Space.hair) {
             DownloadsButton(store: store, window: window)
             Spacer(minLength: 0)
             ForEach(store.workspace.spaces) { space in
@@ -486,10 +497,10 @@ struct SpacesBar: View {
             Spacer(minLength: 0)
             ToolbarButton(symbol: "plus", help: "New Space") { store.beginNewSpace(in: window) }
         }
-        .padding(.horizontal, 8)
-        .frame(height: 44)
+        .padding(.horizontal, Metrics.Sidebar.gutter)
+        .frame(height: Metrics.Height.bar)
         .background(SwipeCatcher { delta in store.cycleSpace(delta, in: window) })
-        .overlay(alignment: .top) { Rectangle().fill(palette.stroke).frame(height: 0.5).padding(.horizontal, 10) }
+        .overlay(alignment: .top) { Rectangle().fill(palette.stroke).frame(height: 0.5).padding(.horizontal, Metrics.Sidebar.gutter) }
     }
 }
 
@@ -507,9 +518,9 @@ struct SpaceButton: View {
         } label: {
             SpaceIconView(icon: space.icon, size: 14)
                 .foregroundStyle(selected ? palette.text : palette.secondary)
-                .frame(width: 30, height: 28)
+                .frame(width: 30, height: Metrics.Height.button)
                 .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous)
                         .fill(selected ? palette.selected : (hover ? palette.hover : .clear))
                 )
                 .overlay(alignment: .bottom) {

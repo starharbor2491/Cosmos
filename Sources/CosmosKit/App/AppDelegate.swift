@@ -74,6 +74,8 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
     // MARK: Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Views read this while they are built, so it has to be set before the first window exists.
+        SpatialProbe.isRecording = options.automationScript != nil
         store = BrowserStore(directory: options.resolvedDataDirectory)
         store.favicons.offline = options.offline
         wire(store)

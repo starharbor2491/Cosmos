@@ -54,7 +54,7 @@ struct BoostsPanel: View {
                         .font(.system(size: 12.5, weight: .semibold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
-                        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(palette.accent.opacity(0.9)))
+                        .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(palette.accent.opacity(0.9)))
                         .foregroundStyle(.white)
                 }
                 .buttonStyle(.plain)
@@ -65,7 +65,7 @@ struct BoostsPanel: View {
                     store.boosts.boosts.append(b); selectedID = b.id
                 } label: {
                     Label("New Boost", systemImage: "plus").font(.system(size: 12.5, weight: .semibold)).frame(maxWidth: .infinity).padding(.vertical, 8)
-                        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(palette.accent.opacity(0.9))).foregroundStyle(.white)
+                        .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(palette.accent.opacity(0.9))).foregroundStyle(.white)
                 }
                 .buttonStyle(.plain).padding(12)
             }
@@ -175,7 +175,7 @@ private struct BoostListRow: View {
             if matchesCurrent { Image(systemName: "eye.fill").font(.system(size: 10)).foregroundStyle(palette.accent).help("Applies to the page you're on") }
         }
         .padding(.horizontal, 10).padding(.vertical, 7)
-        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(selected ? palette.selected : .clear))
+        .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(selected ? palette.selected : .clear))
         .contentShape(Rectangle())
     }
 }
@@ -254,7 +254,7 @@ private struct FontTab: View {
                 Text("The quick brown fox jumps over the lazy dog.")
                     .font(.custom(family, size: 20)).foregroundStyle(palette.text)
                     .padding(14).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(palette.hover))
+                    .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(palette.hover))
             }
             Text("Code blocks and icon fonts keep their own typefaces.").font(.system(size: 11.5)).foregroundStyle(palette.tertiary)
         }
@@ -292,7 +292,7 @@ private struct ZapTab: View {
                                 .buttonStyle(.plain).foregroundStyle(palette.secondary).help("Bring it back")
                         }
                         .padding(.horizontal, 10).padding(.vertical, 6)
-                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(palette.hover))
+                        .background(RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous).fill(palette.hover))
                     }
                 }
             }
@@ -325,7 +325,7 @@ private struct CodeTab: View {
                 .scrollContentBackground(.hidden)
                 .padding(8)
                 .frame(minHeight: 300)
-                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(palette.hover))
+                .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(palette.hover))
                 .overlay(alignment: .topLeading) {
                     if text.isEmpty {
                         Text(prompt).font(.system(size: 12.5, design: .monospaced)).foregroundStyle(palette.tertiary).padding(14).allowsHitTesting(false)

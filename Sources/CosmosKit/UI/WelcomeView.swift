@@ -63,9 +63,9 @@ struct WelcomeView: View {
             .padding(.bottom, 26)
         }
         .frame(width: 560, height: 560)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(palette.panel))
-        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(palette.stroke, lineWidth: 0.8))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous))
+        .background(RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous).fill(palette.panel))
+        .overlay(RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous).strokeBorder(palette.stroke, lineWidth: 0.8))
         .shadow(color: palette.shadow, radius: 40, y: 16)
         .task { sources = await ImportCoordinator.sources(for: store); loaded = true }
     }
@@ -106,7 +106,7 @@ private struct ImportRow: View {
                 .font(.system(size: 17, weight: .medium))
                 .foregroundStyle(palette.accent)
                 .frame(width: 38, height: 38)
-                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(palette.accent.opacity(0.16)))
+                .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(palette.accent.opacity(0.16)))
             VStack(alignment: .leading, spacing: 2) {
                 Text(source.name).font(.system(size: 14, weight: .semibold)).foregroundStyle(palette.text)
                 Text(result ?? failure ?? source.detail)
@@ -130,6 +130,6 @@ private struct ImportRow: View {
             }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(palette.hover))
+        .background(RoundedRectangle(cornerRadius: Metrics.Radius.tile, style: .continuous).fill(palette.hover))
     }
 }

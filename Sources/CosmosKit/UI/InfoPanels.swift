@@ -17,7 +17,7 @@ struct SiteControlsPanel: View {
         let blocked = store.settings.adBlockAllowlist.contains(host) == false && store.settings.adBlockingEnabled
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
-                FaviconView(store: store, url: url, size: 24, cornerRadius: 6)
+                FaviconView(store: store, url: url, size: 24)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(host.isEmpty ? "No page" : host).font(.system(size: 14, weight: .semibold)).foregroundStyle(palette.text)
                     Text(url?.scheme == "https" ? "Connection is secure" : (url == nil ? "" : "Connection is not secure"))
@@ -73,12 +73,13 @@ struct SiteControlsPanel: View {
             .padding(8)
         }
         .frame(width: 340)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(palette.panel))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(palette.stroke, lineWidth: 0.8))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous))
+        .background(RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous).fill(palette.panel))
+        .overlay(RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous).strokeBorder(palette.stroke, lineWidth: 0.8))
         .shadow(color: palette.shadow, radius: 28, y: 10)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(.leading, window.sidebarVisible ? 14 : 90).padding(.top, window.sidebarVisible ? 96 : 52)
+        .padding(.leading, window.sidebarVisible ? Metrics.Sidebar.gutter : 90)
+        .padding(.top, window.sidebarVisible ? Metrics.Height.toolbar + Metrics.Height.field + Metrics.Space.xs : 52)
     }
 
     private static func name(forPermission key: String) -> String {
@@ -152,7 +153,7 @@ struct ShortcutsPanel: View {
                                         .font(.system(size: 12, weight: .semibold, design: .rounded))
                                         .foregroundStyle(palette.text)
                                         .padding(.horizontal, 7).padding(.vertical, 3)
-                                        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(palette.hover.opacity(1.6)))
+                                        .background(RoundedRectangle(cornerRadius: Metrics.Radius.chip, style: .continuous).fill(palette.hover.opacity(1.6)))
                                         .frame(minWidth: 96, alignment: .leading)
                                     Text(what).font(.system(size: 12.5)).foregroundStyle(palette.secondary)
                                     Spacer(minLength: 0)

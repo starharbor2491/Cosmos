@@ -27,9 +27,9 @@ struct FindBar: View {
             ToolbarButton(symbol: "xmark", size: 10.5, help: "Close (Esc)") { close() }
         }
         .padding(.horizontal, 10).padding(.vertical, 6)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(palette.panel))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(palette.stroke, lineWidth: 0.6))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Metrics.Radius.tile, style: .continuous))
+        .background(RoundedRectangle(cornerRadius: Metrics.Radius.tile, style: .continuous).fill(palette.panel))
+        .overlay(RoundedRectangle(cornerRadius: Metrics.Radius.tile, style: .continuous).strokeBorder(palette.stroke, lineWidth: 0.6))
         .shadow(color: palette.shadow, radius: 16, y: 5)
         .transition(.move(edge: .top).combined(with: .opacity))
     }

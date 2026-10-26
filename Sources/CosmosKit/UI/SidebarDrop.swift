@@ -41,7 +41,7 @@ struct DropMarker: View {
         if let indicator, indicator.id == id {
             switch indicator.zone {
             case .into:
-                RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(palette.accent, lineWidth: 2).padding(-1)
+                RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).strokeBorder(palette.accent, lineWidth: 2).padding(-1)
             case .before:
                 marker(alignment: axis == .vertical ? .top : .leading)
             case .after:

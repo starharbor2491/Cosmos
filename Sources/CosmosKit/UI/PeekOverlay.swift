@@ -49,8 +49,8 @@ struct PeekOverlay: View {
 
                 RuntimeWebHost(runtime: rt)
             }
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(palette.stroke, lineWidth: 0.8))
+            .clipShape(RoundedRectangle(cornerRadius: Metrics.Radius.page, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Metrics.Radius.page, style: .continuous).strokeBorder(palette.stroke, lineWidth: 0.8))
             .shadow(color: .black.opacity(0.45), radius: 40, y: 16)
             .padding(.horizontal, 44).padding(.vertical, 26)
             .transition(.scale(scale: 0.96).combined(with: .opacity))
