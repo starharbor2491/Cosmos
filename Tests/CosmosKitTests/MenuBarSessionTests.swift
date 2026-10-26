@@ -491,35 +491,81 @@ private final class SizedFeatures: WKWindowFeatures {
         #expect(filesHolding("secret") == [], "still readable")
     }
 
-    /// An archived tab is a closed tab's address: deleting it, or clearing the Archive, takes the dated copies of the
-    /// archive file with it.
-    @Test func removingFromTheArchiveLeavesNoDatedCopyListingIt() throws {
+    /// An archived tab is a closed tab's address. It is also in the dated copies of the sidebar from when the tab was open and
+    /// in the logo cached for its site, so deleting it, or clearing the Archive, takes those with it.
+    @Test func removingFromTheArchiveLeavesNoTraceOfTheClosedTabAnywhere() throws {
         let rig = Rig()
-        func entry(_ address: String) -> ArchivedItem {
-            ArchivedItem(reason: .closed, spaceID: nil, items: [SidebarItem(content: .tab(TabData(url: URL(string: address)!, pageTitle: "Page")))])
-        }
-        let doomed = entry("https://example.com/secret-closed-one")
-        let everything = entry("https://example.com/secret-closed-two")
-        rig.store.archive.add(doomed)
-        rig.store.archive.add(everything)
+        let root = rig.space.unpinnedRootID
+        func open(_ address: String) throws -> UUID { try #require(rig.store.edit { $0.addTab(url: URL(string: address)!, under: root, at: 0) }) }
+        let one = try open("https://secret-one.example/secret-closed-one")
+        let two = try open("https://secret-two.example/secret-closed-two")
         rig.store.saveNow()
-        rig.store.archive.add(entry("https://example.com/kept"))
+        let folder = rig.dir.appendingPathComponent("Favicons", isDirectory: true)
+        for host in ["secret-one.example", "secret-two.example"] { try TestIcon.png(side: 32, color: .systemOrange).write(to: folder.appendingPathComponent("\(host).png")) }
+        rig.store.archiveItems([one, two], reason: .closed, in: rig.window)
+        rig.store.saveNow()
+        rig.store.archive.interval = .hours24
         rig.store.saveNow()
         func filesHolding(_ word: String) -> [String] {
             ((FileManager.default.enumerator(at: rig.dir, includingPropertiesForKeys: nil)?.allObjects as? [URL]) ?? []).filter { file in
                 !file.hasDirectoryPath && ((try? Data(contentsOf: file)) ?? Data()).contains(Data(word.utf8))
             }.map { $0.path }
         }
-        #expect(filesHolding("secret-closed-one").contains { $0.contains("Backups/archive.") }, "the setup should have made a dated copy")
+        #expect(filesHolding("secret-closed-one").contains { $0.contains("Backups/archive.") }, "the setup should have made a dated copy of the archive")
+        #expect(filesHolding("secret-closed-one").contains { $0.contains("Backups/workspace.") }, "and of the sidebar from when the tab was open")
+        let doomed = try #require(rig.store.archive.entries.first { $0.url?.host == "secret-one.example" })
 
         rig.store.deleteArchived(doomed.id)
         rig.store.saveNow()
         #expect(filesHolding("secret-closed-one") == [])
+        #expect(rig.store.favicons.image(forHost: "secret-one.example") == nil, "its logo went")
         #expect(filesHolding("secret-closed-two") != [], "only that entry went")
+        #expect(rig.store.favicons.image(forHost: "secret-two.example") != nil, "the other entry still needs its logo")
 
         rig.store.clearArchive()
         rig.store.saveNow()
         #expect(filesHolding("secret-closed") == [])
+        #expect(rig.store.favicons.image(forHost: "secret-two.example") == nil)
+    }
+
+    /// The sidebar's live file keeps the page every open tab is on, so clearing cannot rewrite it. A tab that then leaves the
+    /// page it was on when history was cleared must not end up in a new copy.
+    @Test func aTabThatLeavesItsPageAfterClearingIsNotListedInANewSidebarCopy() throws {
+        let rig = Rig()
+        let root = rig.space.unpinnedRootID
+        let tab = try #require(rig.store.edit { $0.addTab(url: URL(string: "https://example.com/secret-b-page")!, under: root, at: 0) })
+        rig.store.saveNow()
+
+        rig.store.clearHistory()
+        rig.store.edit { $0.updateTab(tab) { $0.url = URL(string: "https://example.com/elsewhere") } }
+        rig.store.saveNow()
+        rig.store.edit { $0.updateTab(tab) { $0.url = URL(string: "https://example.com/elsewhere-again") } }
+        rig.store.saveNow()
+
+        let files = ((FileManager.default.enumerator(at: rig.dir, includingPropertiesForKeys: nil)?.allObjects as? [URL]) ?? []).filter { !$0.hasDirectoryPath }
+        #expect(files.filter { ((try? Data(contentsOf: $0)) ?? Data()).contains(Data("secret-b-page".utf8)) } == [])
+    }
+
+    /// Turning "open on the page I left" off forgets the page, and the dated copies of the settings that were made while it
+    /// was there.
+    @Test func notRememberingThePageAnymoreLeavesNoCopyOfTheOneThatWasRemembered() throws {
+        let rig = Rig()
+        rig.store.settings.menuBar.remember(URL(string: "https://example.com/secret-a-page"))
+        rig.store.saveNow()
+        rig.store.settings.menuBar.remember(URL(string: "https://example.com/other"))
+        rig.store.saveNow()
+        let backups = rig.dir.appendingPathComponent("Backups", isDirectory: true)
+        func holders() -> [String] {
+            ((FileManager.default.enumerator(at: rig.dir, includingPropertiesForKeys: nil)?.allObjects as? [URL]) ?? []).filter {
+                !$0.hasDirectoryPath && ((try? Data(contentsOf: $0)) ?? Data()).contains(Data("secret-a-page".utf8))
+            }.map(\.path)
+        }
+        #expect(holders().contains { $0.contains(backups.path) }, "the setup should have made a dated copy listing the page")
+
+        rig.store.settings.menuBar.rememberPage = false
+        rig.store.saveNow()
+
+        #expect(holders() == [])
     }
 
     /// An earlier version made dated copies of what the Command Bar learned and kept the typed things; they go on launch.

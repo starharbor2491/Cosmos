@@ -4,7 +4,6 @@ import CosmosCore
 
 // MARK: - Archive
 
-/// Everything that left the sidebar: auto-archived tabs, closed tabs and cleared ones. Searchable and restorable.
 /// A strip under a panel's header that asks before something that cannot be undone, in words that say what goes.
 private struct ConfirmStrip: View {
     let message: String
@@ -28,6 +27,7 @@ private struct ConfirmStrip: View {
     }
 }
 
+/// Everything that left the sidebar: auto-archived tabs, closed tabs and cleared ones. Searchable and restorable.
 struct ArchivePanel: View {
     let store: BrowserStore
     let window: WindowState

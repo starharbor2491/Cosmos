@@ -199,23 +199,25 @@ public final class BrowserStore: TabHost {
     }
 
     /// The files keep dated copies of themselves, and a copy made before something was forgotten would still hold it. What
-    /// could: the settings (the menu-bar page), what the Command Bar learned (the typed words), and the sidebar and session
-    /// (every tab's address at the time, including pages a tab has since left). The first two are written again now and their
-    /// copies dropped; the other two just lose their copies, and the next save makes one of the state as it is, which only
-    /// lists the pages that are open.
+    /// could: the settings (the menu-bar page), what the Command Bar learned (the typed words) and the sidebar (the address
+    /// of every tab at the time, including pages a tab has since left). The first two are written again now and their copies
+    /// dropped. The sidebar's live file has to keep the pages that are open, so its copies are dropped and no new one is made
+    /// until the file has had time to move on (see `deleteBackupsAndPause`).
     private func forgetInSavedFiles() {
         guard dataDirectory != nil else { return }
         try? settingsFile?.rewriteDiscardingBackups(settings)
         try? learnedFile?.rewriteDiscardingBackups(learned)
-        workspaceFile?.deleteBackups()
-        sessionFile?.deleteBackups()
+        workspaceFile?.deleteBackupsAndPause()
     }
 
     /// Removes one archived tab (every one for nil), and the dated copies of the archive that still list it.
+    /// The closed tab's address is in the sidebar's copies from when it was open and its logo is cached for its site.
     func removeFromArchive(_ id: UUID?) {
         if let id { archive.remove(id) } else { archive.entries.removeAll() }
+        dropUnusedLogos()
         guard dataDirectory != nil else { return }
         try? archiveFile?.rewriteDiscardingBackups(archive)
+        workspaceFile?.deleteBackupsAndPause()
     }
 
     /// Logos are kept for the sites that have a page in the history or a tab, archived or not.
@@ -340,6 +342,8 @@ public final class BrowserStore: TabHost {
             blocker?.settingsDidChange()
         }
         if old.appearance != settings.appearance { NSApp?.appearance = settings.appearance.nsAppearance }
+        // Not remembering the page forgets the one that was: the copies the file made while it was there go too.
+        if old.menuBar.rememberPage && !settings.menuBar.rememberPage { try? settingsFile?.rewriteDiscardingBackups(settings) }
         haptics.isEnabled = settings.trackpadHaptics
         if old.radialMenu != settings.radialMenu || old.trackpadHaptics != settings.trackpadHaptics { onPreferencesChanged?() }
         // The page the panel is on is saved as it loads; that is bookkeeping, not a change anyone has to act on.

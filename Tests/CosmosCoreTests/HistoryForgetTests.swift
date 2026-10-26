@@ -151,4 +151,36 @@ import Testing
         #expect(store.backups().isEmpty)
         #expect(!FileManager.default.fileExists(atPath: store.backupDirectory.path))
     }
+
+    /// The copies are deleted before the file is written, so a write that fails cannot leave them behind.
+    @Test func theCopiesAreGoneEvenWhenTheRewriteFails() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-json-\(UUID().uuidString)", isDirectory: true)
+        let store = JSONFileStore<Note>(url: dir.appendingPathComponent("note.json"), backupInterval: 0)
+        try store.save(Note(text: "secret"), now: Date().addingTimeInterval(-100))
+        try store.save(Note(text: "secret again"), now: Date().addingTimeInterval(-50))
+        #expect(!store.backups().isEmpty)
+        // A folder that cannot take a new file: the atomic write needs one beside the target.
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: dir.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir.path) }
+
+        #expect(throws: (any Error).self) { try store.rewriteDiscardingBackups(Note(text: "nothing")) }
+
+        #expect(store.backups().isEmpty)
+    }
+
+    @Test func aPausedStoreMakesNoCopyUntilItsIntervalHasPassed() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-json-\(UUID().uuidString)", isDirectory: true)
+        let store = JSONFileStore<Note>(url: dir.appendingPathComponent("note.json"), backupInterval: 900)
+        let start = Date()
+        try store.save(Note(text: "one"), now: start)
+        try store.save(Note(text: "two"), now: start.addingTimeInterval(1000))
+        #expect(store.backups().count == 1)
+
+        store.deleteBackupsAndPause(now: start.addingTimeInterval(1001))
+        #expect(store.backups().isEmpty)
+        try store.save(Note(text: "three"), now: start.addingTimeInterval(1100))
+        #expect(store.backups().isEmpty, "paused")
+        try store.save(Note(text: "four"), now: start.addingTimeInterval(1001 + 901))
+        #expect(store.backups().count == 1, "the pause is over")
+    }
 }

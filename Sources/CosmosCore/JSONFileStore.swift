@@ -30,6 +30,7 @@ public final class JSONFileStore<Value: Codable> {
     public var keepBackups: Int
     private let fm = FileManager.default
     private let name: String
+    private var backupsPausedUntil: Date?
 
     public init(url: URL, backupInterval: TimeInterval = 15 * 60, keepBackups: Int = 40) {
         self.url = url
@@ -70,6 +71,7 @@ public final class JSONFileStore<Value: Codable> {
 
     private func backupIfDue(now: Date) {
         guard keepBackups > 0, fm.fileExists(atPath: url.path) else { return }
+        if let paused = backupsPausedUntil, now < paused { return }
         if let newest = backups().first,
            let attrs = try? fm.attributesOfItem(atPath: newest.path), let made = attrs[.modificationDate] as? Date,
            now.timeIntervalSince(made) < backupInterval { return }
@@ -90,6 +92,14 @@ public final class JSONFileStore<Value: Codable> {
 
     public func deleteBackups() {
         for old in backups() { try? fm.removeItem(at: old) }
+    }
+
+    /// Deletes the copies and makes no new one for a `backupInterval`. For a file that cannot be rewritten without what was
+    /// forgotten (the sidebar lists the page each tab is on): a copy made right after would still list a page the tab leaves
+    /// a moment later, so the next copy waits until the file has had time to move on.
+    public func deleteBackupsAndPause(now: Date = Date()) {
+        deleteBackups()
+        backupsPausedUntil = now.addingTimeInterval(backupInterval)
     }
 
     /// Restores the newest backup that decodes; returns its value.
