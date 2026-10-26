@@ -79,7 +79,7 @@ struct RadialMenuView: View {
                         Image(systemName: symbol).font(.system(size: 19, weight: .semibold)).frame(height: 22)
                     }
                     // Every slice is named, so the ring can be read instead of recalled (a busier ring uses smaller type).
-                    Text(Self.short(entry.title)).font(.system(size: entry.symbol == nil ? 11 : (count > 6 ? 9 : 9.5), weight: .semibold))
+                    Text(Self.short(entry.title)).font(.system(size: entry.symbol == nil ? 11 : (count > 6 ? 9.5 : 10), weight: .semibold))
                         .multilineTextAlignment(.center).lineLimit(entry.symbol == nil ? 3 : 2).minimumScaleFactor(0.75)
                 }
                 .frame(width: count > 6 ? 62 : 72)
@@ -176,7 +176,8 @@ private struct RadialInputMonitor: NSViewRepresentable {
             case .rightMouseDown: return .rightDown
             case .rightMouseDragged: return .rightDragged(point)
             case .rightMouseUp: return .rightUp(point)
-            case .scrollWheel: return .scroll
+            case .scrollWheel:
+                return RadialInput.scroll(deltaX: event.scrollingDeltaX, deltaY: event.scrollingDeltaY, momentum: !event.momentumPhase.isEmpty)
             case .keyDown:
                 let others = event.modifierFlags.intersection([.command, .control, .option]).isEmpty == false
                 return RadialKeyCommand.from(keyCode: event.keyCode, shift: event.modifierFlags.contains(.shift),
@@ -194,8 +195,10 @@ enum RadialKeyCommand: Equatable {
     case step(Int)
     case choose(Int)
 
-    /// `otherModifiers` is true when ⌘, ⌃ or ⌥ is down: those keys belong to the app's own shortcuts.
+    /// `otherModifiers` is true when ⌘, ⌃ or ⌥ is down: nothing is the ring's then.
     static func from(keyCode: UInt16, shift: Bool, otherModifiers: Bool, characters: String?) -> RadialKeyCommand? {
+        // ⌘, ⌃ and ⌥ make a key one of the app's own shortcuts (⌥⌘↓ moves between spaces, ⌃Tab between tabs).
+        guard !otherModifiers else { return nil }
         switch keyCode {
         case 53: return .back                          // esc
         case 36, 76, 49: return .chooseHovered         // return, enter, space
@@ -203,7 +206,7 @@ enum RadialKeyCommand: Equatable {
         case 123, 126: return .step(-1)                // left, up
         case 48: return .step(shift ? -1 : 1)          // tab, shift-tab
         default:
-            guard !otherModifiers, let digit = characters.flatMap({ Int($0) }), (1...RadialLayout.maxSlices).contains(digit) else { return nil }
+            guard let digit = characters.flatMap({ Int($0) }), (1...RadialLayout.maxSlices).contains(digit) else { return nil }
             return .choose(digit - 1)
         }
     }

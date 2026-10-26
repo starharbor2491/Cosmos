@@ -218,4 +218,10 @@ enum RadialInput: Equatable {
     case rightUp(CGPoint)
     case scroll
     case key(RadialKeyCommand)
+
+    /// A scroll event, read for the ring: only one that moves the page (and is not the tail of an earlier flick) puts it
+    /// away. A trackpad also sends events that move nothing.
+    static func scroll(deltaX: CGFloat, deltaY: CGFloat, momentum: Bool) -> RadialInput? {
+        (deltaX != 0 || deltaY != 0) && !momentum ? .scroll : nil
+    }
 }

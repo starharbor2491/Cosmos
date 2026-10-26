@@ -57,6 +57,8 @@ final class MenuBarBrowser: NSObject {
             if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
             statusItem = nil
             session.teardown()
+            // Switching it off and on again starts from the ordinary panel, not one that is still pinned.
+            session.isPinned = false
             return
         }
         if statusItem == nil { installStatusItem() }

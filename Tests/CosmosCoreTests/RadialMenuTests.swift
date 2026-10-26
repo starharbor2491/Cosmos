@@ -313,4 +313,40 @@ import Testing
         #expect(settings.ring(for: .selection) == RadialAction.defaultRing(for: .selection))
         #expect(settings.isCustomised(.link))
     }
+
+    // MARK: What the Settings preview shows
+
+    @Test func aChosenRingAlwaysHasMoreBecauseTheMenuUsuallyOffersOtherThings() {
+        // A ring the user chose is exactly their actions, and everything else the menu offers waits under More: so More
+        // is on the ring whenever there is anything else, which is nearly always.
+        let few = RadialLayout.preview(of: [.copyLink, .openLink], customised: true)
+        #expect(few.shown == [.copyLink, .openLink] && few.hasMore)
+        let seven = RadialLayout.preview(of: Array(RadialAction.defaultRing(for: .link).prefix(7)), customised: true)
+        #expect(seven.shown.count == 7 && seven.hasMore)
+        let eight = RadialLayout.preview(of: [.openLink, .openLinkInNewTab, .openLinkInPeek, .openLinkInSplit, .downloadLinkedFile, .copyLink, .share, .inspect], customised: true)
+        #expect(eight.shown.count == RadialLayout.maxSlices - 1 && eight.hasMore, "an eighth action goes under More, as on the real ring")
+    }
+
+    @Test func theDefaultRingShowsWhatFitsAndOnlyOverflowsIntoMore() {
+        let link = RadialLayout.preview(of: RadialAction.defaultRing(for: .link), customised: false)
+        #expect(link.shown.count == 7 && !link.hasMore)
+        let nine = RadialLayout.preview(of: Array(RadialAction.allCases.prefix(9)), customised: false)
+        #expect(nine.shown.count == RadialLayout.maxSlices - 1 && nine.hasMore)
+    }
+
+    @Test func everyPreviewFitsOnARing() {
+        for context in RadialContext.allCases {
+            for customised in [true, false] {
+                let p = RadialLayout.preview(of: RadialAction.defaultRing(for: context), customised: customised)
+                #expect(p.shown.count + (p.hasMore ? 1 : 0) <= RadialLayout.maxSlices)
+            }
+        }
+    }
+
+    /// The rows in the editor say which actions sit under More: those past the last visible slice.
+    @Test func theActionsPastTheLastSliceAreTheOnesUnderMore() {
+        let actions: [RadialAction] = [.openLink, .openLinkInNewTab, .openLinkInPeek, .openLinkInSplit, .downloadLinkedFile, .copyLink, .share, .inspect]
+        #expect(RadialLayout.preview(of: actions, customised: true).underMore == [.inspect])
+        #expect(RadialLayout.preview(of: [.copyLink], customised: true).underMore.isEmpty)
+    }
 }

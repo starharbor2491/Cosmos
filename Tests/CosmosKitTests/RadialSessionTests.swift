@@ -339,6 +339,32 @@ enum RadialFixture {
         #expect(incognito.settings.menuBar == MenuBarSettings(), "nothing about the menu-bar browser or history is copied")
     }
 
+    /// A ring belongs to the page it was opened over. Once the tab, the space or the overlay changes it would act on
+    /// something that is no longer in front, and it would keep taking number keys meant for the Command Bar.
+    @Test func theRingGoesWhenTheTabTheSpaceOrAnOverlayChanges() throws {
+        let rig = Rig(seed: true)
+        _ = try shown(rig)
+        func openRing() throws {
+            let current = try #require(rig.store.currentRuntime(in: rig.window))
+            #expect(show(rig, current, menu: RadialFixture.linkMenu(MenuTarget())))
+            #expect(rig.window.radial != nil)
+        }
+
+        try openRing()
+        rig.window.overlay = .commandBar(.newTab)
+        #expect(rig.window.radial == nil, "an overlay opened")
+
+        rig.window.overlay = nil
+        try openRing()
+        _ = rig.store.newTab(url: URL(string: "about:blank?two"), in: rig.window)
+        #expect(rig.window.radial == nil, "another tab was selected")
+
+        try openRing()
+        let space = try #require(rig.store.workspace.spaces.first { $0.id != rig.window.focusedSpaceID })
+        rig.store.switchSpace(to: space.id, in: rig.window)
+        #expect(rig.window.radial == nil, "another space came up")
+    }
+
     @Test func aMenuWithNothingOnItIsLeftToTheSystem() throws {
         let rig = Rig()
         let runtime = try shown(rig)
@@ -449,6 +475,33 @@ enum RadialFixture {
         #expect(runtime.webView.recentClick()?.location == NSPoint(x: 9, y: 9))
     }
 
+    /// Peek and Split View are items Cosmos adds. They carry their link, so a page that moves on while the ring is open
+    /// does not turn them into slices that silently do nothing.
+    @Test func openInPeekAndSplitKeepTheirLinkWhileThePageMovesOn() throws {
+        _ = NSApplication.shared
+        let rig = Rig()
+        let session = MenuBarSession(store: rig.store)
+        var opened: [(URL, LinkDisposition)] = []
+        let runtime = session.prepare()
+        let recorder = RecordingHost(store: rig.store) { opened.append(($0, $1)) }
+        runtime.host = recorder
+        report(runtime, ["link": "https://example.com/target", "x": 5.0, "y": 5.0])
+        let target = MenuTarget()
+        let menu = RadialFixture.menu([RadialFixture.item("Open Link in New Window", id: "WKMenuItemIdentifierOpenLinkInNewWindow", action: #selector(MenuTarget.openLink), target: target)])
+
+        runtime.customiseContextMenu(menu)
+        report(runtime, ["x": 5.0, "y": 5.0])   // the page moves on: nothing is under the pointer any more
+
+        for id in ["cosmos.openLinkInPeek", "cosmos.openLinkInSplit"] {
+            let item = try #require(menu.items.first { $0.identifier?.rawValue == id })
+            NSApp.sendAction(try #require(item.action), to: item.target, from: item)
+        }
+        #expect(opened.map(\.0) == [URL(string: "https://example.com/target")!, URL(string: "https://example.com/target")!])
+        #expect(opened.map(\.1) == [.peek, .split])
+        withExtendedLifetime(recorder) {}
+        session.teardown()
+    }
+
     @Test func withoutAWindowOrWhenTurnedOffTheSystemMenuIsUsed() throws {
         let (rig, runtime, window) = try rigWithWindow()
         report(runtime, ["link": "https://example.com/a", "x": 10.0, "y": 10.0])
@@ -498,6 +551,18 @@ enum RadialFixture {
 
     @Test func aShortcutWithAModifierIsLeftForWhoeverOwnsIt() {
         #expect(command(0, modified: true, characters: "3") == nil, "⌘3 is not slice 3")
+        // ⌥⌘↓, ⌃Tab, ⌘Return and ⌘Esc are the app's own shortcuts, not the ring's arrows, Tab, Return and Esc.
+        for code: UInt16 in [123, 124, 125, 126, 48, 36, 76, 49, 53] { #expect(command(code, modified: true) == nil, "key \(code) with ⌘, ⌃ or ⌥") }
+        #expect(command(48, shift: true, modified: true) == nil)
+    }
+
+    /// A trackpad sends scroll events that move nothing (a finger resting down, one cancelled) and momentum events after a
+    /// flick. Only a scroll that moves the page is a reason to put the ring away.
+    @Test func onlyAScrollThatActuallyMovesThePageClosesTheRing() {
+        #expect(RadialInput.scroll(deltaX: 0, deltaY: 12, momentum: false) == .scroll)
+        #expect(RadialInput.scroll(deltaX: -4, deltaY: 0, momentum: false) == .scroll)
+        #expect(RadialInput.scroll(deltaX: 0, deltaY: 0, momentum: false) == nil, "a phase-only event")
+        #expect(RadialInput.scroll(deltaX: 0, deltaY: 30, momentum: true) == nil, "the tail of an earlier flick")
     }
 }
 
@@ -580,4 +645,26 @@ enum RadialFixture {
         #expect(other.receive(.key(.back)))
         #expect(otherCounter.finished == 1)
     }
+}
+
+/// A host that only notes what pages ask it to open.
+@MainActor
+private final class RecordingHost: TabHost {
+    private let store: BrowserStore
+    private let note: (URL, LinkDisposition) -> Void
+    init(store: BrowserStore, note: @escaping (URL, LinkDisposition) -> Void) { self.store = store; self.note = note }
+    var settings: Settings { store.settings }
+    var favicons: FaviconStore { store.favicons }
+    var downloads: DownloadsManager { store.downloads }
+    var isDraggingSidebarItem: Bool { false }
+    func tabDidChange(_ tab: TabRuntime) {}
+    func tabDidFinishLoading(_ tab: TabRuntime) {}
+    func tabIsPinnedOrFavorite(_ tab: TabRuntime) -> Bool { false }
+    func tab(_ tab: TabRuntime, open url: URL, as disposition: LinkDisposition) { note(url, disposition) }
+    func tab(_ tab: TabRuntime, createChildWith configuration: WKWebViewConfiguration, features: WKWindowFeatures) -> WKWebView? { nil }
+    func tabRequestsClose(_ tab: TabRuntime) {}
+    func tabRequestsEscape(_ tab: TabRuntime) {}
+    func tab(_ tab: TabRuntime, boostZoomFor host: String) -> Double? { nil }
+    func tab(_ tab: TabRuntime, remember allowed: Bool?, forPermission key: String) {}
+    func tab(_ tab: TabRuntime, showRadialMenu menu: NSMenu, context: RadialContext, center: CGPoint, windowSize: CGSize) -> Bool { false }
 }

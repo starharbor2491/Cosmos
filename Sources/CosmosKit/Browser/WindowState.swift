@@ -48,16 +48,17 @@ public struct Toast: Identifiable, Equatable {
 public final class WindowState: Identifiable {
     public let id = UUID()
     public let isIncognito: Bool
-    public var focusedSpaceID: UUID
+    public var focusedSpaceID: UUID { didSet { radial = nil } }
     /// Selected sidebar item per space (a tab, or a split).
-    public var selection: [UUID: UUID] = [:]
+    public var selection: [UUID: UUID] = [:] { didSet { radial = nil } }
     public var sidebarVisible = true
     public var sidebarWidth: Double
     /// True while the hidden sidebar is slid over the page because the pointer touched the window edge.
     public var sidebarPeeking = false
-    public var overlay: Overlay?
-    public var peek: PeekSession?
-    /// The radial menu that is open over the page, if any.
+    public var overlay: Overlay? { didSet { radial = nil } }
+    public var peek: PeekSession? { didSet { radial = nil } }
+    /// The radial menu that is open over the page, if any. It belongs to the page it was opened over, so a change of tab,
+    /// space, overlay or Peek puts it away.
     public var radial: RadialSession?
     public var findQuery = ""
     public var findHadMatch = true

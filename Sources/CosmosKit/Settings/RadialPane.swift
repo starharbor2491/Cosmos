@@ -82,19 +82,19 @@ struct RadialPane: View {
 
     private func customise(_ radial: RadialSettings) -> some View {
         let actions = radial.ring(for: context)
-        let overflow = actions.count > RadialLayout.maxSlices
+        let plan = RadialLayout.preview(of: actions, customised: radial.isCustomised(context))
         return SettingsGroup(title: "What is on the ring", note: "A ring holds eight slices. Actions beyond that, and anything else the system menu offers for what you clicked, wait under More. An action only shows up when the menu has it.") {
             SettingRow(title: "Edit the ring for") {
                 Dropdown(selection: $context, options: RadialContext.allCases.map { Option(value: $0, label: $0.title) }, label: "Edit the ring for")
             }
             Hairline()
             HStack(alignment: .top, spacing: Metrics.Space.l) {
-                RadialPreview(actions: actions, hovered: hovered)
+                RadialPreview(shown: plan.shown, hasMore: plan.hasMore, hovered: hovered)
                     .frame(width: RadialPreview.side, height: RadialPreview.side)
                     .accessibilityHidden(true)
                 VStack(spacing: Metrics.Space.hair) {
                     ForEach(Array(actions.enumerated()), id: \.element) { index, action in
-                        row(action, at: index, count: actions.count)
+                        row(action, at: index, count: actions.count, underMore: plan.underMore.contains(action))
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -108,8 +108,8 @@ struct RadialPane: View {
                     .disabled(radial.available(for: context).isEmpty)
                     .opacity(radial.available(for: context).isEmpty ? 0.4 : 1)
                 Spacer(minLength: 0)
-                if overflow {
-                    Text("\(actions.count - RadialLayout.maxSlices + 1) under More").font(.system(size: 12)).foregroundStyle(palette.secondary)
+                if !plan.underMore.isEmpty {
+                    Text("\(plan.underMore.count) under More").font(.system(size: 12)).foregroundStyle(palette.secondary)
                 }
                 ActionButton(title: "Reset to Default", symbol: "arrow.counterclockwise", kind: .secondary, enabled: radial.isCustomised(context)) {
                     withAnimation(Motion.standard) { store.settings.radialMenu.resetRing(for: context) }
@@ -129,12 +129,12 @@ struct RadialPane: View {
         })
     }
 
-    private func row(_ action: RadialAction, at index: Int, count: Int) -> some View {
+    private func row(_ action: RadialAction, at index: Int, count: Int, underMore: Bool) -> some View {
         HStack(spacing: Metrics.Space.s) {
             Image(systemName: action.symbol).font(.system(size: 12, weight: .semibold)).foregroundStyle(palette.accentGlyph).frame(width: Metrics.Icon.row)
             Text(action.title).font(.system(size: 13, weight: .medium)).foregroundStyle(palette.text).lineLimit(1)
             Spacer(minLength: 0)
-            if index >= RadialLayout.maxSlices - 1 && count > RadialLayout.maxSlices {
+            if underMore {
                 Text("More").font(.system(size: 11, weight: .semibold)).foregroundStyle(palette.tertiary)
             }
             IconButton(symbol: "chevron.up", label: "Move \(action.title) earlier") { move(index, -1) }
@@ -161,19 +161,20 @@ struct RadialPane: View {
     }
 }
 
-/// A small picture of the ring for the actions chosen, in the order they will sit. The slice for the row under the pointer
+/// A small picture of the ring as it will be, in the order the actions will sit. The slice for the row under the pointer
 /// lights up.
 struct RadialPreview: View {
     static let side: CGFloat = 148
-    let actions: [RadialAction]
+    /// What is on the slices, and whether the last one is More (see `RadialLayout.preview`).
+    let shown: [RadialAction]
+    let hasMore: Bool
     var hovered: Int?
     @Environment(\.palette) private var palette
 
-    /// What the ring would show: up to eight slices, the last one standing for the rest ("More") when there are too many.
     private var slices: [(symbol: String, lit: Bool)] {
-        let over = actions.count > RadialLayout.maxSlices
-        var out = actions.prefix(over ? RadialLayout.maxSlices - 1 : RadialLayout.maxSlices).enumerated().map { ($0.element.symbol, hovered == $0.offset) }
-        if over { out.append(("ellipsis", (hovered ?? 0) >= RadialLayout.maxSlices - 1)) }
+        var out = shown.enumerated().map { ($0.element.symbol, hovered == $0.offset) }
+        // A row under More lights More.
+        if hasMore { out.append(("ellipsis", (hovered ?? 0) >= shown.count && hovered != nil)) }
         return out
     }
 

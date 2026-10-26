@@ -120,11 +120,11 @@ struct HistoryPanel: View {
     var body: some View {
         PanelFrame(title: "History", symbol: "clock.fill", width: 700, height: 560, close: { window.overlay = nil }, accessory: {
             Menu("Clear…") {
-                Button("Last Hour") { store.history.clear(since: Date().addingTimeInterval(-3600)); revision += 1 }
-                Button("Today") { store.history.clear(since: Calendar.current.startOfDay(for: Date())); revision += 1 }
-                Button("Last 7 Days") { store.history.clear(since: Date().addingTimeInterval(-7 * 86400)); revision += 1 }
+                Button("Last Hour") { store.clearHistory(since: Date().addingTimeInterval(-3600)); revision += 1 }
+                Button("Today") { store.clearHistory(since: Calendar.current.startOfDay(for: Date())); revision += 1 }
+                Button("Last 7 Days") { store.clearHistory(since: Date().addingTimeInterval(-7 * 86400)); revision += 1 }
                 Divider()
-                Button("All History") { store.history.clear(since: nil); revision += 1 }
+                Button("All History") { store.clearHistory(); revision += 1 }
             }
             .menuStyle(.borderlessButton).fixedSize().font(.system(size: 11.5, weight: .medium))
         }) {
