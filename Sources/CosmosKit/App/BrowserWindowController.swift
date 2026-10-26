@@ -26,6 +26,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         win.isMovableByWindowBackground = false
         win.minSize = NSSize(width: 760, height: 480)
         win.isReleasedWhenClosed = false
+        // Cosmos restores its own session; the system would also keep every window's title (a page's name) in its saved state.
+        win.isRestorable = false
         win.tabbingMode = .disallowed
         win.collectionBehavior.insert(.fullScreenPrimary)
         win.backgroundColor = NSColor(red: 0.07, green: 0.06, blue: 0.13, alpha: 1)
