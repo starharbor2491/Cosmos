@@ -257,12 +257,16 @@ public final class TabRuntime: NSObject {
             }
         }
         if context.link != nil, let at = insertAfter {
-            let peek = NSMenuItem(title: "Open Link in Peek", action: #selector(menuOpenInPeek), keyEquivalent: "")
+            // The link is carried on the item, not read from the page context when the item runs: the ring can be open
+            // while the page moves on.
+            let peek = NSMenuItem(title: "Open Link in Peek", action: #selector(menuOpenInPeek(_:)), keyEquivalent: "")
             peek.target = self
+            peek.representedObject = context.link
             peek.identifier = NSUserInterfaceItemIdentifier("cosmos.openLinkInPeek")
             peek.image = NSImage(systemSymbolName: "eye", accessibilityDescription: nil)
-            let split = NSMenuItem(title: "Open Link in Split View", action: #selector(menuOpenInSplit), keyEquivalent: "")
+            let split = NSMenuItem(title: "Open Link in Split View", action: #selector(menuOpenInSplit(_:)), keyEquivalent: "")
             split.target = self
+            split.representedObject = context.link
             split.identifier = NSUserInterfaceItemIdentifier("cosmos.openLinkInSplit")
             split.image = NSImage(systemSymbolName: "rectangle.split.2x1", accessibilityDescription: nil)
             menu.insertItem(split, at: at + 1)
@@ -275,7 +279,10 @@ public final class TabRuntime: NSObject {
     func presentRadialMenu(_ menu: NSMenu) -> Bool {
         let click = webView.recentClick()
         let modifiers = click?.modifiers ?? NSEvent.modifierFlags
-        guard let host, let window = webView.window, !modifiers.contains(.option), !NSWorkspace.shared.isVoiceOverEnabled else { return false }
+        // In element fullscreen (a video taking the screen) the page lives in a window of WebKit's own and the ring would be
+        // drawn in the browser window behind it, so the system menu stays.
+        guard let host, let window = webView.window, webView.fullscreenState == .notInFullscreen,
+              !modifiers.contains(.option), !NSWorkspace.shared.isVoiceOverEnabled else { return false }
         let kind = RadialContext.detect(link: context.link != nil, image: context.image != nil, selection: !context.selection.isEmpty,
                                         editable: context.editable, media: context.media)
         // Where the pointer is, in the window's space with y down. The click says so itself; for a menu that came from
@@ -292,8 +299,8 @@ public final class TabRuntime: NSObject {
         return host.tab(self, showRadialMenu: menu, context: kind, center: CGPoint(x: windowPoint.x, y: size.height - windowPoint.y), windowSize: size)
     }
 
-    @objc private func menuOpenInPeek() { if let l = context.link { host?.tab(self, open: l, as: .peek) } }
-    @objc private func menuOpenInSplit() { if let l = context.link { host?.tab(self, open: l, as: .split) } }
+    @objc private func menuOpenInPeek(_ sender: NSMenuItem) { if let l = sender.representedObject as? URL { host?.tab(self, open: l, as: .peek) } }
+    @objc private func menuOpenInSplit(_ sender: NSMenuItem) { if let l = sender.representedObject as? URL { host?.tab(self, open: l, as: .split) } }
 }
 
 // MARK: - Navigation

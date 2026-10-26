@@ -141,6 +141,8 @@ enum PopupWindows {
         let delegate = PopupDelegate(runtime: runtime)
         objc_setAssociatedObject(win, &PopupDelegate.key, delegate, .OBJC_ASSOCIATION_RETAIN)
         win.delegate = delegate
+        // A sign-in opened from the menu-bar panel appears while Cosmos is not the frontmost app.
+        NSApp.activate(ignoringOtherApps: true)
         win.makeKeyAndOrderFront(nil)
     }
 }

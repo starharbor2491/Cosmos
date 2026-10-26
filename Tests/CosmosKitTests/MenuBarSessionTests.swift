@@ -293,6 +293,14 @@ private final class SizedFeatures: WKWindowFeatures {
         #expect(browser.session.runtime == nil)
     }
 
+    @Test func turningItOffLetsGoOfThePin() {
+        let rig = Rig()
+        let browser = browser(rig)
+        browser.session.isPinned = true
+        browser.sync()
+        #expect(!browser.session.isPinned)
+    }
+
     @Test func theSettingsRoundTripThroughTheSettingsFile() throws {
         var settings = Settings()
         settings.menuBar.enabled = true
@@ -310,6 +318,19 @@ private final class SizedFeatures: WKWindowFeatures {
         #expect(back.menuBar == MenuBarSettings())
         #expect(back.radialMenu == RadialSettings())
         #expect(back.appearance == .dark, "the rest of the file still loads")
+    }
+
+    /// Private windows take the ring and haptics choices over when they open, and again when those choices change while
+    /// they are open: the app is told, and passes them on.
+    @Test func changingTheRingOrHapticsChoicesTellsTheApp() {
+        let rig = Rig()
+        var told = 0
+        rig.store.onPreferencesChanged = { told += 1 }
+        rig.store.settings.radialMenu.enabled = false
+        rig.store.settings.trackpadHaptics = false
+        rig.store.settings.showSearchSuggestions = false
+        rig.store.settings.menuBar.remember(URL(string: "https://example.com/"))
+        #expect(told == 2, "only the choices a private window inherits")
     }
 
     @Test func changingTheMenuBarSettingsTellsTheApp() {
@@ -335,6 +356,57 @@ private final class SizedFeatures: WKWindowFeatures {
 
         #expect(rig.store.settings.menuBar.lastAddress == nil)
         #expect(cleared == 1, "the app is told, so it can drop the page that is still loaded")
+    }
+
+    /// The History panel's "Clear…" menu clears a range, and each of its choices has to forget the menu-bar page too: it is
+    /// the most recent page there is, and it holds a full address.
+    @Test(arguments: [3600.0, 86_400, 7 * 86_400]) func clearingARangeOfHistoryForgetsTheMenuBarPageToo(seconds: Double) {
+        let rig = Rig()
+        var cleared = 0
+        rig.store.onHistoryCleared = { cleared += 1 }
+        rig.store.settings.menuBar.remember(URL(string: "https://example.com/a?private=1"))
+        rig.store.history.record(url: URL(string: "https://example.com/b")!, title: "B")
+
+        rig.store.clearHistory(since: Date().addingTimeInterval(-seconds))
+
+        #expect(rig.store.settings.menuBar.lastAddress == nil)
+        #expect(cleared == 1)
+        #expect(rig.store.history.count() == 0, "the range reached the history itself")
+    }
+
+    @Test func clearingEverythingAlsoForgetsWhatTheCommandBarLearnedAndTheLogos() throws {
+        let rig = Rig()
+        rig.store.learned.record(query: "exa", candidateID: "tab:1")
+        let folder = rig.dir.appendingPathComponent("Favicons", isDirectory: true)
+        try TestIcon.png(side: 32, color: .systemOrange).write(to: folder.appendingPathComponent("example.com.png"))
+        #expect(rig.store.favicons.image(forHost: "example.com") != nil)
+
+        rig.store.clearHistory(since: nil)
+
+        #expect(rig.store.learned.picks.isEmpty)
+        #expect(rig.store.favicons.image(forHost: "example.com") == nil)
+    }
+
+    @Test func clearingJustTheLastHourKeepsWhatIsNotTiedToATime() {
+        let rig = Rig()
+        rig.store.learned.record(query: "exa", candidateID: "tab:1")
+        rig.store.clearHistory(since: Date().addingTimeInterval(-3600))
+        #expect(!rig.store.learned.picks.isEmpty, "picks have no date, so a partial clear leaves them")
+    }
+
+    /// Every control that clears history goes through the store, which knows everything that has to be forgotten with it.
+    @Test func noInterfaceCodeClearsTheHistoryStoreDirectly() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        var offenders: [String] = []
+        for folder in ["Sources/CosmosKit/UI", "Sources/CosmosKit/Settings", "Sources/CosmosKit/App"] {
+            let dir = root.appendingPathComponent(folder, isDirectory: true)
+            for file in try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) where file.pathExtension == "swift" {
+                for (index, line) in try String(contentsOf: file, encoding: .utf8).components(separatedBy: "\n").enumerated() where line.contains("history.clear(") {
+                    offenders.append("\(file.lastPathComponent):\(index + 1)")
+                }
+            }
+        }
+        #expect(offenders.isEmpty, "use store.clearHistory(since:): \(offenders.joined(separator: ", "))")
     }
 
     @Test func clearingTheHistoryDropsThePageThePanelStillHolds() {

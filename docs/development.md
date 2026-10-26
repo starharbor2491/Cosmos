@@ -16,7 +16,7 @@ The script runs `swift build`, then assembles the bundle by hand: it copies the 
 ## Test
 
 ```bash
-scripts/test.sh                              # everything, about 400 tests
+scripts/test.sh                              # everything, over 550 tests
 scripts/test.sh --filter ContentBlockerTests # a suite
 ```
 

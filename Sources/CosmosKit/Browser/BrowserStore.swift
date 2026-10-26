@@ -55,6 +55,8 @@ public final class BrowserStore: TabHost {
     @ObservationIgnored var onPresent: ((Overlay) -> Void)?
     /// Where a download starts. Tests replace it to see that one was asked for.
     @ObservationIgnored var downloadStarter: ((URL, TabRuntime) -> Void)?
+    /// The choices a private window inherits (the ring, haptics) changed: the app passes them on to the open ones.
+    @ObservationIgnored var onPreferencesChanged: (() -> Void)?
     /// History was cleared: whatever the app keeps of where you have been (the menu-bar browser's page) goes too.
     @ObservationIgnored var onHistoryCleared: (() -> Void)?
     /// The menu-bar browser's settings changed: the app shows, hides or rebuilds it.
@@ -157,10 +159,17 @@ public final class BrowserStore: TabHost {
 
     /// Forgets where you have been: the visited pages, what the Command Bar learned from picking them, the logos
     /// fetched for those sites (the cache would otherwise still list every host) and the page the menu-bar browser was on.
-    public func clearHistory() {
-        history.clear(since: nil)
-        learned = LearnedSelections()
-        favicons.removeAll()
+    public func clearHistory() { clearHistory(since: nil) }
+
+    /// Forgets the visits since `date` (everything for nil). The page the menu-bar browser was on is the most recent
+    /// page there is, so it goes whatever the range. What has no date (what the Command Bar learned, the logo cache) goes
+    /// only when everything does.
+    public func clearHistory(since date: Date?) {
+        history.clear(since: date)
+        if date == nil {
+            learned = LearnedSelections()
+            favicons.removeAll()
+        }
         settings.menuBar.lastAddress = nil
         onHistoryCleared?()
     }
@@ -280,6 +289,7 @@ public final class BrowserStore: TabHost {
         }
         if old.appearance != settings.appearance { NSApp?.appearance = settings.appearance.nsAppearance }
         haptics.isEnabled = settings.trackpadHaptics
+        if old.radialMenu != settings.radialMenu || old.trackpadHaptics != settings.trackpadHaptics { onPreferencesChanged?() }
         // The page the panel is on is saved as it loads; that is bookkeeping, not a change anyone has to act on.
         var before = old.menuBar
         before.lastAddress = settings.menuBar.lastAddress

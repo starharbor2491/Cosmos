@@ -214,19 +214,20 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
         let c = openWindow(state: state)
         state.overlay = .commandBar(.newTab)
         c.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func installMenuBarBrowser() {
         let browser = MenuBarBrowser(store: store, openInCosmos: { [weak self] url in self?.openInBrowser(url) },
-                                     showSettings: { [weak self] in
-                                         // Cosmos is not the frontmost app when its icon is used, so Settings would open behind another app.
-                                         NSApp.activate(ignoringOtherApps: true)
-                                         self?.showSettings(tab: .menuBar)
-                                     },
+                                     showSettings: { [weak self] in self?.showSettings(tab: .menuBar) },
                                      showBrowser: { [weak self] in self?.showBrowserWindow() })
         menuBar = browser
         store.onMenuBarChange = { [weak browser] in browser?.sync() }
         store.onHistoryCleared = { [weak browser] in browser?.forgetPage() }
+        store.onPreferencesChanged = { [weak self] in
+            guard let self else { return }
+            for c in self.controllers where c.store !== self.store { c.store.inheritPreferences(from: self.store) }
+        }
         browser.sync()
     }
 
@@ -279,6 +280,8 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
     var settingsWindow: NSWindow? { settingsController?.window }
 
     func showSettings(tab: SettingsTab? = nil) {
+        // From the menu-bar icon or panel Cosmos is not the frontmost app, and Settings would open behind another one.
+        NSApp.activate(ignoringOtherApps: true)
         if let c = settingsController, c.window?.isVisible == true {
             if tab == nil { c.window?.makeKeyAndOrderFront(nil); return }
             c.close()

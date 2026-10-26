@@ -220,6 +220,19 @@ public enum RadialLayout {
         return Array(all.prefix(maxSlices - 1)) + [more(Array(all.dropFirst(maxSlices - 1)))]
     }
 
+    /// The ring the Settings editor draws for a list of actions: what is on its slices and whether More is. A ring the
+    /// user chose is exactly their actions with everything else the menu offers under More, so More is there whenever
+    /// the menu has anything else, which it nearly always does. The default ring shows what fits and overflows into More.
+    public static func preview(of actions: [RadialAction], customised: Bool) -> (shown: [RadialAction], hasMore: Bool, underMore: [RadialAction]) {
+        if customised {
+            let shown = Array(actions.prefix(maxSlices - 1))
+            return (shown, true, Array(actions.dropFirst(shown.count)))
+        }
+        guard actions.count > maxSlices else { return (actions, false, []) }
+        let shown = Array(actions.prefix(maxSlices - 1))
+        return (shown, true, Array(actions.dropFirst(shown.count)))
+    }
+
     /// The entries that stand for `actions`, in that order, and the entries that do not.
     private static func place(_ entries: [RadialEntry], _ actions: [RadialAction]) -> (placed: [RadialEntry], rest: [RadialEntry]) {
         var placed: [RadialEntry] = []
