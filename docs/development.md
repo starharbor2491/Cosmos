@@ -11,7 +11,9 @@ scripts/build-app.sh --install     # also copy to ~/Applications
 swift build                        # just compile (debug); run with .build/debug/Cosmos
 ```
 
-The script runs `swift build`, then assembles the bundle by hand: it copies the executables and SwiftPM's resource bundles into `Contents/Resources`, makes the icon from `cosmos icon/cosmos-galaxy-icon.png` (`sips` and `iconutil`; the in-app copy is `Sources/CosmosKit/Resources/AppIcon.png`, made with `sips -z 512 512 "cosmos icon/cosmos-galaxy-icon.png" --out Sources/CosmosKit/Resources/AppIcon.png`), writes `Info.plist` (http and https URL types, usage strings) from `VERSION`, and signs ad hoc. There is no Xcode project.
+The script runs `swift build`, then assembles the bundle by hand: it copies the executables and SwiftPM's resource bundles into `Contents/Resources`, makes the icon from `cosmos icon/cosmos-app-icon-tile.png` (`sips` and `iconutil`), writes `Info.plist` (http and https URL types, usage strings) from `VERSION`, and signs ad hoc. There is no Xcode project.
+
+The icon artwork lives in `cosmos icon/`: `logos/app-icon/` (the galaxy, square) and `logos/single-color/` (the one-colour swirl). `scripts/make-app-icon.swift` cuts the galaxy to an icon tile (`swift scripts/make-app-icon.swift "cosmos icon/logos/app-icon/cosmos-app-icon-1024.png" "cosmos icon/cosmos-app-icon-tile.png"`); `Sources/CosmosKit/Resources/AppIcon.png` is a 512 px copy of the tile (`sips -z 512 512 "cosmos icon/cosmos-app-icon-tile.png" --out Sources/CosmosKit/Resources/AppIcon.png`) for the Dock, the in-app logo and the start page, and `MenuBarMark-18/36/54.png` are copies of `logos/single-color/cosmos-mark-black-*.png` for the menu-bar icon (a template image, so the system inks it).
 
 ## Test
 
