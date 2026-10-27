@@ -141,8 +141,8 @@ extension CosmosAppDelegate {
         }
 
         top("Boosts") { m in
-            add(m, "Boost This Site…", "b", [.command, .option], { $0.state.overlay = .boosts })
-            add(m, "Site Controls", "", [], { $0.state.overlay = .siteControls })
+            add(m, "Boost This Site…", "b", [.command, .option], { $0.store.perform(.showBoosts, in: $0.state) })
+            add(m, "Site Controls", "", [], { $0.store.perform(.showSiteControls, in: $0.state) })
         }
 
         top("Developer") { m in

@@ -11,6 +11,8 @@ enum Motion {
     static var standard: Animation? { reduced ? nil : .smooth(duration: 0.26) }
     /// Things that land: a tab opening, a swipe settling.
     static var spring: Animation? { reduced ? nil : .spring(duration: 0.38, bounce: 0.22) }
+    /// The sidebar's pages sliding past each other: a clear, unhurried move that settles without a bounce.
+    static var slide: Animation? { reduced ? nil : .smooth(duration: 0.34) }
     /// The whole window changing mood: crossing to another space's sky.
     static var glide: Animation? { reduced ? nil : .easeInOut(duration: 0.42) }
 

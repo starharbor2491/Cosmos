@@ -28,50 +28,49 @@ private struct ConfirmStrip: View {
 }
 
 /// Everything that left the sidebar: auto-archived tabs, closed tabs and cleared ones. Searchable and restorable.
-struct ArchivePanel: View {
+struct ArchiveSection: View {
     let store: BrowserStore
     let window: WindowState
     @Environment(\.palette) private var palette
     @Local private var query = ""
     @Local private var confirmingClear = false
+    @Local private var filter = ArchiveFilter.all
 
     var body: some View {
-        let entries = store.archive.search(query)
-        PanelFrame(title: "Archive", symbol: "archivebox.fill", close: { window.overlay = nil }, accessory: {
-            Menu {
-                ForEach(ArchiveInterval.allCases, id: \.self) { i in
-                    Button { store.archive.interval = i } label: {
-                        if store.archive.interval == i { Label(i.label, systemImage: "checkmark") } else { Text(i.label) }
-                    }
-                }
-            } label: {
-                Label("Archive tabs: \(store.archive.interval.label.lowercased())", systemImage: "clock.arrow.circlepath")
-                    .font(.system(size: 11.5, weight: .medium))
-            }
-            .menuStyle(.borderlessButton).fixedSize()
-            Button("Clear All") { confirmingClear = true }
-                .buttonStyle(.plain).font(.system(size: 11.5, weight: .medium)).foregroundStyle(palette.secondary)
-                .disabled(store.archive.entries.isEmpty)
-        }) {
-            VStack(spacing: 0) {
-                if confirmingClear {
-                    ConfirmStrip(message: "Clear the Archive? Every closed tab in it is removed, with its address. This can't be undone.",
-                                 confirmTitle: "Clear Archive", label: "Confirm clearing the archive",
-                                 cancel: { confirmingClear = false }, confirm: { store.clearArchive(); confirmingClear = false })
-                }
-                PanelSearchField(text: $query, prompt: "Search archived tabs").padding(12)
-                if entries.isEmpty {
-                    EmptyPanelMessage(symbol: "archivebox", title: query.isEmpty ? "Nothing archived yet" : "No matches",
-                                      detail: query.isEmpty ? "Tabs you leave untouched for \(store.archive.interval.label.lowercased().replacingOccurrences(of: "after ", with: "")) land here, so your sidebar stays tidy." : nil)
-                } else {
-                    ScrollView {
-                        LazyVStack(spacing: 2) {
-                            ForEach(entries.prefix(300)) { entry in
-                                ArchiveRow(store: store, window: window, entry: entry)
-                            }
+        let entries = store.archive.search(query).filter(filter.matches)
+        VStack(spacing: 0) {
+            LibraryHeader(title: "Archive", query: $query, prompt: "Search archived tabs") {
+                LibraryFilterMenu(title: \.title, selection: $filter)
+                Menu {
+                    ForEach(ArchiveInterval.allCases, id: \.self) { i in
+                        Button { store.archive.interval = i } label: {
+                            if store.archive.interval == i { Label(i.label, systemImage: "checkmark") } else { Text(i.label) }
                         }
-                        .padding(.horizontal, 8).padding(.bottom, 10)
                     }
+                } label: {
+                    LibraryControlLabel(symbol: "clock.arrow.circlepath", title: store.archive.interval.label)
+                }
+                .help("Tabs are archived \(store.archive.interval.label.lowercased())")
+                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                Button { confirmingClear = true } label: { LibraryControlLabel(symbol: "trash", title: "Clear") }
+                    .buttonStyle(.plain).disabled(store.archive.entries.isEmpty).help("Clear the Archive")
+            }
+            if confirmingClear {
+                ConfirmStrip(message: "Clear the Archive? Every closed tab in it is removed, with its address. This can't be undone.",
+                             confirmTitle: "Clear Archive", label: "Confirm clearing the archive",
+                             cancel: { confirmingClear = false }, confirm: { store.clearArchive(); confirmingClear = false })
+            }
+            if entries.isEmpty {
+                EmptyPanelMessage(symbol: "archivebox", title: query.isEmpty && filter == .all ? "Nothing archived yet" : "No matches",
+                                  detail: query.isEmpty && filter == .all ? "Tabs you leave untouched for \(store.archive.interval.label.lowercased().replacingOccurrences(of: "after ", with: "")) land here, so your sidebar stays tidy." : nil)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 2) {
+                        ForEach(entries.prefix(300)) { entry in
+                            ArchiveRow(store: store, window: window, entry: entry)
+                        }
+                    }
+                    .padding(.horizontal, 8).padding(.bottom, 10)
                 }
             }
         }
@@ -94,7 +93,7 @@ private struct ArchiveRow: View {
             }
             Spacer()
             if hover {
-                Button("Restore") { store.restore(entry, in: window); window.overlay = nil }
+                Button("Restore") { store.restore(entry, in: window) }
                     .buttonStyle(.plain).font(.system(size: 12, weight: .semibold)).foregroundStyle(palette.accentText)
                 Button { store.deleteArchived(entry.id) } label: { Image(systemName: "trash").font(.system(size: 11.5)) }
                     .buttonStyle(.plain).foregroundStyle(palette.secondary).accessibilityLabel("Delete archived tab")
@@ -106,7 +105,7 @@ private struct ArchiveRow: View {
         .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(hover ? palette.hover : .clear))
         .contentShape(Rectangle())
         .onHover { hover = $0 }
-        .onTapGesture(count: 2) { store.restore(entry, in: window); window.overlay = nil }
+        .onTapGesture(count: 2) { store.restore(entry, in: window) }
     }
 
     private var subtitle: String {
@@ -186,7 +185,7 @@ private enum HistoryRange: CaseIterable {
     }
 }
 
-struct HistoryPanel: View {
+struct HistorySection: View {
     let store: BrowserStore
     let window: WindowState
     @Environment(\.palette) private var palette
@@ -194,51 +193,57 @@ struct HistoryPanel: View {
     @Local private var entries: [HistoryEntry] = []
     @Local private var revision = 0
     @Local private var pendingRange: HistoryRange?
+    @Local private var period = HistoryWindow.allTime
 
     var body: some View {
-        PanelFrame(title: "History", symbol: "clock.fill", width: 700, height: 560, close: { window.overlay = nil }, accessory: {
-            Menu("Clear…") {
-                ForEach(HistoryRange.allCases, id: \.self) { range in
-                    if range == .all { Divider() }
-                    Button(range.menuTitle) { pendingRange = range }
-                }
-            }
-            .menuStyle(.borderlessButton).fixedSize().font(.system(size: 11.5, weight: .medium))
-        }) {
-            VStack(spacing: 0) {
-                if let range = pendingRange {
-                    ConfirmStrip(message: "\(range.question) \(range.detail)", confirmTitle: range.confirmTitle, label: "Confirm clearing history",
-                                 cancel: { pendingRange = nil }, confirm: { store.clearHistory(since: range.since); revision += 1; pendingRange = nil })
-                }
-                PanelSearchField(text: $query, prompt: "Search history").padding(12)
-                if entries.isEmpty {
-                    EmptyPanelMessage(symbol: "clock", title: query.isEmpty ? "No history yet" : "No matches")
-                } else {
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 2) {
-                            ForEach(grouped, id: \.0) { day, items in
-                                Text(day).font(.system(size: 11, weight: .bold)).foregroundStyle(palette.tertiary)
-                                    .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 2)
-                                ForEach(items) { e in HistoryRow(store: store, window: window, entry: e) { revision += 1 } }
-                            }
-                        }
-                        .padding(.horizontal, 8).padding(.bottom, 10)
+        VStack(spacing: 0) {
+            LibraryHeader(title: "History", query: $query, prompt: "Search history") {
+                LibraryFilterMenu(title: \.title, selection: $period)
+                Menu {
+                    ForEach(HistoryRange.allCases, id: \.self) { range in
+                        if range == .all { Divider() }
+                        Button(range.menuTitle) { pendingRange = range }
                     }
+                } label: {
+                    LibraryControlLabel(symbol: "trash", title: "Clear…")
+                }
+                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+            }
+            if let range = pendingRange {
+                ConfirmStrip(message: "\(range.question) \(range.detail)", confirmTitle: range.confirmTitle, label: "Confirm clearing history",
+                             cancel: { pendingRange = nil }, confirm: { store.clearHistory(since: range.since); revision += 1; pendingRange = nil })
+            }
+            if shown.isEmpty {
+                EmptyPanelMessage(symbol: "clock", title: query.isEmpty && period == .allTime ? "No history yet" : "No matches")
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        ForEach(grouped, id: \.0) { day, items in
+                            Text(day).font(.system(size: 11, weight: .bold)).foregroundStyle(palette.tertiary)
+                                .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 2)
+                            ForEach(items) { e in HistoryRow(store: store, window: window, entry: e) { revision += 1 } }
+                        }
+                    }
+                    .padding(.horizontal, 8).padding(.bottom, 10)
                 }
             }
         }
-        .task(id: "\(query)|\(revision)") {
+        .task(id: "\(query)|\(revision)|\(period.title)") {
             if !query.isEmpty { try? await Task.sleep(for: .milliseconds(120)) }
-            entries = query.isEmpty ? store.history.recent(limit: 400) : store.history.search(query, limit: 200)
+            let limit = period.loadLimit(searching: !query.isEmpty)
+            entries = query.isEmpty ? store.history.recent(limit: limit) : store.history.search(query, limit: limit)
         }
     }
 
+    /// What was loaded, through the Filter's time range.
+    private var shown: [HistoryEntry] { entries.filter { period.contains($0.lastVisit) } }
+
     private var grouped: [(String, [HistoryEntry])] {
-        guard query.isEmpty else { return [("Results", entries)] }
+        guard query.isEmpty else { return [("Results", shown)] }
         let cal = Calendar.current
         var out: [(String, [HistoryEntry])] = []
         let fmt = DateFormatter(); fmt.dateStyle = .full; fmt.timeStyle = .none
-        for e in entries {
+        for e in shown {
             let label: String
             if cal.isDateInToday(e.lastVisit) { label = "Today" }
             else if cal.isDateInYesterday(e.lastVisit) { label = "Yesterday" }
@@ -276,7 +281,6 @@ private struct HistoryRow: View {
         .contentShape(Rectangle())
         .onHover { hover = $0 }
         .onTapGesture {
-            window.overlay = nil
             store.openFromCommandBar(entry.url, mode: .newTab, typed: false, in: window)
         }
     }
@@ -284,30 +288,31 @@ private struct HistoryRow: View {
 
 // MARK: - Downloads
 
-struct DownloadsPanel: View {
+struct DownloadsSection: View {
     let store: BrowserStore
     let window: WindowState
     @Environment(\.palette) private var palette
+    @Local private var query = ""
+    @Local private var filter = DownloadFilter.all
 
     var body: some View {
-        let items = store.downloads.items
-        PanelFrame(title: "Downloads", symbol: "arrow.down.circle.fill", width: 380, height: items.isEmpty ? 232 : min(420, 110 + CGFloat(items.count) * 58),
-                   close: { window.overlay = nil }, accessory: {
-            Button("Clear") { store.downloads.clearFinished() }
-                .buttonStyle(.plain).font(.system(size: 11.5, weight: .medium)).foregroundStyle(palette.secondary)
-                .disabled(items.allSatisfy(\.isRunning))
-        }) {
+        let all = store.downloads.items
+        let items = all.filter { filter.matches($0.state) && (query.isEmpty || $0.filename.localizedCaseInsensitiveContains(query)) }
+        VStack(spacing: 0) {
+            LibraryHeader(title: "Downloads", query: $query, prompt: "Search downloads") {
+                LibraryFilterMenu(title: \.title, selection: $filter)
+                Button { store.downloads.clearFinished() } label: { LibraryControlLabel(symbol: "trash", title: "Clear") }
+                    .buttonStyle(.plain).disabled(all.allSatisfy(\.isRunning) || !filter.showsFinished)
+            }
             if items.isEmpty {
-                EmptyPanelMessage(symbol: "arrow.down.circle", title: "No downloads", detail: "Files you download are saved to your Downloads folder.")
+                EmptyPanelMessage(symbol: "arrow.down.circle", title: query.isEmpty && filter == .all ? "No downloads" : "No matches",
+                                  detail: query.isEmpty && filter == .all ? "Files you download are saved to your Downloads folder." : nil)
             } else {
                 ScrollView {
-                    VStack(spacing: 2) { ForEach(items) { DownloadRow(item: $0) } }.padding(8)
+                    VStack(spacing: 2) { ForEach(items) { DownloadRow(item: $0) } }.padding(.horizontal, 8).padding(.bottom, 10)
                 }
             }
         }
-        // Rises from the sidebar footer, where the Downloads button lives.
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-        .padding(.leading, Metrics.Sidebar.gutter).padding(.bottom, Metrics.Height.bar + Metrics.Space.s)
     }
 }
 

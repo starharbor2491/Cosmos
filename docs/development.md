@@ -100,14 +100,15 @@ The script is a JSON array of steps; the log goes to `script.json.log`. A snapsh
 |---|---|
 | `wait` `waitLoaded` | pause; wait for the current page |
 | `open` `navigate` `reload` `select` | new tab, same tab, reload, select the nth tab |
-| `overlay` `closeOverlay` `type` `key` `chord` | open a panel (`commandBar`, `archive`, `history`, `downloads`, `boosts`, `welcome`, `shortcuts`, `siteControls`, `find`, `theme`), type into the focused field, press keys |
+| `overlay` `closeOverlay` `type` `key` `chord` | open a panel (`commandBar`, `boosts`, `welcome`, `shortcuts`, `siteControls`, `find`, `theme`; `archive`, `history`, `downloads` and `resources` open the Library on that section), type into the focused field, press keys |
+| `library` `swipe` | slide the sidebar to the Library (`"section"` picks Downloads, History, Archive or Resources; `"back": true` returns to the space); `swipe` feeds two-finger scroll samples (`dx` in all, `steps`, `pause`) to the sidebar's swipe view the way a trackpad's would arrive, past the part that reads system events |
 | `space` `sidebar` `split` `peek` `closePeek` `menu` `resize` | switch space, toggle sidebar, add a split, open Peek, run a menu item, set window size |
 | `external` | open a link as if from another app (exercises link routing) |
 | `boost` `downloadsDir` | create a Boost; choose where downloads go |
 | `settings` `closeSettings` `allowlist` | show Settings on a tab (`blocking`, `extensions`, `radialMenu`, …); turn blocking off for a host |
 | `dropdown` `scrollSettings` | open the nth dropdown in Settings (`index`, top to bottom; -1 closes it); scroll the Settings pane `y` points, so a snapshot can show the part below the fold |
 | `setTheme` | give the current space one of the preset themes by name, to check a screen on light and dark skies |
-| `menuBar` | drive the menu-bar browser: `action` is `enable`, `disable`, `configure` (`home`, `layout`, `remember`), `open`, `close`, `pin`, `go` (`text`) or `state`; snapshot it with `"window": "menubar"` |
+| `menuBar` | drive the menu-bar browser: `action` is `enable`, `disable`, `configure` (`home`, `layout`, `remember`), `open`, `close`, `pin`, `go` (`text`), `drag` (`dx`, `dy`, and `x`, `y` for where it is taken, default its top-left corner) or `state` (with the panel's size and position); snapshot it with `"window": "menubar"`. Wait a moment after `enable`: the icon is placed by the menu bar a moment later, and a panel opened before that has no height |
 | `click` | a left click at `x`,`y` from the window's top-left, sent through the application the way a real click arrives (event monitors and SwiftUI's gestures see it); `double` makes it a double click |
 | `rightClick` `radial` | right-click the page at `x`,`y` as a real person would (with `flags`, `hold`); then `dump`, `hover`, `choose` or `back` on the radial menu that opened |
 | `extensions` `extensionAction` | add every extension found on this Mac, or click the nth extension button |

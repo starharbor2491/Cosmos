@@ -9,7 +9,7 @@ import Testing
 @MainActor
 @Suite struct HitTestTests {
     /// Views that are meant to be clicked or dragged.
-    static let meantToBeHit: Set<String> = ["WebContentHostView", "PaneContainer", "DividerView", "DragView", "RuntimeHostView"]
+    static let meantToBeHit: Set<String> = ["WebContentHostView", "PaneContainer", "DividerView", "DragView", "PanelDragView", "RuntimeHostView"]
 
     @Test func everyBackgroundViewLetsClicksThrough() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

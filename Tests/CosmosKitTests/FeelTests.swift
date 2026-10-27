@@ -137,6 +137,18 @@ import Testing
         #expect(last < -20)
     }
 
+    /// The next page comes in under the fingers, so the page has to keep up with them, not lag behind a rubber band.
+    @Test func aPageThatCanBeReachedFollowsTheFingersOneToOne() {
+        var t = tracker()
+        t.maxTravel = 248
+        _ = t.update(delta: -50)
+        #expect(t.offset == -50)
+        _ = t.update(delta: 130)
+        #expect(t.offset == 80)
+        _ = t.update(delta: -1000)
+        #expect(t.offset == -248, "but never further than one page")
+    }
+
     @Test func aFinishedSwipeStartsFromZeroNextTime() {
         var t = tracker()
         _ = t.update(delta: -100)

@@ -510,7 +510,7 @@ struct SpacesBar: View {
 
     var body: some View {
         HStack(spacing: Metrics.Space.hair) {
-            DownloadsButton(store: store, window: window)
+            LibraryButton(store: store, window: window)
             Spacer(minLength: 0)
             ForEach(store.workspace.spaces) { space in
                 SpaceButton(store: store, window: window, space: space)
@@ -532,7 +532,8 @@ struct SpaceButton: View {
     @Local private var hover = false
 
     var body: some View {
-        let selected = space.id == window.focusedSpaceID
+        // While the sidebar shows the Library no space is the one being shown, though the window remembers which it is on.
+        let selected = space.id == window.focusedSpaceID && !window.libraryOpen
         Button {
             withAnimation(Motion.glide) { store.switchSpace(to: space.id, in: window) }
         } label: {
@@ -556,21 +557,35 @@ struct SpaceButton: View {
     }
 }
 
-struct DownloadsButton: View {
+/// The page left of the first space: Archive, History, Downloads and System Resources. It is selected like a space while
+/// the sidebar shows it, a click on it again goes back to the space, and a ring runs around it while something downloads.
+struct LibraryButton: View {
     let store: BrowserStore
     let window: WindowState
     @Environment(\.palette) private var palette
 
     var body: some View {
+        let selected = window.libraryOpen
         let d = store.downloads
         ZStack {
-            ToolbarButton(symbol: "arrow.down.circle", bounce: d.items.count, help: "Downloads (⇧⌘J)") { window.overlay = window.overlay == .downloads ? nil : .downloads }
-                .spatial("footer.glyph")
+            RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous)
+                .fill(selected ? palette.selected : .clear)
+                .frame(width: Metrics.Height.button, height: Metrics.Height.button)
+            ToolbarButton(symbol: selected ? "books.vertical.fill" : "books.vertical", bounce: d.items.count,
+                          help: selected ? "Back to \(store.workspace.space(window.focusedSpaceID)?.title ?? "your space")" : "Library: Archive, History, Downloads, Resources") {
+                store.show(selected ? .space(window.focusedSpaceID) : .library, in: window)
+            }
+            .spatial("footer.glyph")
+            .accessibilityLabel(selected ? "Back to \(store.workspace.space(window.focusedSpaceID)?.title ?? "your space")" : "Library")
+            .accessibilityAddTraits(selected ? .isSelected : [])
             if d.hasActive {
                 Circle().trim(from: 0, to: max(0.05, d.overallFraction)).stroke(palette.accent, style: StrokeStyle(lineWidth: 2, lineCap: .round))
                     .rotationEffect(.degrees(-90)).frame(width: 22, height: 22).allowsHitTesting(false)
             }
         }
-        .opacity(d.items.isEmpty ? 0.55 : 1)
+        .overlay(alignment: .bottom) {
+            if selected { Capsule().fill(palette.accent).frame(width: 10, height: 2.5).offset(y: 5).transition(.scale.combined(with: .opacity)) }
+        }
+        .animation(Motion.spring, value: selected)
     }
 }

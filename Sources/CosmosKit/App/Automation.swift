@@ -67,11 +67,12 @@ final class Automation {
             if let url, let s = store, let st = state { s.navigateCurrent(to: url, in: st) }
         case "overlay":
             guard let st = state else { return }
-            switch step["name"] as? String ?? "" {
+            let name = step["name"] as? String ?? ""
+            switch name {
             case "commandBar": st.overlay = .commandBar(step["mode"] as? String == "current" ? .currentTab : .newTab)
-            case "archive": st.overlay = .archive
-            case "history": st.overlay = .history
-            case "downloads": st.overlay = .downloads
+            case "archive", "history", "downloads", "resources":
+                // These live in the Library now; the names still work in scripts.
+                if let s = store, let section = LibrarySection(rawValue: name) { s.openLibrary(section, in: st) }
             case "boosts": st.overlay = .boosts
             case "welcome": st.overlay = .welcome
             case "shortcuts": st.overlay = .shortcuts
@@ -95,6 +96,31 @@ final class Automation {
             } else { note("  key: no text view has focus") }
         case "space":
             if let s = store, let st = state { s.switchSpace(number: (step["index"] as? Int ?? 1), in: st) }
+        case "library":
+            // Slides the sidebar to the Library, the page left of the first space ("back": true returns to the space).
+            if let s = store, let st = state {
+                if let name = step["section"] as? String, let section = LibrarySection(rawValue: name) { s.openLibrary(section, in: st) }
+                else { s.show(step["back"] as? Bool == true ? .space(st.focusedSpaceID) : .library, in: st) }
+            }
+        case "swipe":
+            // Two fingers across the sidebar: "dx" points in all (negative goes left, to the next page), in "steps" scroll samples
+            // with a pause between them. They are fed to the sidebar's swipe view as a trackpad's would be, past the part that
+            // reads system events (which cannot be sent from here without mixing with the real trackpad).
+            if let content = controller?.window?.contentView {
+                var catchers: [SwipeCatcher.SwipeView] = []
+                func collect(_ view: NSView) { if let v = view as? SwipeCatcher.SwipeView { catchers.append(v) }; view.subviews.forEach(collect) }
+                collect(content)
+                let total = step["dx"] as? Double ?? -120, steps = max(1, step["steps"] as? Int ?? 8)
+                let pause = step["pause"] as? Double ?? 0.016
+                for index in 0...(steps + 1) {
+                    let phase: NSEvent.Phase = index == 0 ? .began : (index == steps + 1 ? .ended : .changed)
+                    let delta = index == 0 || index == steps + 1 ? 0 : total / Double(steps)
+                    for catcher in catchers { catcher.handle(SwipeCatcher.Sample(phase: phase, deltaX: delta)) }
+                    await sleep(pause)
+                    if index == steps, let hold = step["hold"] as? Double { await sleep(hold) }
+                }
+                note("  swipe: \(catchers.count) swipe view(s)")
+            } else { note("  swipe: no window") }
         case "setTheme":
             // Gives the focused space a preset by name, to look at a theme without opening the editor.
             if let s = store, let st = state, let name = step["name"] as? String, let preset = SpaceTheme.presets.first(where: { $0.name == name }) {
@@ -194,7 +220,7 @@ final class Automation {
                     switch sec { case .favorites: return "favorites"; case .pinned: return "pinned"; case .unpinned: return "today" }
                 }()
                 let split = st.selectedItemID.flatMap { s.workspace.item($0) }?.isSplit == true
-                note("  space=\(s.workspace.space(st.focusedSpaceID)?.title ?? "?") overlay=\(Self.describe(st.overlay)) section=\(section) split=\(split) sidebar=\(st.sidebarVisible) tab=\(rt?.title.prefix(24) ?? "-") url=\(rt?.url?.host ?? "-") tabs=\(s.workspace.allTabs().count) archived=\(s.archive.entries.count) windows=\(delegate?.controllers.count ?? 0) probes=\(delegate?.probeCount ?? 0) blocker=\(s.blocker.map { "\($0.installedRuleCount) rules\($0.isUpdating ? ", updating" : "")" } ?? "off")")
+                note("  space=\(s.workspace.space(st.focusedSpaceID)?.title ?? "?") library=\(st.libraryOpen ? st.librarySection.rawValue : "off") overlay=\(Self.describe(st.overlay)) section=\(section) split=\(split) sidebar=\(st.sidebarVisible) tab=\(rt?.title.prefix(24) ?? "-") url=\(rt?.url?.host ?? "-") tabs=\(s.workspace.allTabs().count) archived=\(s.archive.entries.count) windows=\(delegate?.controllers.count ?? 0) probes=\(delegate?.probeCount ?? 0) blocker=\(s.blocker.map { "\($0.installedRuleCount) rules\($0.isUpdating ? ", updating" : "")" } ?? "off")")
             }
         case "spatial":
             // Checks the sidebar's alignment rules on the frames the views reported (see SpatialProbe).
@@ -245,11 +271,27 @@ final class Automation {
             case "open": browser.show()
             case "close": browser.hide()
             case "pin": browser.session.isPinned.toggle()
+            case "drag":
+                // Takes hold of the panel by its edge (`x`, `y` from its top-left, by default just inside a corner) and drags it
+                // `dx`, `dy` points (right and down), through the application as a person's mouse would.
+                if let panel = browser.panel, panel.isVisible {
+                    let x = step["x"] as? Double ?? 4, y = step["y"] as? Double ?? 4
+                    let dx = step["dx"] as? Double ?? 0, dy = step["dy"] as? Double ?? 0
+                    let start = NSPoint(x: x, y: panel.frame.height - y)
+                    // The panel follows the pointer, so after the move the pointer is still where it took hold of the panel.
+                    for (type, point) in [(NSEvent.EventType.leftMouseDown, start), (.leftMouseDragged, NSPoint(x: start.x + dx, y: start.y - dy)), (.leftMouseUp, start)] {
+                        if let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                          windowNumber: panel.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1) {
+                            NSApp.sendEvent(event)
+                        }
+                        await sleep(0.05)
+                    }
+                }
             case "go": browser.session.go(step["text"] as? String ?? "")
             default: break
             }
             let rt = browser.session.runtime
-            note("  menuBar \(action): enabled=\(s.settings.menuBar.enabled) icon=\(browser.statusItem != nil) open=\(browser.isOpen) pinned=\(browser.session.isPinned) layout=\(s.settings.menuBar.layout.rawValue) loading=\(rt?.isLoading ?? false) host=\(rt?.url?.host ?? "-") panel=\(browser.panel.map { "\(Int($0.frame.width))x\(Int($0.frame.height))" } ?? "-")")
+            note("  menuBar \(action): enabled=\(s.settings.menuBar.enabled) icon=\(browser.statusItem != nil) open=\(browser.isOpen) pinned=\(browser.session.isPinned) layout=\(s.settings.menuBar.layout.rawValue) loading=\(rt?.isLoading ?? false) host=\(rt?.url?.host ?? "-") panel=\(browser.panel.map { "\(Int($0.frame.width))x\(Int($0.frame.height))@\(Int($0.frame.minX)),\(Int($0.frame.maxY))" } ?? "-")")
         case "scrollSettings":
             // Scrolls the Settings pane `y` points down (the pane is taller than the window), so a snapshot can show the rest.
             if let content = delegate?.settingsWindow?.contentView {

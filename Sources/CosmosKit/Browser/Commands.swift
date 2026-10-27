@@ -9,10 +9,25 @@ enum BrowserCommand: String, CaseIterable {
     case addSplit, closeSplitPane, separateSplit
     case reload, hardReload, stopLoading, goBack, goForward
     case copyLink, copyLinkMarkdown, find, print, zoomIn, zoomOut, resetZoom, muteTab, pictureInPicture, viewSource
-    case showArchive, showHistory, showDownloads, showBoosts, showSettings, showShortcuts, showWelcome
+    case showLibrary, showResources, showArchive, showHistory, showDownloads, showBoosts, showSettings, showShortcuts, showWelcome
     case newWindow, newIncognito, newProbe
     case resetPinned, collapseFolders, expandFolders, resetTab
     case setDefaultBrowser, importFromArc, toggleDeveloperTools, openInDefaultBrowser, manageExtensions, showSiteControls
+
+    /// Whether the command is about what the Library is covering: the page that is showing, the tab that holds it, or the
+    /// space it is in. It would happen out of sight, so the page comes back first. (Picture in Picture is not: the page can
+    /// go to it from under the Library.)
+    var needsThePageInView: Bool {
+        switch self {
+        case .reload, .hardReload, .stopLoading, .goBack, .goForward, .copyLink, .copyLinkMarkdown, .find, .print, .zoomIn, .zoomOut, .resetZoom,
+             .muteTab, .viewSource, .toggleDeveloperTools, .openInDefaultBrowser, .showSiteControls, .showBoosts,
+             .togglePin, .toggleFavorite, .addSplit, .closeSplitPane, .separateSplit, .resetTab,
+             .editTheme, .deleteSpace, .clearUnpinned, .resetPinned, .newFolder, .collapseFolders, .expandFolders:
+            return true
+        default:
+            return false
+        }
+    }
 
     var title: String {
         switch self {
@@ -45,6 +60,8 @@ enum BrowserCommand: String, CaseIterable {
         case .muteTab: return "Mute / Unmute Tab"
         case .pictureInPicture: return "Picture in Picture"
         case .viewSource: return "View Page Source"
+        case .showLibrary: return "Open Library"
+        case .showResources: return "Show System Resources"
         case .showArchive: return "Open Archive"
         case .showHistory: return "Open History"
         case .showDownloads: return "Open Downloads"
@@ -91,6 +108,8 @@ enum BrowserCommand: String, CaseIterable {
         case .viewSource, .toggleDeveloperTools: return "chevron.left.forwardslash.chevron.right"
         case .showHistory: return "clock"
         case .showDownloads: return "arrow.down.circle"
+        case .showLibrary: return "books.vertical"
+        case .showResources: return "gauge.with.dots.needle.67percent"
         case .showBoosts: return "bolt.fill"
         case .showSettings: return "gearshape"
         case .showShortcuts: return "keyboard"
@@ -116,6 +135,8 @@ enum BrowserCommand: String, CaseIterable {
         case .showBoosts: return ["boost", "zap", "css", "dark mode", "custom"]
         case .showSettings: return ["preferences", "options"]
         case .showArchive: return ["closed tabs", "old tabs"]
+        case .showLibrary: return ["archive", "history", "downloads", "utilities"]
+        case .showResources: return ["memory", "cpu", "activity monitor", "task manager", "ram", "processor", "slow", "tabs using"]
         case .newIncognito: return ["private"]
         case .newProbe: return ["little arc", "mini window", "little"]
         case .importFromArc: return ["import", "chrome", "safari", "firefox", "bookmarks", "history", "migrate"]
@@ -169,6 +190,7 @@ enum BrowserCommand: String, CaseIterable {
 
 extension BrowserStore {
     func perform(_ command: BrowserCommand, in window: WindowState) {
+        if command.needsThePageInView { leaveLibrary(in: window) }
         let rt = currentRuntime(in: window)
         let curID = currentTabItemID(in: window)
         switch command {
@@ -177,7 +199,9 @@ extension BrowserStore {
         case .deleteSpace: deleteSpace(window.focusedSpaceID, in: window)
         case .nextSpace: cycleSpace(1, in: window)
         case .previousSpace: cycleSpace(-1, in: window)
-        case .toggleSidebar: window.sidebarVisible.toggle(); window.sidebarPeeking = false; saveSession()
+        case .toggleSidebar:
+            if window.sidebarVisible { leaveLibrary(in: window) }   // the rail goes with the sidebar (see `WindowState.sidebarVisible`)
+            window.sidebarVisible.toggle(); window.sidebarPeeking = false; saveSession()
         case .clearUnpinned: clearUnpinned(in: window)
         case .reopenClosedTab: reopenLastClosed(in: window)
         case .togglePin: if let id = window.selectedItemID { togglePin(id, in: window) }
@@ -206,9 +230,11 @@ extension BrowserStore {
         case .muteTab: if let id = curID { toggleMute(id, in: window) }
         case .pictureInPicture: rt?.enterPictureInPicture()
         case .viewSource: if let url = currentURL(in: window) { openViewSource(of: url, rt: rt, in: window) }
-        case .showArchive: window.overlay = .archive
-        case .showHistory: window.overlay = .history
-        case .showDownloads: window.overlay = .downloads
+        case .showLibrary: show(.library, in: window)
+        case .showResources: openLibrary(.resources, in: window)
+        case .showArchive: openLibrary(.archive, in: window)
+        case .showHistory: openLibrary(.history, in: window)
+        case .showDownloads: openLibrary(.downloads, in: window)
         case .showBoosts: window.overlay = .boosts
         case .showSettings: onShowSettings?()
         case .manageExtensions: onShowSettingsTab?(.extensions)

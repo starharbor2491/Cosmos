@@ -2,7 +2,8 @@ import SwiftUI
 import AppKit
 import CosmosCore
 
-/// The vertical sidebar: toolbar, URL pill, Favorites, the space's Pinned and Today sections and the spaces bar.
+/// The vertical sidebar: toolbar, URL pill, a strip of pages that slides (the Library, then each space with its
+/// Favorites, Pinned and Today sections) and the spaces bar.
 struct SidebarView: View {
     let store: BrowserStore
     let window: WindowState
@@ -11,60 +12,83 @@ struct SidebarView: View {
     @Local private var renaming: UUID?
     @Local private var indicator: DropIndicator?
     @Local private var hoveringToday = false
-    @Namespace private var selectionNamespace
-    @Local private var swipe = SwipeTracker()
-    /// How far the list is pulled along by a two-finger swipe (see `swipeMoved`).
-    @Local private var swipeOffset: CGFloat = 0
+    /// Which pages are on screen and where while the strip slides (see `SidebarSlide`), and the fingers that move it.
+    @Local var slide: SidebarSlide
+    @Local var swipe = SwipeTracker()
 
-    private var space: Space { store.workspace.space(window.focusedSpaceID) ?? store.workspace.spaces[0] }
+    init(store: BrowserStore, window: WindowState) {
+        self.store = store
+        self.window = window
+        _slide = Local(wrappedValue: SidebarSlide(shown: window.sidebarPage))
+    }
+
+    var pages: [SidebarPage] { SidebarPage.all(spaces: store.workspace.spaces.map(\.id)) }
 
     var body: some View {
         VStack(spacing: 0) {
-            SidebarToolbar(store: store, window: window)
-            URLPill(store: store, window: window)
-                .padding(.horizontal, Metrics.Sidebar.gutter)
-                .padding(.bottom, Metrics.Space.s)
-            ExtensionButtons(store: store, window: window)
-
-            ScrollView(.vertical, showsIndicators: false) {
-                // Lazy: a space with thousands of tabs builds the rows on screen, not all of them.
-                LazyVStack(alignment: .leading, spacing: Metrics.Space.s) {
-                    FavoritesGrid(store: store, window: window, indicator: $indicator)
-                    SpaceHeader(store: store, window: window, space: space)
-                    PinnedSection(store: store, window: window, space: space, renaming: $renaming, indicator: $indicator)
-                    TodaySection(store: store, window: window, space: space, renaming: $renaming, indicator: $indicator)
+            // The Library is a rail of its own: the address and the page's controls go quiet above it (and stay in place,
+            // so nothing below them moves).
+            VStack(spacing: 0) {
+                SidebarToolbar(store: store, window: window, compact: window.libraryOpen)
+                Group {
+                    URLPill(store: store, window: window)
+                        .padding(.horizontal, Metrics.Sidebar.gutter)
+                        .padding(.bottom, Metrics.Space.s)
+                    ExtensionButtons(store: store, window: window)
                 }
-                .padding(.horizontal, Metrics.Sidebar.gutter)
-                .padding(.bottom, Metrics.Space.m)
+                .opacity(window.libraryOpen ? 0 : 1)
+                .allowsHitTesting(!window.libraryOpen)
+                .disabled(window.libraryOpen)
+                .accessibilityHidden(window.libraryOpen)
             }
-            .offset(x: swipeOffset)
-            .opacity(1 - Double(min(abs(swipeOffset) / 240, 0.4)))
+            .animation(Motion.slide, value: window.libraryOpen)
+
+            SidebarPager(slide: slide, width: window.sidebarWidth) { page in
+                switch page {
+                case .library:
+                    LibraryPage(store: store, window: window)
+                case .space(let id):
+                    if let space = store.workspace.space(id) {
+                        SpacePage(store: store, window: window, space: space, renaming: $renaming, indicator: $indicator)
+                    }
+                }
+            }
             SpacesBar(store: store, window: window)
         }
         .frame(width: window.sidebarWidth)
         .environment(\.palette, palette)
-        .environment(\.selectionNamespace, selectionNamespace)
-        .animation(Motion.standard, value: window.selectedItemID)
         .background(SwipeCatcher(onMove: swipeMoved, onEnd: swipeEnded))
+        .onChange(of: window.sidebarPage) { _, page in slideTo(page) }
+        .onChange(of: pages) { _, pages in slide.repair(pages: pages, current: window.sidebarPage) }
         .recordsSpatialFrames()
     }
+}
 
-    // MARK: Swiping between spaces
+/// One space's page of the sidebar: its Favorites, name, Pinned tabs and Today.
+struct SpacePage: View {
+    let store: BrowserStore
+    let window: WindowState
+    let space: Space
+    @Binding var renaming: UUID?
+    @Binding var indicator: DropIndicator?
+    /// The highlight under the selected tab glides between rows of this page; each page has its own so two pages that
+    /// are on screen together while the strip slides never share one.
+    @Namespace private var selectionNamespace
 
-    /// The list follows two fingers across the sidebar with growing resistance, ticks under the finger when the swipe
-    /// has gone far enough to count (and again if you pull back), and gives way at the first and last space.
-    private func swipeMoved(_ delta: CGFloat) {
-        let index = store.workspace.spaceIndex(window.focusedSpaceID) ?? 0
-        swipe.canGoPrevious = index > 0
-        swipe.canGoNext = index < store.workspace.spaces.count - 1
-        if swipe.update(delta: delta) != .none { store.haptics.alignment() }
-        swipeOffset = swipe.offset
-    }
-
-    private func swipeEnded() {
-        let direction = swipe.finish()
-        withAnimation(Motion.spring) { swipeOffset = 0 }
-        if let direction { store.cycleSpace(direction, in: window) }
+    var body: some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            // Lazy: a space with thousands of tabs builds the rows on screen, not all of them.
+            LazyVStack(alignment: .leading, spacing: Metrics.Space.s) {
+                FavoritesGrid(store: store, window: window, indicator: $indicator)
+                SpaceHeader(store: store, window: window, space: space)
+                PinnedSection(store: store, window: window, space: space, renaming: $renaming, indicator: $indicator)
+                TodaySection(store: store, window: window, space: space, renaming: $renaming, indicator: $indicator)
+            }
+            .padding(.horizontal, Metrics.Sidebar.gutter)
+            .padding(.bottom, Metrics.Space.m)
+        }
+        .environment(\.selectionNamespace, selectionNamespace)
+        .animation(Motion.standard, value: window.selectedItemID)
     }
 }
 
@@ -73,6 +97,8 @@ struct SidebarView: View {
 struct ToolbarButton: View {
     let symbol: String
     var size: CGFloat = 13.5
+    /// The side of the square the button is pressed in.
+    var box: CGFloat = Metrics.Height.button
     var enabled = true
     /// A turn the icon makes when something happens (reload).
     var rotation: Double = 0
@@ -90,7 +116,7 @@ struct ToolbarButton: View {
                 .symbolSwap()
                 .symbolBounce(value: bounce)
                 .rotationEffect(.degrees(rotation))
-                .frame(width: Metrics.Height.button, height: Metrics.Height.button)
+                .frame(width: box, height: box)
                 .background(RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous).fill(hover && enabled ? palette.hover : .clear))
                 .contentShape(Rectangle())
                 .animation(Motion.quick, value: hover)
@@ -107,6 +133,8 @@ struct ToolbarButton: View {
 struct SidebarToolbar: View {
     let store: BrowserStore
     let window: WindowState
+    /// Only the button that hides the sidebar is left (over the Library).
+    var compact = false
     @Local private var reloadTurns = 0.0
 
     var body: some View {
@@ -114,17 +142,23 @@ struct SidebarToolbar: View {
         HStack(spacing: 0) {
             // Leave room for the traffic lights.
             Color.clear.frame(width: 74, height: 1)
-            ToolbarButton(symbol: "sidebar.left", help: "Hide Sidebar (⌘S)") { window.sidebarVisible = false; window.sidebarPeeking = false }
+            ToolbarButton(symbol: "sidebar.left", help: "Hide Sidebar (⌘S)") { store.leaveLibrary(in: window); window.sidebarVisible = false; window.sidebarPeeking = false }
             Spacer(minLength: 0)
-            ToolbarButton(symbol: "chevron.left", enabled: rt?.canGoBack ?? false, help: "Back (⌘[)") { rt?.goBack() }
-            ToolbarButton(symbol: "chevron.right", enabled: rt?.canGoForward ?? false, help: "Forward (⌘])") { rt?.goForward() }
-            ToolbarButton(symbol: (rt?.isLoading ?? false) ? "xmark" : "arrow.clockwise", enabled: rt != nil, rotation: reloadTurns,
-                          help: (rt?.isLoading ?? false) ? "Stop (⌘.)" : "Reload (⌘R)") {
-                if rt?.isLoading == true { rt?.stop() } else {
-                    withAnimation(Motion.spring) { reloadTurns += 360 }
-                    rt?.reload()
+            HStack(spacing: 0) {
+                ToolbarButton(symbol: "chevron.left", enabled: rt?.canGoBack ?? false, help: "Back (⌘[)") { rt?.goBack() }
+                ToolbarButton(symbol: "chevron.right", enabled: rt?.canGoForward ?? false, help: "Forward (⌘])") { rt?.goForward() }
+                ToolbarButton(symbol: (rt?.isLoading ?? false) ? "xmark" : "arrow.clockwise", enabled: rt != nil, rotation: reloadTurns,
+                              help: (rt?.isLoading ?? false) ? "Stop (⌘.)" : "Reload (⌘R)") {
+                    if rt?.isLoading == true { rt?.stop() } else {
+                        withAnimation(Motion.spring) { reloadTurns += 360 }
+                        rt?.reload()
+                    }
                 }
             }
+            .opacity(compact ? 0 : 1)
+            .allowsHitTesting(!compact)
+            .disabled(compact)
+            .accessibilityHidden(compact)
         }
         .padding(.trailing, Metrics.Sidebar.gutter)
         .frame(height: Metrics.Height.toolbar)
@@ -187,12 +221,9 @@ struct URLPill: View {
             .frame(height: Metrics.Height.field)
             .background(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).fill(hover ? palette.hoverStrong : palette.hover))
             .overlay(alignment: .bottom) {
-                if let rt, rt.isLoading {
-                    GeometryReader { g in
-                        Capsule().fill(palette.accent).frame(width: g.size.width * max(0.06, rt.progress), height: 2)
-                            .animation(Motion.standard, value: rt.progress)
-                    }
-                    .frame(height: 2).padding(.horizontal, 8).clipped()
+                if let rt {
+                    LoadingBar(isLoading: rt.isLoading, progress: rt.progress).id(rt.itemID)
+                        .padding(.horizontal, 8).padding(.bottom, 1)
                 }
             }
             .overlay(RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous).strokeBorder(palette.stroke, lineWidth: 0.5))
