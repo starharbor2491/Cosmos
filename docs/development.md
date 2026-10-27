@@ -108,6 +108,7 @@ The script is a JSON array of steps; the log goes to `script.json.log`. A snapsh
 | `dropdown` `scrollSettings` | open the nth dropdown in Settings (`index`, top to bottom; -1 closes it); scroll the Settings pane `y` points, so a snapshot can show the part below the fold |
 | `setTheme` | give the current space one of the preset themes by name, to check a screen on light and dark skies |
 | `menuBar` | drive the menu-bar browser: `action` is `enable`, `disable`, `configure` (`home`, `layout`, `remember`), `open`, `close`, `pin`, `go` (`text`) or `state`; snapshot it with `"window": "menubar"` |
+| `click` | a left click at `x`,`y` from the window's top-left, sent through the application the way a real click arrives (event monitors and SwiftUI's gestures see it); `double` makes it a double click |
 | `rightClick` `radial` | right-click the page at `x`,`y` as a real person would (with `flags`, `hold`); then `dump`, `hover`, `choose` or `back` on the radial menu that opened |
 | `extensions` `extensionAction` | add every extension found on this Mac, or click the nth extension button |
 | `eval` | run JavaScript in the current page and log the result |

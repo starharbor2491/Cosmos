@@ -242,6 +242,13 @@ struct TabRow: View {
 
     private var splitBorder: CGFloat { inSplit ? Metrics.Space.hair : 0 }
 
+    /// Whether the click that ended this tap was the second of two. The event the application is handling is the last one
+    /// it got, which is not always a mouse event (and a click count asked of any other raises an exception).
+    static func isSecondClick(_ event: NSEvent?) -> Bool {
+        guard let event, event.type == .leftMouseUp || event.type == .leftMouseDown else { return false }
+        return event.clickCount == 2
+    }
+
     var body: some View {
         let _ = store.runtimeRevision
         let rt = store.runtime(forItem: item.id, in: window)
@@ -284,7 +291,7 @@ struct TabRow: View {
         // is coming. The click count says whether this was the second.
         .onTapGesture {
             store.select(item.id, in: window)
-            if pinned, NSApp.currentEvent?.clickCount == 2 { renaming = item.id }
+            if pinned, Self.isSecondClick(NSApp.currentEvent) { renaming = item.id }
         }
         .onHover { hover = $0 }
         .help(item.tab?.url?.absoluteString ?? "")

@@ -38,7 +38,8 @@ for i in range(steps):
     k = r.random()
     if k < 0.18: s.append({"do": "open", "url": url()})
     elif k < 0.24: s.append({"do": "navigate", "url": url()})
-    elif k < 0.58: s.append({"do": "chord", "combo": r.choice(chords)})
+    elif k < 0.50: s.append({"do": "chord", "combo": r.choice(chords)})
+    elif k < 0.58: s.append({"do": "click", "x": r.randrange(0, 1500), "y": r.randrange(0, 1000), "double": r.random() < 0.15})   # a person's click, anywhere in the window
     elif k < 0.66: s.append({"do": "overlay", "name": r.choice(overlays)})
     elif k < 0.72: s.append({"do": "type", "text": r.choice(words)})
     elif k < 0.78: s.append({"do": "key", "name": r.choice(keys)})
