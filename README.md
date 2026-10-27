@@ -30,6 +30,8 @@ git clone <this repository> && cd Cosmos
 scripts/build-app.sh --install     # builds a release app and copies it to ~/Applications
 ```
 
+**Prebuilt:** the [Releases](../../releases) page has `Cosmos-1.0.0-macos-arm64.zip` (Apple silicon, macOS 14 or later). Unzip it and move `Cosmos.app` to Applications; the first launch needs the right-click Open described below (or `xattr -dr com.apple.quarantine Cosmos.app`).
+
 `scripts/build-app.sh` alone leaves `build/Cosmos.app` in the repository. The app is signed ad hoc and is not notarized, so the first time you open it, **right-click it and choose Open**, then confirm.
 
 On first launch Cosmos asks whether to import from Arc. You can also do it later from **Cosmos ▸ Import from Arc or Another Browser…**. Arc can stay open; Cosmos only reads its files. See [docs/importing-from-arc.md](docs/importing-from-arc.md) and [docs/importing-from-other-browsers.md](docs/importing-from-other-browsers.md).
