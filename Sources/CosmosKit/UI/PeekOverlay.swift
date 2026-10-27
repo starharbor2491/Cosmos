@@ -90,7 +90,7 @@ struct RuntimeWebHost: NSViewRepresentable {
 }
 
 /// Esc anywhere in the window closes the Peek (key events are otherwise swallowed by the page).
-private struct PeekKeyCatcher: NSViewRepresentable {
+struct PeekKeyCatcher: NSViewRepresentable {
     let onEscape: () -> Void
 
     func makeNSView(context: Context) -> CatcherView {
@@ -103,6 +103,8 @@ private struct PeekKeyCatcher: NSViewRepresentable {
     final class CatcherView: NSView {
         var onEscape: (() -> Void)?
         private var monitor: Any?
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()

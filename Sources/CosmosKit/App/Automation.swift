@@ -116,6 +116,22 @@ final class Automation {
                     if type == .rightMouseDown || type == .leftMouseDown { await sleep(step["hold"] as? Double ?? 0.05) }
                 }
             } else { note("  rightClick: no page") }
+        case "click":
+            // A left click at (x, y) from the top-left of the window, sent through the application the way a real click arrives
+            // (so event monitors see it too), as a person's click would be. "double" makes it a double click.
+            if let window = controller?.window, let content = window.contentView {
+                let x = step["x"] as? Double ?? 0, y = step["y"] as? Double ?? 0
+                let point = content.convert(NSPoint(x: x, y: content.isFlipped ? y : content.bounds.height - y), to: nil)
+                let count = step["double"] as? Bool == true ? 2 : 1
+                if !window.isKeyWindow { NSApp.activate(ignoringOtherApps: true); window.makeKeyAndOrderFront(nil); await sleep(0.3) }
+                for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                    if let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                      windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: count, pressure: type == .leftMouseDown ? 1 : 0) {
+                        NSApp.sendEvent(event)
+                    }
+                    await sleep(0.05)
+                }
+            } else { note("  click: no window") }
         case "radial":
             // Looks at or drives the open radial menu: "dump" lists the ring, "hover" and "choose" take a slice number.
             guard let session = state?.radial else { note("  radial: none open"); return }

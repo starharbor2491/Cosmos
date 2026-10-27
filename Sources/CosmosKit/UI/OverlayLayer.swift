@@ -94,7 +94,7 @@ private struct Scrim: View {
 }
 
 /// Closes the current panel on Esc even when focus is in a web view.
-private struct OverlayEscapeCatcher: NSViewRepresentable {
+struct OverlayEscapeCatcher: NSViewRepresentable {
     let active: Bool
     let onEscape: () -> Void
 
@@ -105,6 +105,9 @@ private struct OverlayEscapeCatcher: NSViewRepresentable {
         var onEscape: (() -> Void)?
         var active = false
         private var monitor: Any?
+
+        /// It sits behind the whole window: it must not take the clicks meant for what is drawn over it.
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
