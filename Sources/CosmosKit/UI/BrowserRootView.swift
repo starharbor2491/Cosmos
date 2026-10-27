@@ -66,7 +66,10 @@ struct ContentArea: View {
         VStack(spacing: 0) {
             if !window.sidebarVisible { CompactTopBar(store: store, window: window) }
             ZStack {
-                if panes.isEmpty {
+                if window.libraryOpen {
+                    // The Library takes the page's place; the tab's page stays loaded behind it, out of the hierarchy.
+                    LibraryView(store: store, window: window).transition(.opacity)
+                } else if panes.isEmpty {
                     EmptyStateView(store: store, window: window)
                 } else {
                     WebContentRepresentable(
@@ -81,11 +84,12 @@ struct ContentArea: View {
                     )
                 }
 
-                if window.overlay == .find { FindBar(store: store, window: window).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing).padding(14) }
+                if window.overlay == .find, !window.libraryOpen { FindBar(store: store, window: window).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing).padding(14) }
                 if let peek = window.peek { PeekOverlay(store: store, window: window, peek: peek) }
                 StatusBubble(store: store, window: window)
                 ToastView(window: window)
             }
+            .animation(Motion.slide, value: window.libraryOpen)
             .padding(EdgeInsets(top: window.sidebarVisible ? 8 : 0, leading: window.sidebarVisible ? 0 : 8, bottom: 8, trailing: 8))
             .background(alignment: .top) { if window.sidebarVisible { WindowDragArea().frame(height: 8) } }
         }
@@ -132,7 +136,8 @@ struct StatusBubble: View {
     @Environment(\.palette) private var palette
 
     var body: some View {
-        let text = store.currentRuntime(in: window)?.hoverURL?.absoluteString
+        // A link under the pointer when the Library came up stays "hovered" (the page never hears the pointer leave).
+        let text = window.libraryOpen ? nil : store.currentRuntime(in: window)?.hoverURL?.absoluteString
         VStack {
             Spacer()
             HStack {

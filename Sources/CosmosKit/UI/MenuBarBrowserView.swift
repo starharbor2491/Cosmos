@@ -1,12 +1,16 @@
 import SwiftUI
 import CosmosCore
 
-/// The menu-bar browser: a row of controls over the page, on the current space's sky.
+/// The menu-bar browser: the page on the current space's sky, with a compact row of controls under it. The strips around
+/// the page and the gaps between the controls move the panel.
 struct MenuBarBrowserView: View {
     let store: BrowserStore
     let session: MenuBarSession
     @Local private var text = ""
     @FocusState private var typing: Bool
+
+    /// The strip of sky around the page, and what the panel can be taken by.
+    private static let edge = Metrics.Space.s
 
     var body: some View {
         let theme = store.currentTheme
@@ -14,12 +18,13 @@ struct MenuBarBrowserView: View {
         let shape = RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous)
         ZStack {
             ThemeBackground(theme: theme, animated: false)
+            PanelDragArea()
             VStack(spacing: 0) {
                 if let runtime = session.runtime {
-                    toolbar(runtime, palette)
                     RuntimeWebHost(runtime: runtime)
                         .clipShape(RoundedRectangle(cornerRadius: Metrics.Radius.page, style: .continuous))
-                        .padding(EdgeInsets(top: 0, leading: Metrics.Space.s, bottom: Metrics.Space.s, trailing: Metrics.Space.s))
+                        .padding(EdgeInsets(top: Self.edge, leading: Self.edge, bottom: 0, trailing: Self.edge))
+                    toolbar(runtime, palette)
                 }
             }
         }
@@ -33,34 +38,39 @@ struct MenuBarBrowserView: View {
 
     // MARK: Toolbar
 
+    /// Everything the panel has to press, in one slim row along the bottom, where the hand already is.
     private func toolbar(_ runtime: TabRuntime, _ palette: Palette) -> some View {
-        HStack(spacing: Metrics.Space.xs) {
-            ToolbarButton(symbol: "chevron.left", enabled: runtime.canGoBack, help: "Back") { runtime.goBack() }
-            ToolbarButton(symbol: "chevron.right", enabled: runtime.canGoForward, help: "Forward") { runtime.goForward() }
-            ToolbarButton(symbol: runtime.isLoading ? "xmark" : "arrow.clockwise", help: runtime.isLoading ? "Stop" : "Reload") {
+        let box = Metrics.Height.compactButton
+        return HStack(spacing: Metrics.Space.xs) {
+            ToolbarButton(symbol: "chevron.left", size: 12, box: box, enabled: runtime.canGoBack, help: "Back") { runtime.goBack() }
+            ToolbarButton(symbol: "chevron.right", size: 12, box: box, enabled: runtime.canGoForward, help: "Forward") { runtime.goForward() }
+            ToolbarButton(symbol: runtime.isLoading ? "xmark" : "arrow.clockwise", size: 12, box: box, help: runtime.isLoading ? "Stop" : "Reload") {
                 if runtime.isLoading { runtime.webView.stopLoading() } else { runtime.reload() }
             }
             address(runtime, palette)
-            ToolbarButton(symbol: session.isPinned ? "pin.fill" : "pin", help: session.isPinned ? "Let it close when you click away" : "Keep it open") {
+            ToolbarButton(symbol: session.isPinned ? "pin.fill" : "pin", size: 12, box: box, help: session.isPinned ? "Let it close when you click away" : "Keep it open") {
                 session.isPinned.toggle()
                 store.haptics.alignment()
             }
-            ToolbarButton(symbol: "arrow.up.right.square", enabled: runtime.url != nil, help: "Open in Cosmos") {
+            ToolbarButton(symbol: "arrow.up.right.square", size: 12, box: box, enabled: runtime.url != nil, help: "Open in Cosmos") {
                 if let url = runtime.url { session.onOpenInCosmos(url) }
             }
         }
         .padding(.horizontal, Metrics.Space.s)
-        .frame(height: Metrics.Height.bar)
-        .overlay(alignment: .bottom) { loadingLine(runtime, palette) }
+        .frame(height: Metrics.Height.compactBar)
+        .overlay(alignment: .top) {
+            LoadingBar(isLoading: runtime.isLoading, progress: runtime.progress).id(runtime.itemID)
+                .padding(.horizontal, Self.edge + Metrics.Space.xs)
+        }
     }
 
     private func address(_ runtime: TabRuntime, _ palette: Palette) -> some View {
         let shape = RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous)
         return HStack(spacing: Metrics.Space.s) {
-            FaviconView(store: store, url: runtime.url, size: 16)
+            FaviconView(store: store, url: runtime.url, size: 14)
             PromptTextField(text: $text, prompt: "Search or enter address")
                 .textFieldStyle(.plain)
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(palette.text)
                 .focused($typing)
                 .onSubmit { session.go(text); typing = false }
@@ -71,8 +81,8 @@ struct MenuBarBrowserView: View {
                     return .handled
                 }
         }
-        .padding(.horizontal, Metrics.Space.m)
-        .frame(height: Metrics.Control.height)
+        .padding(.horizontal, Metrics.Space.s)
+        .frame(height: Metrics.Height.compactField)
         .background(shape.fill(typing ? palette.hoverStrong : palette.hover))
         .overlay(shape.strokeBorder(typing ? palette.accent.opacity(0.8) : palette.stroke, lineWidth: typing ? 1.2 : 0.8))
         .animation(Motion.quick, value: typing)
@@ -86,19 +96,6 @@ struct MenuBarBrowserView: View {
     }
 
     private static func shown(_ url: URL?) -> String { URLInput.hostForDisplay(url) }
-
-    /// A thin line along the toolbar's lower edge while the page loads.
-    private func loadingLine(_ runtime: TabRuntime, _ palette: Palette) -> some View {
-        GeometryReader { bar in
-            Rectangle().fill(palette.accent)
-                .frame(width: bar.size.width * max(0.04, runtime.progress), height: 2)
-                .opacity(runtime.isLoading ? 1 : 0)
-                .animation(Motion.quick, value: runtime.progress)
-                .animation(Motion.standard, value: runtime.isLoading)
-        }
-        .frame(height: 2)
-        .allowsHitTesting(false)
-    }
 
     // MARK: Keys
 

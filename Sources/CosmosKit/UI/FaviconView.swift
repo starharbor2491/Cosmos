@@ -76,22 +76,29 @@ struct SiteGlyphTile: View {
     }
 }
 
-/// A small orbiting-dot loading indicator (the planet-and-moon spinner used in tab rows).
+/// The loading indicator: a faint ring with a bright arc that trails off behind its head, turning. Every spinner in the
+/// interface is this one. It turns under Reduce Motion too, only slower: a spinner that stands still reads as stuck.
 struct OrbitSpinner: View {
     var size: CGFloat = 14
     var color: Color = .white
 
     var body: some View {
-        TimelineView(.animation) { ctx in
-            let t = ctx.date.timeIntervalSinceReferenceDate
-            let angle = t.truncatingRemainder(dividingBy: 0.9) / 0.9 * 2 * .pi
+        let width = max(1.5, size * 0.13)
+        let period = Motion.reduced ? 2.4 : 0.85
+        TimelineView(.animation) { context in
+            let turn = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period) / period
             ZStack {
-                Circle().stroke(color.opacity(0.22), lineWidth: 1.2)
-                Circle().fill(color).frame(width: size * 0.26, height: size * 0.26)
-                    .offset(x: cos(angle) * size / 2, y: sin(angle) * size / 2)
+                Circle().stroke(color.opacity(0.2), lineWidth: width)
+                // The line's round ends reach a little past the arc, so the gradient is clear where the tail's end wraps round to.
+                Circle().trim(from: 0, to: 0.7)
+                    .stroke(AngularGradient(stops: [.init(color: color.opacity(0), location: 0), .init(color: color, location: 0.7), .init(color: color, location: 0.73),
+                                                .init(color: color.opacity(0), location: 0.74)], center: .center),
+                            style: StrokeStyle(lineWidth: width, lineCap: .round))
+                    .rotationEffect(.degrees(turn * 360))
             }
-            .frame(width: size - 2, height: size - 2)
+            .padding(width / 2)
             .frame(width: size, height: size)
         }
+        .accessibilityHidden(true)
     }
 }

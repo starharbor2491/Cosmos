@@ -22,12 +22,12 @@ urls = ["about:blank?%d", "data:text/html,<h1>hi</h1><script>document.title='t'<
         "mailto:a@b.c", "tel:123", "https://[::1]/", "about:blank?" + "x" * 20000, "data:text/html,<script>for(;;){}</script>",
         "data:text/html,<script>location.reload()</script>", "data:text/html,<script>window.open('about:blank?pop')</script>",
         "data:text/html,<title>" + "T" * 5000 + "</title>", "https://example.com/%00%ff", "http://0.0.0.0:99999/"]
-chords = ["cmd+t", "cmd+w", "cmd+shift+t", "cmd+d", "cmd+alt+d", "cmd+s", "ctrl+1", "ctrl+2", "ctrl+3", "cmd+alt+left", "cmd+alt+right",
+chords = ["cmd+t", "cmd+y", "cmd+shift+a", "cmd+shift+j", "cmd+w", "cmd+shift+t", "cmd+d", "cmd+alt+d", "cmd+s", "ctrl+1", "ctrl+2", "ctrl+3", "cmd+alt+left", "cmd+alt+right",
           "cmd+alt+up", "cmd+alt+down", "ctrl+tab", "cmd+l", "cmd+f", "cmd+y", "cmd+shift+a", "cmd+shift+j", "cmd+alt+b", "cmd+/", "cmd+r",
           "cmd+shift+r", "cmd+.", "cmd+[", "cmd+]", "cmd+shift+k", "ctrl+shift+=", "ctrl+shift+-", "cmd+1", "cmd+2", "cmd+alt+shift+n",
           "cmd+g", "cmd+shift+g", "cmd+=", "cmd+-", "cmd+0", "cmd+shift+c", "cmd+alt+shift+c", "cmd+,", "esc", "ctrl+shift+tab", "cmd+alt+p"]
 if os.environ.get("STRESS_WINDOWS"): chords += ["cmd+n", "cmd+shift+n", "cmd+alt+n", "cmd+shift+w"]
-overlays = ["commandBar", "archive", "history", "downloads", "boosts", "welcome", "shortcuts", "siteControls", "find", "theme", "none"]
+overlays = ["commandBar", "archive", "history", "downloads", "resources", "boosts", "welcome", "shortcuts", "siteControls", "find", "theme", "none"]
 words = ["", "a", "github", "new space", "mute", "1+1", "((((((", "%%%", "日本語", "🙂", "x" * 3000, "yt cats", "boosts", "javascript:alert(1)", "   "]
 keys = ["return", "tab", "escape", "down", "up", "backspace"]
 tabs = ["general", "sidebar", "blocking", "extensions", "privacy", "links", "radialMenu", "menuBar", "about"]
@@ -44,7 +44,11 @@ for i in range(steps):
     elif k < 0.72: s.append({"do": "type", "text": r.choice(words)})
     elif k < 0.78: s.append({"do": "key", "name": r.choice(keys)})
     elif k < 0.82: s.append({"do": "space", "index": r.randrange(1, 5)})
-    elif k < 0.84: s.append({"do": "sidebar", "visible": r.random() < 0.5})
+    elif k < 0.83: s.append({"do": "sidebar", "visible": r.random() < 0.5})
+    elif k < 0.84:
+        # the Library and the sidebar's two-finger swipe, in any state
+        if r.random() < 0.5: s.append({"do": "library", "section": r.choice(["downloads", "history", "archive", "resources"])} if r.random() < 0.7 else {"do": "library", "back": r.random() < 0.5})
+        else: s.append({"do": "swipe", "dx": r.choice([-300, -120, -30, 30, 120, 300]), "steps": r.randrange(1, 8), "pause": 0.01})
     elif k < 0.87: s.append({"do": "peek", "url": url()})
     elif k < 0.88: s.append({"do": "closePeek"})
     elif k < 0.91: s.append({"do": "split"})
@@ -60,8 +64,9 @@ for i in range(steps):
         s.append({"do": "radial", "dump": True, "hover": r.randrange(-1, 10)})
         s.append({"do": "radial", r.choice(["choose", "back"]): r.randrange(-1, 10) if r.random() < 0.5 else True})
     elif k < 0.992:
-        a = r.choice(["enable", "open", "open", "close", "pin", "go", "go", "configure", "configure", "disable", "state"])
+        a = r.choice(["enable", "open", "open", "close", "pin", "go", "go", "configure", "configure", "disable", "state", "drag"])
         step = {"do": "menuBar", "action": a}
+        if a == "drag": step.update({"x": r.randrange(0, 300), "y": r.randrange(0, 300), "dx": r.randrange(-3000, 3000), "dy": r.randrange(-3000, 3000)})
         if a == "go": step["text"] = r.choice(words + ["github.com", "http://127.0.0.1:1/", "data:text/html,<h1>x</h1>"])
         if a == "configure":
             step["layout"] = r.choice(["phone", "desktop", "bogus"]); step["home"] = r.choice(["", "example.com", "two words", "javascript:alert(1)", "x" * 3000])

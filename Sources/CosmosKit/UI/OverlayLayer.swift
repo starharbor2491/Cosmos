@@ -14,7 +14,7 @@ struct OverlayLayer: View {
                 .frame(width: geo.size.width, height: geo.size.height)
                 .environment(\.overlayBounds, geo.size)
         }
-        .background(OverlayEscapeCatcher(active: shouldCatchEscape) { window.overlay = nil })
+        .background(OverlayEscapeCatcher(active: shouldCatchEscape) { store.dismiss(in: window) })
     }
 
     private var panels: some View {
@@ -28,15 +28,6 @@ struct OverlayLayer: View {
                     Spacer()
                 }
                 .transition(Self.pop(from: .top))
-            case .archive:
-                Scrim(opacity: 0.30) { window.overlay = nil }
-                ArchivePanel(store: store, window: window).transition(Self.pop(from: .center))
-            case .history:
-                Scrim(opacity: 0.30) { window.overlay = nil }
-                HistoryPanel(store: store, window: window).transition(Self.pop(from: .center))
-            case .downloads:
-                Scrim(opacity: 0.18) { window.overlay = nil }
-                DownloadsPanel(store: store, window: window).transition(Self.pop(from: .bottomLeading))
             case .themeEditor(let id):
                 Scrim(opacity: 0.30) { window.overlay = nil }
                 ThemeEditorPanel(store: store, window: window, spaceID: id).transition(Self.pop(from: .center))
@@ -59,14 +50,15 @@ struct OverlayLayer: View {
     }
 
     /// A panel grows out of where it was asked for: the Command Bar from the top, Site Controls from the address pill,
-    /// Downloads from the button in the sidebar's footer, everything else from the middle.
+    /// everything else from the middle.
     private static func pop(from anchor: UnitPoint) -> AnyTransition {
         .scale(scale: 0.96, anchor: anchor).combined(with: .opacity)
     }
 
     private var shouldCatchEscape: Bool {
         switch window.overlay {
-        case .find, nil, .commandBar: return false   // find and the command bar handle Esc in their own fields
+        case .find, .commandBar: return false   // find and the command bar handle Esc in their own fields
+        case nil: return window.libraryOpen && window.peek == nil   // Esc leaves the Library (see `BrowserStore.dismiss`); a Peek closes first
         default: return true
         }
     }

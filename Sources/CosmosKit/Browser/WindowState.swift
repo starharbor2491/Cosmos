@@ -12,14 +12,36 @@ public enum CommandBarMode: Equatable {
 public enum Overlay: Equatable {
     case commandBar(CommandBarMode)
     case find
-    case archive
-    case history
-    case downloads
     case themeEditor(UUID)
     case boosts
     case welcome
     case siteControls
     case shortcuts
+}
+
+/// What the Library shows beside its rail.
+public enum LibrarySection: String, CaseIterable, Identifiable {
+    case downloads, history, archive, resources
+
+    public var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .downloads: "Downloads"
+        case .history: "History"
+        case .archive: "Archive"
+        case .resources: "Resources"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .downloads: "arrow.down.circle"
+        case .history: "clock"
+        case .archive: "archivebox"
+        case .resources: "gauge.with.dots.needle.67percent"
+        }
+    }
 }
 
 /// A link opened in Peek: a floating, disposable page over the current tab.
@@ -49,9 +71,16 @@ public final class WindowState: Identifiable {
     public let id = UUID()
     public let isIncognito: Bool
     public var focusedSpaceID: UUID { didSet { radial = nil } }
+    /// The sidebar shows the Library, the page left of the first space. The space above stays what the window is on (its
+    /// sky and its selected tab); only the page the sidebar slid to changes.
+    public var libraryOpen = false
+    /// The part of the Library that is showing while it is open (and the one it opens on next time).
+    public var librarySection = LibrarySection.downloads
     /// Selected sidebar item per space (a tab, or a split).
     public var selection: [UUID: UUID] = [:] { didSet { radial = nil } }
-    public var sidebarVisible = true
+    /// The Library's rail is in the sidebar: hiding the sidebar leaves the Library, so the bar over the page (Back, Forward,
+    /// Reload) never acts on a page that is covered.
+    public var sidebarVisible = true { didSet { if !sidebarVisible { libraryOpen = false } } }
     public var sidebarWidth: Double
     /// True while the hidden sidebar is slid over the page because the pointer touched the window edge.
     public var sidebarPeeking = false
@@ -85,6 +114,8 @@ public final class WindowState: Identifiable {
             ? min(max(sidebarWidth, Self.sidebarWidthRange.lowerBound), Self.sidebarWidthRange.upperBound) : 248
         self.isIncognito = isIncognito
     }
+
+    var sidebarPage: SidebarPage { libraryOpen ? .library : .space(focusedSpaceID) }
 
     public var selectedItemID: UUID? {
         get { selection[focusedSpaceID] }

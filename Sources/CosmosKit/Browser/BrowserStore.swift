@@ -24,6 +24,7 @@ public final class BrowserStore: TabHost {
     public let favicons: FaviconStore
     let haptics = Haptics()
     public let downloads = DownloadsManager()
+    let resources = ResourceMonitor()
     public let catalog = SearchCatalog.bundled
     public let isIncognito: Bool
     public let dataDirectory: URL?

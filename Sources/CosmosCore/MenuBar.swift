@@ -87,17 +87,48 @@ public enum MenuBarPlacement {
     public static let gap: CGFloat = 6
     /// The least the panel keeps clear of the screen's edges.
     public static let margin: CGFloat = 8
+    /// How far below the top of the visible screen an icon can be and still be in the menu bar.
+    static let iconSlack: CGFloat = 8
 
     /// Where the panel goes, in screen coordinates (y up): hanging centred under the icon, pushed back inside the screen
     /// at either side, and made shorter or narrower when the screen is too small for it. Without an icon it hangs from the
     /// top-right corner. `visible` is the screen without the menu bar and Dock.
     public static func frame(anchor: CGRect?, size: CGSize, visible: CGRect, gap: CGFloat = gap, margin: CGFloat = margin) -> CGRect {
-        let icon = anchor ?? CGRect(x: visible.maxX - 44, y: visible.maxY, width: 28, height: 0)
+        // An icon the menu bar has not laid out yet sits at a corner of the screen, not in the bar: no anchor at all.
+        // (A button sits a point or two inside its window, and a menu bar that hides leaves the visible frame at the screen's top.)
+        let icon = anchor.flatMap { $0.maxY >= visible.maxY - iconSlack ? $0 : nil } ?? CGRect(x: visible.maxX - 44, y: visible.maxY, width: 28, height: 0)
         let width = max(0, min(size.width, visible.width - 2 * margin))
         let top = min(icon.minY - gap, visible.maxY)
         let height = max(0, min(size.height, top - visible.minY - margin))
         let low = visible.minX + margin, high = visible.maxX - margin - width
         let x = min(max(icon.midX - width / 2, low), max(low, high))
+        return CGRect(x: x, y: top - height, width: width, height: height)
+    }
+}
+
+extension MenuBarPlacement {
+    /// How much of the panel stays on the screen when it is dragged toward an edge, so there is always something to grab.
+    public static let grip: CGFloat = 48
+
+    /// `frame` after a drag: not above the bottom of the menu bar, and never so far to a side or the bottom that less than
+    /// `grip` of it is left to take hold of. The size is not touched.
+    public static func dragged(_ frame: CGRect, visible: CGRect) -> CGRect {
+        var out = frame
+        out.origin.y = min(out.origin.y, visible.maxY - out.height)
+        out.origin.y = max(out.origin.y, visible.minY + grip - out.height)
+        out.origin.x = min(out.origin.x, visible.maxX - grip)
+        out.origin.x = max(out.origin.x, visible.minX + grip - out.width)
+        return out
+    }
+
+    /// The panel at a new size (another layout) where the user put it: its top-left corner stays, and it is pulled back in
+    /// if the new size would run it off the screen.
+    public static func resized(_ current: CGRect, to size: CGSize, visible: CGRect, margin: CGFloat = margin) -> CGRect {
+        let width = max(0, min(size.width, visible.width - 2 * margin))
+        let x = min(max(current.minX, visible.minX + margin), max(visible.minX + margin, visible.maxX - margin - width))
+        // The top stays put; a panel that is taller than what is left below it is made shorter, not moved up.
+        let top = min(current.maxY, visible.maxY)
+        let height = max(0, min(size.height, top - visible.minY - margin))
         return CGRect(x: x, y: top - height, width: width, height: height)
     }
 }

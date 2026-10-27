@@ -9,7 +9,7 @@ struct SwipeTracker {
 
     /// How far the fingers must travel before lifting them counts.
     var commitDistance: CGFloat = 70
-    /// The most the content can be pulled along when the swipe is allowed.
+    /// The most the content can be pulled along when the swipe is allowed: one page.
     var maxTravel: CGFloat = 96
     var canGoPrevious = true
     var canGoNext = true
@@ -19,10 +19,10 @@ struct SwipeTracker {
 
     private var allowed: Bool { travelled < 0 ? canGoNext : canGoPrevious }
 
-    /// Where the content should sit right now: it follows the fingers with growing resistance, and barely moves when
-    /// there is no space in that direction.
+    /// Where the content should sit right now: when there is a page in that direction it comes in under the fingers,
+    /// one to one; when there is not, the content barely moves.
     var offset: CGFloat {
-        allowed ? Self.band(travelled, limit: maxTravel, stiffness: 0.9) : Self.band(travelled, limit: 28, stiffness: 0.55)
+        allowed ? max(-maxTravel, min(maxTravel, travelled)) : Self.band(travelled, limit: 28, stiffness: 0.55)
     }
 
     /// Adds one scroll event. The result says when to tick under the finger.

@@ -58,6 +58,20 @@ extension BrowserStore {
         }
     }
 
+    /// Puts every tab nobody is looking at to sleep; one that is playing sound, loading or recording stays awake. Returns
+    /// how many went.
+    @discardableResult
+    func sleepBackgroundTabs() -> Int {
+        let keep = visibleTabIDs
+        var slept = Set<UUID>()
+        for (key, rt) in runtimes where !keep.contains(key.item) {
+            guard !rt.isAudible, !rt.isLoading, !rt.isCapturing, !BehaviorConfig.shared.keepsAlive(rt.url) else { continue }
+            discardRuntime(forItem: key.item)
+            slept.insert(key.item)
+        }
+        return slept.count
+    }
+
     // MARK: Selection
 
     func currentTabItemID(in window: WindowState) -> UUID? {
@@ -90,6 +104,7 @@ extension BrowserStore {
 
         let previousTabs = window.selectedItemID.map { workspace.tabs(under: $0).map(\.id) } ?? []
         let previousRuntime = extensionCenter == nil ? nil : currentRuntime(in: window)
+        window.libraryOpen = false
         window.selectedItemID = target
         window.noteSelected(target)
         if case .commandBar = window.overlay { window.overlay = nil }
@@ -141,6 +156,7 @@ extension BrowserStore {
 
     /// Navigates the current tab, or opens a new one when nothing is selected.
     func navigateCurrent(to url: URL, in window: WindowState) {
+        leaveLibrary(in: window)
         if let rt = currentRuntime(in: window) {
             rt.load(url)
         } else if let id = currentTabItemID(in: window), let rt = ensureRuntime(forItem: id, in: window, load: false) {
@@ -162,6 +178,8 @@ extension BrowserStore {
     // MARK: Closing & archiving
 
     func closeSelected(in window: WindowState) {
+        // ⌘W with the Library over the page closes the Library, not a tab that cannot be seen.
+        if window.libraryOpen { leaveLibrary(in: window); return }
         guard let id = currentTabItemID(in: window) else {
             if window.selectedItemID == nil { closeWindowRequested(window) }
             return
@@ -389,8 +407,47 @@ extension BrowserStore {
 
     // MARK: Spaces
 
+    /// Slides the sidebar to a page: the Library or a space.
+    func show(_ page: SidebarPage, in window: WindowState) {
+        switch page {
+        case .library:
+            // Its sections are chosen on the sidebar's rail, so a hidden sidebar comes back with it.
+            if !window.sidebarVisible { window.sidebarVisible = true; window.sidebarPeeking = false }
+            guard !window.libraryOpen else { return }
+            // The page under it is not being looked at: a find bar over it would be searching nothing anyone can see, and a
+            // playing video goes to Picture in Picture the way it does when you switch to another tab.
+            if window.overlay == .find { window.overlay = nil }
+            if settings.autoPictureInPicture, let rt = currentRuntime(in: window), rt.hasPlayingVideo, !BehaviorConfig.shared.disallowsAutoPiP(rt.url) {
+                rt.enterPictureInPicture()
+            }
+            window.libraryOpen = true
+            haptics.levelChange()
+        case .space(let id): switchSpace(to: id, in: window)
+        }
+    }
+
+    /// Brings the page back if the Library is over it. For what is about the page: it should not happen out of sight.
+    func leaveLibrary(in window: WindowState) {
+        if window.libraryOpen { show(.space(window.focusedSpaceID), in: window) }
+    }
+
+    /// Esc: closes the panel that is up, or with none leaves the Library for the space the sidebar came from.
+    func dismiss(in window: WindowState) {
+        if window.overlay != nil { window.overlay = nil } else if window.libraryOpen { show(.space(window.focusedSpaceID), in: window) }
+    }
+
+    /// Slides to the Library and shows one of its sections.
+    func openLibrary(_ section: LibrarySection, in window: WindowState) {
+        window.librarySection = section
+        window.overlay = nil
+        show(.library, in: window)
+    }
+
     func switchSpace(to id: UUID, in window: WindowState) {
-        guard id != window.focusedSpaceID, let target = workspace.spaceIndex(id) else { return }
+        guard let target = workspace.spaceIndex(id) else { return }
+        // Leaving the Library for the space it was opened from is a move too, though the focused space does not change.
+        if window.libraryOpen { window.libraryOpen = false; haptics.levelChange(); currentRuntime(in: window)?.exitPictureInPicture() }
+        guard id != window.focusedSpaceID else { return }
         let from = workspace.spaceIndex(window.focusedSpaceID) ?? 0
         window.spaceDirection = target >= from ? 1 : -1
         window.focusedSpaceID = id

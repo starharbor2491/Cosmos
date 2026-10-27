@@ -43,6 +43,10 @@ enum Metrics {
         static let bar: CGFloat = 44
         /// Square icon buttons.
         static let button: CGFloat = 28
+        /// The menu-bar panel's toolbar: a bar, its buttons and its address field, a size smaller than the window's.
+        static let compactBar: CGFloat = 36
+        static let compactButton: CGFloat = 24
+        static let compactField: CGFloat = 28
     }
 
     /// A panel's width or height on a window that may be smaller than the panel wants: the preferred size, or the

@@ -157,11 +157,81 @@ import Testing
         #expect(frame.minX >= visible.minX)
     }
 
+    /// A status item that the menu bar has not laid out yet reports a frame at the corner of the screen, not in the menu bar; a
+    /// panel hung under that would have no height at all.
+    @Test(arguments: [CGRect(x: 0, y: 0, width: 28, height: 25), CGRect(x: 1200, y: 40, width: 28, height: 25), CGRect.zero])
+    func anIconThatIsNotInTheMenuBarYetIsNotAnchoredTo(icon: CGRect) {
+        let frame = MenuBarPlacement.frame(anchor: icon, size: size, visible: visible)
+        #expect(frame == MenuBarPlacement.frame(anchor: nil, size: size, visible: visible))
+        #expect(frame.height == size.height)
+    }
+
+    /// With the menu bar hidden the visible frame reaches the top of the screen, and a button inset a point or two inside its
+    /// window sits just under it: that is still the menu bar.
+    @Test func anIconAFewPointsUnderTheTopOfAMenuBarThatHidesIsStillAnchoredTo() {
+        let icon = CGRect(x: 1200, y: 849, width: 28, height: 24)   // top at 873, the screen's top 875
+        let frame = MenuBarPlacement.frame(anchor: icon, size: size, visible: visible)
+        #expect(frame.midX == icon.midX)
+        #expect(frame.maxY == icon.minY - MenuBarPlacement.gap)
+    }
+
     @Test func aPanelWiderThanTheScreenIsNarrowedToFit() {
         let tiny = CGRect(x: 0, y: 0, width: 300, height: 700)
         let frame = MenuBarPlacement.frame(anchor: CGRect(x: 100, y: 700, width: 28, height: 25), size: size, visible: tiny)
         #expect(frame.width <= tiny.width - 2 * MenuBarPlacement.margin + 0.001)
         #expect(frame.minX >= tiny.minX)
+    }
+}
+
+/// The panel can be moved by its edges; it keeps where it was put when its size changes, and cannot be lost off screen.
+@Suite struct MenuBarDragTests {
+    private let visible = CGRect(x: 0, y: 0, width: 1440, height: 875)
+    private let panel = CGRect(x: 600, y: 100, width: 390, height: 680)
+
+    @Test func aPanelOnTheScreenIsLeftWhereItIsPut() {
+        #expect(MenuBarPlacement.dragged(panel, visible: visible) == panel)
+    }
+
+    @Test func thePanelCannotBeDraggedUnderTheMenuBar() {
+        let high = panel.offsetBy(dx: 0, dy: 400)
+        let frame = MenuBarPlacement.dragged(high, visible: visible)
+        #expect(frame.maxY == visible.maxY)
+        #expect(frame.minX == high.minX)
+    }
+
+    @Test func aPartOfItAlwaysStaysOnEachSideSoItCanBeDraggedBack() {
+        let grip = MenuBarPlacement.grip
+        let right = MenuBarPlacement.dragged(panel.offsetBy(dx: 2000, dy: 0), visible: visible)
+        #expect(right.minX == visible.maxX - grip)
+        let left = MenuBarPlacement.dragged(panel.offsetBy(dx: -3000, dy: 0), visible: visible)
+        #expect(left.maxX == visible.minX + grip)
+        let low = MenuBarPlacement.dragged(panel.offsetBy(dx: 0, dy: -2000), visible: visible)
+        #expect(low.maxY == visible.minY + grip)
+    }
+
+    @Test func draggingNeverChangesTheSize() {
+        for dx in [-5000.0, 0, 5000] {
+            for dy in [-5000.0, 0, 5000] {
+                #expect(MenuBarPlacement.dragged(panel.offsetBy(dx: dx, dy: dy), visible: visible).size == panel.size)
+            }
+        }
+    }
+
+    @Test func aNewSizeKeepsTheTopLeftCornerWhereThePanelWas() {
+        let frame = MenuBarPlacement.resized(panel, to: CGSize(width: 520, height: 600), visible: visible)
+        #expect(frame.minX == panel.minX)
+        #expect(frame.maxY == panel.maxY)
+        #expect(frame.size == CGSize(width: 520, height: 600))
+    }
+
+    @Test func aNewSizeThatWouldRunOffTheScreenIsPulledBackIn() {
+        let nearRight = CGRect(x: 1300, y: 100, width: 130, height: 680)
+        let frame = MenuBarPlacement.resized(nearRight, to: CGSize(width: 520, height: 680), visible: visible)
+        #expect(frame.maxX == visible.maxX - MenuBarPlacement.margin)
+        let nearBottom = CGRect(x: 600, y: 20, width: 390, height: 300)
+        let taller = MenuBarPlacement.resized(nearBottom, to: CGSize(width: 390, height: 680), visible: visible)
+        #expect(taller.maxY == nearBottom.maxY, "the top stays where it was")
+        #expect(taller.minY == visible.minY + MenuBarPlacement.margin, "and the panel is only as tall as the screen leaves room for")
     }
 }
 
