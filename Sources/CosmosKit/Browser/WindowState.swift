@@ -105,10 +105,18 @@ public final class WindowState: Identifiable {
     public var sidebarPeeking = false
     public var overlay: Overlay? { didSet { radial = nil } }
     public var peek: PeekSession? { didSet { radial = nil } }
+    /// An extension's side panel, beside the page.
+    public var sidePanel: SidePanel?
     /// The radial menu that is open over the page, if any. It belongs to the page it was opened over, so a change of tab,
     /// space, overlay or Peek puts it away.
     public var radial: RadialSession?
     public var findQuery = ""
+
+    public struct SidePanel {
+        public let extensionID: String
+        public let title: String
+        public let runtime: TabRuntime
+    }
     public var findHadMatch = true
     public var toast: Toast?
     /// Most recently selected items, newest first (⌃Tab order).

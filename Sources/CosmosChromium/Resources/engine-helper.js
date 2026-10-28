@@ -75,4 +75,36 @@
     }
     return String(window.getSelection() || '');
   };
+
+  // Questions from the page's own world (page-bridge.js: permissions, Picture in Picture) go to Cosmos, and Cosmos's answer
+  // goes back.
+  window.addEventListener('message', e => {
+    const d = e.data;
+    if (!d || typeof d.__cosmosAsk !== 'string' || typeof d.id !== 'number' || typeof d.kind !== 'string') return;
+    post({ type: '__ask', what: d.__cosmosAsk, id: d.id, kind: d.kind });
+  });
+  window.__cosmosAnswer = (id, value) => window.postMessage({ __cosmosAnswer: id, value }, '*');
+  // What the page's own world reports without a question (a notification shown, one taken back).
+  window.addEventListener('message', e => {
+    const d = e.data;
+    if (!d || typeof d.__cosmosTell !== 'string' || !d.note || typeof d.note.id !== 'string') return;
+    post({ type: '__tell', what: d.__cosmosTell, note: d.note });
+  });
+
+  // The video in Picture in Picture: where it is in the frame (Cosmos's window shows that part of the page), until it goes.
+  let pipTimer = null;
+  window.__cosmosTrackPictureInPicture = () => {
+    clearInterval(pipTimer);
+    let last = '';
+    const check = () => {
+      const v = document.querySelector('video[data-cosmos-pip]');
+      if (!v || !v.isConnected) { clearInterval(pipTimer); pipTimer = null; post({ type: '__pipGone' }); return; }
+      const r = v.getBoundingClientRect();
+      const now = [r.left, r.top, r.width, r.height].map(Math.round).join();
+      if (now !== last) { last = now; post({ type: '__pipRect', x: r.left, y: r.top, width: r.width, height: r.height }); }
+    };
+    pipTimer = setInterval(check, 200);
+    check();
+  };
+  window.__cosmosStopPictureInPicture = () => { clearInterval(pipTimer); pipTimer = null; };
 })();

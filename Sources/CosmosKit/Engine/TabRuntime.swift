@@ -35,6 +35,19 @@ public protocol TabHost: AnyObject {
     /// The items extensions added to the right-click menu, for what the click was on.
     func extensionMenuItems(for tab: TabRuntime, contexts: Set<String>) -> [ExtensionMenuItem]
     func tab(_ tab: TabRuntime, performExtensionItem item: ExtensionMenuItem, context: ExtensionClickContext)
+    /// Where the Mac is, for a site that was allowed to know.
+    func tabWantsLocation(_ tab: TabRuntime) async -> PageLocation?
+    /// A user name and password for a site that asks (HTTP authentication).
+    func tab(_ tab: TabRuntime, credentialsFor challenge: AuthChallenge) async -> PageCredentials?
+    /// Whether the site of `url` is on a malware or phishing list (and the user has not chosen to go anyway).
+    func tab(_ tab: TabRuntime, dangerAt url: URL) -> PageDanger?
+    func tab(_ tab: TabRuntime, allowDangerous url: URL)
+    /// Posts a page's notification (to macOS), or takes it back.
+    func tab(_ tab: TabRuntime, showNotification note: EngineNotification)
+    func tab(_ tab: TabRuntime, closeNotification id: String)
+    /// Puts a video in a floating window of its own; false when there is none to put it in.
+    func tab(_ tab: TabRuntime, showPictureInPicture view: NSView) -> Bool
+    func tabDidLeavePictureInPicture(_ tab: TabRuntime)
 }
 
 public extension TabHost {
@@ -42,6 +55,14 @@ public extension TabHost {
     func tabWillNavigate(_ tab: TabRuntime) {}
     func extensionMenuItems(for tab: TabRuntime, contexts: Set<String>) -> [ExtensionMenuItem] { [] }
     func tab(_ tab: TabRuntime, performExtensionItem item: ExtensionMenuItem, context: ExtensionClickContext) {}
+    func tabWantsLocation(_ tab: TabRuntime) async -> PageLocation? { nil }
+    func tab(_ tab: TabRuntime, credentialsFor challenge: AuthChallenge) async -> PageCredentials? { await tab.askForCredentials(challenge) }
+    func tab(_ tab: TabRuntime, showPictureInPicture view: NSView) -> Bool { false }
+    func tabDidLeavePictureInPicture(_ tab: TabRuntime) {}
+    func tab(_ tab: TabRuntime, showNotification note: EngineNotification) {}
+    func tab(_ tab: TabRuntime, dangerAt url: URL) -> PageDanger? { nil }
+    func tab(_ tab: TabRuntime, allowDangerous url: URL) {}
+    func tab(_ tab: TabRuntime, closeNotification id: String) {}
 }
 
 /// One live page: owns the engine's page, mirrors its state into observable properties and answers what the page asks
@@ -65,6 +86,10 @@ public final class TabRuntime: NSObject {
     public private(set) var canGoForward = false
     public private(set) var isAudible = false
     public private(set) var hasPlayingVideo = false
+    /// The page Cosmos stopped because its site is on a malware or phishing list, while the warning is up.
+    public private(set) var danger: (url: URL, kind: PageDanger)?
+    /// A video of this page is in its Picture in Picture window.
+    public private(set) var isInPictureInPicture = false
     public private(set) var hoverURL: URL?
     public private(set) var themeColor: RGBA?
     public private(set) var loadFailed = false
@@ -182,11 +207,12 @@ public final class TabRuntime: NSObject {
           try { await v.requestPictureInPicture(); } catch (e) {}
         })();
         """
-        evaluate(js, in: .agent)
+        // In the page's own world, where the engine's Picture in Picture is.
+        evaluate(js, in: .page)
     }
 
     public func exitPictureInPicture() {
-        evaluate("if (document.pictureInPictureElement) document.exitPictureInPicture().catch(()=>{});", in: .agent)
+        page.leavePictureInPicture()
     }
 
     public func takeSnapshot(width: CGFloat = 320, completion: @escaping (NSImage?) -> Void) {
@@ -321,6 +347,11 @@ public final class TabRuntime: NSObject {
 
     private func presentError(_ error: PageLoadError, url failing: URL) {
         loadFailed = true
+        switch error.kind {
+        case .malware: danger = (failing, .malware)
+        case .phishing: danger = (failing, .phishing)
+        default: danger = nil
+        }
         page.loadHTML(ErrorPage.html(for: error, url: failing), showing: failing)
         host?.tabDidChange(self)
     }
@@ -356,6 +387,7 @@ extension TabRuntime: EnginePageDelegate {
 
     public func pageDidStartNavigation(_ page: EnginePage) {
         loadFailed = false
+        danger = nil
         mediaFrames.removeAll()
         isAudible = false
         hoverURL = nil
@@ -439,6 +471,8 @@ extension TabRuntime: EnginePageDelegate {
         let site = request.host
         let key = "\(site)|\(request.kind.rawValue)"
         if !site.isEmpty, let known = host?.settings.permissionDecisions[key] { return known }
+        // Settings ▸ Engine blocks it for every site the user has not decided about.
+        if let engine = host?.settings.engine, Self.blocks(engine, request.kind) { return false }
         guard await waitUntilShown() else { return false }
         let alert = NSAlert()
         alert.messageText = site.isEmpty ? "This page wants to use your \(noun)" : "“\(site)” wants to use your \(noun)"
@@ -448,6 +482,76 @@ extension TabRuntime: EnginePageDelegate {
         let allowed = await sheet(alert) == .alertFirstButtonReturn
         if !site.isEmpty { host?.tab(self, remember: allowed, forPermission: key) }
         return allowed
+    }
+
+    static func blocks(_ s: EngineSettings, _ kind: PermissionRequest.Kind) -> Bool {
+        switch kind {
+        case .camera: s.camera == .block
+        case .microphone: s.microphone == .block
+        case .cameraAndMicrophone: s.camera == .block || s.microphone == .block
+        case .location: s.location == .block
+        case .notifications: s.notifications == .block
+        }
+    }
+
+    public func pageWantsLocation(_ page: EnginePage) async -> PageLocation? { await host?.tabWantsLocation(self) }
+
+    public func page(_ page: EnginePage, showNotification note: EngineNotification) { host?.tab(self, showNotification: note) }
+
+    public func page(_ page: EnginePage, dangerAt url: URL) -> PageDanger? { host?.tab(self, dangerAt: url) }
+
+    /// The warning's "Visit Anyway": the site is let through for the rest of this run, and the page loads.
+    public func visitDangerousSiteAnyway() {
+        guard let danger else { return }
+        host?.tab(self, allowDangerous: danger.url)
+        self.danger = nil
+        load(danger.url)
+    }
+
+    /// The warning's "Go Back": back to the page before, or to an empty one.
+    public func leaveDangerousSite() {
+        danger = nil
+        if page.state.canGoBack { page.goBack() } else { load(URL(string: "about:blank")!) }
+    }
+    public func page(_ page: EnginePage, closeNotification id: String) { host?.tab(self, closeNotification: id) }
+
+    public func page(_ page: EnginePage, wantsPictureInPicture view: NSView) async -> Bool {
+        guard host?.tab(self, showPictureInPicture: view) == true else { return false }
+        isInPictureInPicture = true
+        return true
+    }
+
+    public func pageDidLeavePictureInPicture(_ page: EnginePage) {
+        guard isInPictureInPicture else { return }
+        isInPictureInPicture = false
+        host?.tabDidLeavePictureInPicture(self)
+    }
+
+    public func page(_ page: EnginePage, wantsCredentialsFor challenge: AuthChallenge) async -> PageCredentials? {
+        await host?.tab(self, credentialsFor: challenge)
+    }
+
+    /// The sheet that asks for a user name and password, over the tab once it is on screen.
+    func askForCredentials(_ challenge: AuthChallenge) async -> PageCredentials? {
+        guard await waitUntilShown() else { return nil }
+        let alert = NSAlert()
+        alert.messageText = challenge.isProxy ? "The proxy “\(challenge.host)” wants a user name and password" : "Sign in to “\(challenge.host)”"
+        var info = challenge.realm.isEmpty ? "" : "The site says: “\(challenge.realm)”."
+        if !challenge.isSecure { info += (info.isEmpty ? "" : " ") + "Your password will be sent without encryption." }
+        alert.informativeText = info
+        let user = NSTextField(frame: NSRect(x: 0, y: 30, width: 260, height: 24))
+        user.placeholderString = "User name"
+        let password = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        password.placeholderString = "Password"
+        let fields = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 54))
+        fields.addSubview(user)
+        fields.addSubview(password)
+        alert.accessoryView = fields
+        alert.window.initialFirstResponder = user
+        alert.addButton(withTitle: "Sign In")
+        alert.addButton(withTitle: "Cancel")
+        guard await sheet(alert) == .alertFirstButtonReturn else { return nil }
+        return PageCredentials(user: user.stringValue, password: password.stringValue)
     }
 
     /// Pressing hard on a link opens it in Peek, like ⇧-click. The press ends in a click, which the agent then keeps from
@@ -515,6 +619,10 @@ enum ErrorPage {
                 return ("Connection lost", "The server isn't accepting connections right now.")
             case .insecure:
                 return ("This connection isn't private", "Cosmos couldn't verify the identity of “\(url.host ?? "this site")”. Someone may be trying to intercept your connection.")
+            case .malware:
+                return ("This site may harm your Mac", "“\(url.host ?? "This site")” is on a public list of sites that have spread malware (URLhaus). Cosmos stopped it before the page was asked for.")
+            case .phishing:
+                return ("Deceptive site ahead", "“\(url.host ?? "This site")” is on a public list of sites that pose as others to take passwords or card numbers. Cosmos stopped it before the page was asked for.")
             case .other:
                 return ("This page can't be reached", "Something went wrong loading this page.")
             }
@@ -539,7 +647,7 @@ enum ErrorPage {
         <svg viewBox="0 0 120 120" fill="none"><circle cx="60" cy="60" r="26" fill="#8b6cff"/><ellipse cx="60" cy="60" rx="52" ry="14" transform="rotate(-20 60 60)" stroke="#c9bdff" stroke-width="3" opacity=".8"/>
         <circle cx="96" cy="34" r="4" fill="#fff"/><circle cx="22" cy="86" r="2.5" fill="#fff" opacity=".7"/><circle cx="104" cy="88" r="2" fill="#fff" opacity=".5"/></svg>
         <h1>\(esc(headline))</h1><p>\(esc(detail))</p>
-        <p>Press ⌘R to try again.</p>
+        \(error.kind == .malware || error.kind == .phishing ? "" : "<p>Press ⌘R to try again.</p>")
         <code>\(esc(url.absoluteString))<br>\(esc(error.detail))</code></main></body></html>
         """
     }

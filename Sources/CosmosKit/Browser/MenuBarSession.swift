@@ -121,6 +121,16 @@ final class MenuBarHost: TabHost {
 
     func tabDidChange(_ tab: TabRuntime) {}
 
+    func tabWantsLocation(_ tab: TabRuntime) async -> PageLocation? { await store.locate() }
+
+    func tab(_ tab: TabRuntime, credentialsFor challenge: AuthChallenge) async -> PageCredentials? { await store.signIn(tab, challenge) }
+    func tab(_ tab: TabRuntime, showPictureInPicture view: NSView) -> Bool { store.onPictureInPicture?(tab, view) ?? false }
+    func tabDidLeavePictureInPicture(_ tab: TabRuntime) { store.onPictureInPictureEnded?(tab) }
+    func tab(_ tab: TabRuntime, showNotification note: EngineNotification) { store.tab(tab, showNotification: note) }
+    func tab(_ tab: TabRuntime, closeNotification id: String) { store.tab(tab, closeNotification: id) }
+    func tab(_ tab: TabRuntime, dangerAt url: URL) -> PageDanger? { store.tab(tab, dangerAt: url) }
+    func tab(_ tab: TabRuntime, allowDangerous url: URL) { store.allowDangerousSite(url) }
+
     func tabDidFinishLoading(_ tab: TabRuntime) {
         guard let url = tab.url else { return }
         store.history.record(url: url, title: tab.title, typed: false)

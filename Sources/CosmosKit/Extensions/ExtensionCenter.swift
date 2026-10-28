@@ -105,11 +105,44 @@ final class ExtensionCenter {
         environments.removeAll { $0.value == nil }
         environments.append(WeakEnvironment(value: env))
         engine.onChange = { [weak self] in self?.actionRevision += 1 }
+        // `chrome.notifications`: Cosmos posts them to macOS, and a click goes back to the extension.
+        engine.onNotification = { [weak self, weak engine] extensionID, note in
+            guard let notifier = self?.store?.notifier else { return }
+            notifier.show(note, key: "extension/\(extensionID)/\(note.id)") { action in
+                guard let engine else { return }
+                Task { await engine.notification(note.id, of: extensionID, did: action) }
+            }
+        }
+        engine.onNotificationClosed = { [weak self] extensionID, id in self?.store?.notifier.close(key: "extension/\(extensionID)/\(id)") }
+        engine.onSidePanelRequest = { [weak self, weak engine, weak env] extensionID, page in
+            guard let self, let engine, let env else { return }
+            self.toggleSidePanel(extensionID, for: page, engine: engine, environment: env)
+        }
         let enabled = items.filter(\.enabled)
         Task { for item in enabled { await load(item, into: env) } }
     }
 
     private var liveEnvironments: [ProfileEnvironment] { environments.compactMap(\.value) }
+
+    /// Shows an extension's side panel in the window of the tab it is for, beside the page; the same request again
+    /// closes it, as the button does in Chrome.
+    private func toggleSidePanel(_ extensionID: String, for page: EnginePage?, engine: EngineExtensions, environment env: ProfileEnvironment) {
+        guard let store, let item = item(forEngineID: extensionID) else { return }
+        let tab = page.flatMap { TabRuntime.owning($0) }
+        guard let window = tab.flatMap({ store.window(showing: $0.itemID) }) ?? store.activeWindow ?? store.windows.first else { return }
+        if window.sidePanel?.extensionID == extensionID {
+            window.sidePanel?.runtime.tearDown()
+            window.sidePanel = nil
+            return
+        }
+        Task {
+            guard let panel = await engine.openSidePanel(extensionID, for: page ?? store.currentRuntime(in: window)?.page) else { return }
+            let runtime = TabRuntime(itemID: UUID(), profileID: env.profileID, page: panel, host: store)
+            runtime.isEphemeral = true
+            window.sidePanel?.runtime.tearDown()
+            window.sidePanel = WindowState.SidePanel(extensionID: extensionID, title: item.name, runtime: runtime)
+        }
+    }
 
     @discardableResult
     private func load(_ item: InstalledExtension, into env: ProfileEnvironment) async -> Bool {
@@ -407,6 +440,13 @@ final class ExtensionPopup: NSObject, EnginePageDelegate, NSPopoverDelegate {
     func page(_ page: EnginePage, runDialog dialog: PageDialog) async -> PageDialog.Answer { PageDialog.Answer(accepted: false) }
     func page(_ page: EnginePage, chooseFiles chooser: FileChooser) async -> [URL]? { nil }
     func page(_ page: EnginePage, wantsPermission request: PermissionRequest) async -> Bool { false }
+    func pageWantsLocation(_ page: EnginePage) async -> PageLocation? { nil }
+    func page(_ page: EnginePage, wantsCredentialsFor challenge: AuthChallenge) async -> PageCredentials? { nil }
+    func page(_ page: EnginePage, wantsPictureInPicture view: NSView) async -> Bool { false }
+    func page(_ page: EnginePage, showNotification note: EngineNotification) {}
+    func page(_ page: EnginePage, dangerAt url: URL) -> PageDanger? { nil }
+    func page(_ page: EnginePage, closeNotification id: String) {}
+    func pageDidLeavePictureInPicture(_ page: EnginePage) {}
     func pageDidForceClick(_ page: EnginePage) {}
     func pageRequestsClose(_ page: EnginePage) { popover.close() }
     func pageRendererDidTerminate(_ page: EnginePage) { popover.close() }
@@ -419,7 +459,7 @@ struct ExtensionRequestSummary {
     var origin: String
     var permissions: [String]
     var hostPatterns: [String]
-    /// Manifest problems and features Cosmos can't show yet, in plain words.
+    /// Manifest problems and what may not work as in Chrome, in plain words.
     var problems: [String]
 
     /// What a manifest asks for.
@@ -435,8 +475,10 @@ struct ExtensionRequestSummary {
         let permissions = declared.filter { !isPattern($0) }
         var problems: [String] = []
         if (manifest["manifest_version"] as? Int) == 2 { problems.append("It is built for Manifest V2, which Chromium no longer runs.") }
-        let missing = permissions.filter(unsupported.contains)
-        if !missing.isEmpty { problems.append("Cosmos can't show its \(missing.map { unsupportedWords[$0] ?? $0 }.joined(separator: ", ")) yet.") }
+        // `identity.getAuthToken` signs in with the Google account Chrome is signed in to; Cosmos's Chromium has none.
+        if manifest["oauth2"] != nil {
+            problems.append("Its Google sign-in goes through a web page instead of a Google account in the browser; some Google services refuse that.")
+        }
         return (version, permissions, unique, problems)
     }
 
@@ -490,7 +532,4 @@ struct ExtensionRequestSummary {
         "alarms": "Run tasks on a schedule",
     ]
 
-    /// Permissions Chromium runs but whose result a browser shows in its own interface, which Cosmos does not draw yet.
-    static let unsupported: Set<String> = ["sidePanel", "notifications", "identity"]
-    private static let unsupportedWords = ["sidePanel": "side panel", "notifications": "notifications", "identity": "Google sign-in"]
 }

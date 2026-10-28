@@ -34,6 +34,9 @@ final class ChromiumProfile: EngineProfile {
     private var bridgeReady: [CheckedContinuation<Void, Never>] = []
     private(set) lazy var extensionHost = ChromiumExtensionHost(profile: self)
     private var blocking: (lists: [CompiledBlockingList], allowlist: [String])?
+    /// What the user decided about sites, applied to each site as its pages load (Chromium forgets it when it stops).
+    private var decisions: Set<PermissionDecision> = []
+    private var decidedOrigins: Set<String> = []
     private var closed = false
     /// The blank page Chromium opens when it starts. It stays (a Chromium with no page left may quit) but is no tab.
     private var startupTargets: Set<String> = []
@@ -72,7 +75,7 @@ final class ChromiumProfile: EngineProfile {
         let version = ChromiumInstall.version(of: app) ?? ""
         userAgent = ChromiumPreferences.userAgent(chromiumVersion: version)
         ChromiumPreferences.prepare(userDataDirectory: dataDirectory, settings: engine.settings, defaultZoom: defaultZoomFactor)
-        let flags = ChromiumPreferences.flags(settings: engine.settings) + ["--user-agent=\(userAgent ?? "")"]
+        let flags = ChromiumPreferences.flags(settings: engine.settings) + ["--user-agent=\(userAgent ?? "")"] + engine.extraFlags
         let executable = app.appendingPathComponent("Contents/MacOS/Chromium")
         guard let process = try? ChromiumProcess(executable: executable,
                                                  arguments: ChromiumProcess.arguments(userDataDirectory: dataDirectory, extraFlags: flags),
@@ -123,6 +126,7 @@ final class ChromiumProfile: EngineProfile {
         for (_, d) in downloads { d.update(state: .failed("Chromium stopped")) }
         downloads.removeAll()
         extensionHost.browserStopped()
+        decidedOrigins = []
         guard !closed else { return }
         delegate?.profileDidRestart(self)
     }
@@ -137,6 +141,18 @@ final class ChromiumProfile: EngineProfile {
             let session = await self.session(forNewTarget: target)
             adopt(page, target: target, session: session, info: [:])
         }
+        return page
+    }
+
+    /// A page Cosmos opens on its own (an extension's side panel or sign-in page). With `request`, the delegate is given it
+    /// to show, as a page a site opened; without, the caller shows it.
+    func openPage(_ url: URL, request: NewPageRequest? = nil) -> ChromiumPage? {
+        guard let page = makePage() as? ChromiumPage else { return nil }
+        if let request, delegate?.profile(self, didOpen: page, opener: nil, request: request) != true {
+            page.close()
+            return nil
+        }
+        page.load(url)
         return page
     }
 
@@ -161,9 +177,28 @@ final class ChromiumProfile: EngineProfile {
 
     func page(forTarget id: String) -> ChromiumPage? { pages[id] }
 
+    /// Chromium's DevTools for `page`: a page of their own, which goes to the delegate to be shown in a window.
+    func openInspector(for page: ChromiumPage) async {
+        // Chromium does not attach DevTools to Cosmos on its own, as it does pages: Cosmos attaches to them.
+        guard let target = page.targetID, let c = connection,
+              let r = try? await c.send("Target.openDevTools", ["targetId": target]), let tools = r["targetId"] as? String,
+              let session = (try? await c.send("Target.attachToTarget", ["targetId": tools, "flatten": true]))?["sessionId"] as? String else { return }
+        let info = (try? await c.send("Target.getTargetInfo", ["targetId": tools]))?["targetInfo"] as? [String: Any] ?? [:]
+        let inspector = ChromiumPage(browser: self)
+        adopt(inspector, target: tools, session: session, info: info)
+        page.inspector = inspector
+        let request = NewPageRequest(url: nil, features: ["width=1100", "height=720"], isDeveloperTools: true)
+        if delegate?.profile(self, didOpen: inspector, opener: page, request: request) != true { inspector.close() }
+    }
+
+    /// Events of `session` (a frame from another site) go to `page`.
+    func route(_ session: String, to page: ChromiumPage) { sessions[session] = page }
+    func unroute(_ session: String) { sessions[session] = nil }
+
     func setPageScripts(_ scripts: [PageScript]) {
-        let all = ChromiumResources.engineHelper.map { [PageScript(source: $0, world: .agent, time: .documentStart)] } ?? []
-        self.scripts = all + scripts
+        let helper = ChromiumResources.engineHelper.map { [PageScript(source: $0, world: .agent, time: .documentStart)] } ?? []
+        let bridge = ChromiumResources.pageBridge.map { [PageScript(source: $0, world: .page, time: .documentStart)] } ?? []
+        self.scripts = helper + bridge + scripts
         for page in pages.values { Task { await page.installScripts(self.scripts) } }
     }
 
@@ -231,7 +266,8 @@ final class ChromiumProfile: EngineProfile {
             extensionHost.popupAttached(page)
             return
         }
-        if let opener = (info["openerId"] as? String).flatMap({ pages[$0] }) {
+        // DevTools are claimed by the page that asked for them (`openInspector`), never opened as its popup.
+        if !url.hasPrefix("devtools://"), let opener = (info["openerId"] as? String).flatMap({ pages[$0] }) {
             openOnItsOwn(target: target, session: session, info: info, opener: opener)
             return
         }
@@ -271,6 +307,51 @@ final class ChromiumProfile: EngineProfile {
             guard let session = await bridge() else { return }
             connection?.post("Runtime.evaluate", ["expression": "cosmosZoom(\(ChromiumResources.jsString(target)), \(factor))", "awaitPromise": true],
                              session: session)
+        }
+    }
+
+    func setPermissionDecisions(_ decisions: [PermissionDecision]) {
+        let new = Set(decisions)
+        guard new != self.decisions else { return }
+        self.decisions = new
+        decidedOrigins = []
+        guard process != nil else { return }
+        Task {
+            // What the user took back is asked about again; what remains goes back in.
+            _ = try? await connection?.send("Browser.resetPermissions")
+            for page in Array(pages.values) { await applyDecisions(to: page.state.url) }
+        }
+    }
+
+    /// Puts what the user decided about `url`'s site into Chromium, once per site while it runs (before it runs, there is
+    /// nothing to put it into: the page's navigation does it again once it does).
+    func applyDecisions(to url: URL?) async {
+        guard process != nil, let url, let host = url.host, let origin = Self.origin(of: url), !decidedOrigins.contains(origin) else { return }
+        let mine = decisions.filter { $0.host == host }
+        guard !mine.isEmpty else { return }
+        decidedOrigins.insert(origin)
+        for d in mine { await setPermission(d.kind, allowed: d.allowed, origin: origin) }
+    }
+
+    /// `http://host:port`, what Chromium keeps permissions by.
+    static func origin(of url: URL) -> String? {
+        guard let scheme = url.scheme, let host = url.host else { return nil }
+        return "\(scheme)://\(host)" + (url.port.map { ":\($0)" } ?? "")
+    }
+
+    /// Grants or refuses a permission to a site (`http://host:port`) in Chromium, which otherwise refuses it on its own.
+    /// It lasts while this Chromium runs; after a restart the site asks again and Cosmos answers from what it remembers.
+    func setPermission(_ kind: PermissionRequest.Kind, allowed: Bool, origin: String) async {
+        let names: [String] = switch kind {
+        case .camera: ["camera"]
+        case .microphone: ["microphone"]
+        case .cameraAndMicrophone: ["camera", "microphone"]
+        case .location: ["geolocation"]
+        case .notifications: ["notifications"]
+        }
+        for name in names {
+            _ = try? await connection?.send("Browser.setPermission", ["permission": ["name": name], "setting": allowed ? "granted" : "denied",
+                                                                     "origin": origin])
         }
     }
 

@@ -62,6 +62,8 @@ public protocol EngineProfile: AnyObject {
     func setPageScripts(_ scripts: [PageScript])
     /// Content blocking: the compiled lists (see `CosmosBlocking`), and hosts where blocking is off. `nil` turns it off.
     func setContentBlocking(_ lists: [CompiledBlockingList]?, allowlist: [String])
+    /// What the user decided, site by site. Replaces the previous set; what is no longer in it is asked about again.
+    func setPermissionDecisions(_ decisions: [PermissionDecision])
     /// The profile's extensions, if the engine runs them.
     var extensions: EngineExtensions? { get }
     /// Forgets cookies, site storage and the page cache.
@@ -95,11 +97,14 @@ public struct NewPageRequest: Equatable, Sendable {
     public var userGesture: Bool
     /// Made by an extension rather than by a page.
     public var fromExtension: Bool
-    public init(url: URL?, features: [String] = [], userGesture: Bool = false, fromExtension: Bool = false) {
+    /// The engine's developer tools for the opener, to show in a window of their own.
+    public var isDeveloperTools: Bool
+    public init(url: URL?, features: [String] = [], userGesture: Bool = false, fromExtension: Bool = false, isDeveloperTools: Bool = false) {
         self.url = url; self.features = features; self.userGesture = userGesture; self.fromExtension = fromExtension
+        self.isDeveloperTools = isDeveloperTools
     }
     /// A page that asked for a window of a given size needs its opener (an OAuth sign-in, a payment sheet).
-    public var isScriptSizedPopup: Bool { features.contains { $0.hasPrefix("width=") || $0.hasPrefix("height=") } }
+    public var isScriptSizedPopup: Bool { !isDeveloperTools && features.contains { $0.hasPrefix("width=") || $0.hasPrefix("height=") } }
 }
 
 @MainActor
@@ -127,7 +132,8 @@ public struct PageState: Equatable, Sendable {
 
 /// A load that did not get to show its page.
 public struct PageLoadError: Error, Equatable, Sendable {
-    public enum Kind: Equatable, Sendable { case offline, hostNotFound, timedOut, connectionFailed, insecure, crashed, other }
+    /// `malware` and `phishing`: Cosmos stopped the page itself (`EnginePageDelegate.page(_:dangerAt:)`).
+    public enum Kind: Equatable, Sendable { case offline, hostNotFound, timedOut, connectionFailed, insecure, crashed, malware, phishing, other }
     public var kind: Kind
     /// The engine's own words (`net::ERR_NAME_NOT_RESOLVED`).
     public var detail: String
@@ -157,11 +163,73 @@ public struct FileChooser: Equatable, Sendable {
 
 /// A site asking for something the user has to allow.
 public struct PermissionRequest: Equatable, Sendable {
-    public enum Kind: String, Sendable { case camera, microphone, cameraAndMicrophone, location, notifications }
+    public enum Kind: String, Hashable, Sendable { case camera, microphone, cameraAndMicrophone, location, notifications }
     public var kind: Kind
     /// The host that asked (`meet.example.com`).
     public var host: String
     public init(kind: Kind, host: String) { self.kind = kind; self.host = host }
+}
+
+/// A notification a site or an extension wants shown. The engine has nowhere to show it: Cosmos posts it to macOS.
+public struct EngineNotification: Equatable, Sendable {
+    /// Unique within its page or extension; a site's tag, when it gave one, so a new one replaces the old.
+    public var id: String
+    public var title: String
+    public var body: String
+    /// Who it is from, as macOS shows it: the site's host, or the extension's name.
+    public var source: String
+    /// The image to show with it (PNG or JPEG), when there is one.
+    public var icon: Data?
+    /// Button titles (an extension's `buttons`).
+    public var buttons: [String]
+    public init(id: String, title: String, body: String, source: String, icon: Data? = nil, buttons: [String] = []) {
+        self.id = id; self.title = title; self.body = body; self.source = source; self.icon = icon; self.buttons = buttons
+    }
+}
+
+/// Why a site is dangerous, as the lists Cosmos warns from say.
+public enum PageDanger: String, Equatable, Sendable { case malware, phishing }
+
+/// What the user did with a notification.
+public enum NotificationAction: Equatable, Sendable { case clicked, button(Int), closed }
+
+/// A site (or a proxy) asking for a user name and password: HTTP authentication.
+public struct AuthChallenge: Equatable, Sendable {
+    public var host: String
+    /// What the site calls the place ("Staff only"): the server's words, not Cosmos's.
+    public var realm: String
+    public var isProxy: Bool
+    /// False when the password would cross the network unencrypted.
+    public var isSecure: Bool
+    public init(host: String, realm: String, isProxy: Bool, isSecure: Bool) {
+        self.host = host; self.realm = realm; self.isProxy = isProxy; self.isSecure = isSecure
+    }
+}
+
+public struct PageCredentials: Equatable, Sendable {
+    public var user: String
+    public var password: String
+    public init(user: String, password: String) { self.user = user; self.password = password }
+}
+
+/// What the user decided about one site and one kind of permission. The engine applies it to the site's pages, so a site
+/// that was allowed is allowed before it asks.
+public struct PermissionDecision: Hashable, Sendable {
+    public var host: String
+    public var kind: PermissionRequest.Kind
+    public var allowed: Bool
+    public init(host: String, kind: PermissionRequest.Kind, allowed: Bool) { self.host = host; self.kind = kind; self.allowed = allowed }
+}
+
+/// Where the Mac is, for a site the user let know: the engine gets it from Cosmos and never asks the system itself.
+public struct PageLocation: Equatable, Sendable {
+    public var latitude: Double
+    public var longitude: Double
+    /// Metres.
+    public var accuracy: Double
+    public init(latitude: Double, longitude: Double, accuracy: Double) {
+        self.latitude = latitude; self.longitude = longitude; self.accuracy = accuracy
+    }
 }
 
 public enum EditCommand: String, Sendable, CaseIterable { case copy, cut, paste, selectAll, undo, redo }
@@ -198,6 +266,10 @@ public protocol EnginePage: AnyObject {
     func recentContextClick() -> ContextClick?
     /// Shows the engine's inspector, when it has one Cosmos can show.
     func showInspector() -> Bool
+    /// Takes the video in Picture in Picture back into the page.
+    func leavePictureInPicture()
+    /// The user clicked or closed one of the page's notifications: its own events fire.
+    func notification(_ id: String, did action: NotificationAction)
     /// What the page costs: JavaScript memory and processor time so far (seconds).
     func usage() async -> PageUsage?
     /// This is the page in front: the engine's own idea of the active tab (which extensions see) follows Cosmos's.
@@ -237,6 +309,21 @@ public protocol EnginePageDelegate: AnyObject {
     func page(_ page: EnginePage, runDialog dialog: PageDialog) async -> PageDialog.Answer
     func page(_ page: EnginePage, chooseFiles chooser: FileChooser) async -> [URL]?
     func page(_ page: EnginePage, wantsPermission request: PermissionRequest) async -> Bool
+    /// Asked before every page and frame loads: a reason makes the engine stop it before anything is sent to the site. A
+    /// page that is stopped fails with `PageLoadError.Kind.malware` or `.phishing`; a frame is left out quietly.
+    func page(_ page: EnginePage, dangerAt url: URL) -> PageDanger?
+    /// A site wants a user name and password; nil cancels, and the page shows what the site sends instead.
+    func page(_ page: EnginePage, wantsCredentialsFor challenge: AuthChallenge) async -> PageCredentials?
+    /// The page wants a notification shown (it has permission: the engine checked).
+    func page(_ page: EnginePage, showNotification note: EngineNotification)
+    /// The page took a notification back (`notification.close()`).
+    func page(_ page: EnginePage, closeNotification id: String)
+    /// A video asked for Picture in Picture; `view` shows it. True when the view was put in a window of its own.
+    func page(_ page: EnginePage, wantsPictureInPicture view: NSView) async -> Bool
+    /// The video left Picture in Picture (the page ended it, the video went, or `leavePictureInPicture` was called).
+    func pageDidLeavePictureInPicture(_ page: EnginePage)
+    /// A site that was allowed the location wants it now; nil when it cannot be had.
+    func pageWantsLocation(_ page: EnginePage) async -> PageLocation?
     /// A Force Click (a deep press on the trackpad) on the page. The click itself still reaches the page.
     func pageDidForceClick(_ page: EnginePage)
     /// The page asked to be closed (`window.close()`).
@@ -341,6 +428,16 @@ public struct ExtensionClickContext: Equatable, Sendable {
 public protocol EngineExtensions: AnyObject {
     /// Called whenever an action, menu or the set of extensions changes.
     var onChange: (() -> Void)? { get set }
+    /// An extension wants a notification shown (`chrome.notifications.create`), or took one back.
+    var onNotification: ((_ extensionID: String, EngineNotification) -> Void)? { get set }
+    var onNotificationClosed: ((_ extensionID: String, _ id: String) -> Void)? { get set }
+    /// The user clicked or closed an extension's notification: its `chrome.notifications` events fire.
+    func notification(_ id: String, of extensionID: String, did action: NotificationAction) async
+    /// An extension wants its side panel opened (`sidePanel.open`, or its button when `setPanelBehavior` says so), for
+    /// the tab of `page` (nil: the window's current tab).
+    var onSidePanelRequest: ((_ extensionID: String, _ page: EnginePage?) -> Void)? { get set }
+    /// The extension's side panel page for that tab, to show beside it; nil when it has none there.
+    func openSidePanel(_ extensionID: String, for page: EnginePage?) async -> EnginePage?
     /// Loads an unpacked extension folder. Returns its id.
     func load(folder: URL) async throws -> String
     func unload(id: String) async

@@ -1,4 +1,5 @@
 import AppKit
+import CosmosBlocking
 import CosmosCore
 import CosmosEngine
 
@@ -49,7 +50,7 @@ extension BrowserStore {
         let cutoff = Date().addingTimeInterval(-Double(settings.memorySaverMinutes) * 60)
         let keep = visibleTabIDs
         for (key, rt) in runtimes where !keep.contains(key.item) {
-            guard rt.lastActivity < cutoff, !rt.isAudible, !rt.isLoading, !rt.isCapturing,
+            guard rt.lastActivity < cutoff, !rt.isAudible, !rt.isLoading, !rt.isCapturing, !rt.isInPictureInPicture,
                   !BehaviorConfig.shared.keepsAlive(rt.url) else { continue }
             discardRuntime(forItem: key.item)
         }
@@ -619,7 +620,7 @@ extension BrowserStore {
     }
 
     public func tab(_ tab: TabRuntime, didOpen page: EnginePage, request: NewPageRequest) -> Bool {
-        if request.isScriptSizedPopup { return openPopup(page, profileID: tab.profileID, request: request) }
+        if request.isScriptSizedPopup || request.isDeveloperTools { return openPopup(page, profileID: tab.profileID, request: request, bringForward: request.isDeveloperTools) }
         guard let w = window(showing: tab.itemID) ?? windows.first(where: { $0.peek?.runtime === tab }) ?? activeWindow else { return false }
         return openTab(with: page, request: request, in: w)
     }
@@ -668,6 +669,41 @@ extension BrowserStore {
     public func tab(_ tab: TabRuntime, boostZoomFor host: String) -> Double? {
         boosts.boosts(for: host, profileID: tab.profileID).compactMap(\.zoom).first
     }
+
+    public func tabWantsLocation(_ tab: TabRuntime) async -> PageLocation? { await locate() }
+
+    public func tab(_ tab: TabRuntime, credentialsFor challenge: AuthChallenge) async -> PageCredentials? { await signIn(tab, challenge) }
+
+    public func tab(_ tab: TabRuntime, showPictureInPicture view: NSView) -> Bool { onPictureInPicture?(tab, view) ?? false }
+
+    /// A page's notification goes to macOS; a click fires the page's own handler and brings the tab forward.
+    public func tab(_ tab: TabRuntime, showNotification note: EngineNotification) {
+        notifier.show(note, key: Self.notificationKey(tab, note.id)) { [weak self, weak tab] action in
+            guard let tab else { return }
+            tab.page.notification(note.id, did: action)
+            if action != .closed { self?.onShowTab?(tab) }
+        }
+    }
+
+    public func tab(_ tab: TabRuntime, closeNotification id: String) { notifier.close(key: Self.notificationKey(tab, id)) }
+
+    static func notificationKey(_ tab: TabRuntime, _ id: String) -> String { "page/\(tab.itemID.uuidString)/\(id)" }
+
+    public func tab(_ tab: TabRuntime, dangerAt url: URL) -> PageDanger? { danger(at: url) }
+
+    /// Why Cosmos stops `url`, if it does: its site is on a list, the warnings are on and the user has not gone anyway.
+    func danger(at url: URL) -> PageDanger? {
+        guard settings.warnAboutDangerousSites, let host = url.host?.lowercased(), !dangerousSitesVisitedAnyway.contains(host) else { return nil }
+        return dangerousSites.reason(for: url).map { $0 == .malware ? .malware : .phishing }
+    }
+
+    public func tab(_ tab: TabRuntime, allowDangerous url: URL) { allowDangerousSite(url) }
+
+    /// The user read the warning and goes anyway: the site is not stopped again until Cosmos quits.
+    func allowDangerousSite(_ url: URL) {
+        if let host = url.host?.lowercased() { dangerousSitesVisitedAnyway.insert(host) }
+    }
+    public func tabDidLeavePictureInPicture(_ tab: TabRuntime) { onPictureInPictureEnded?(tab) }
 
     public func tab(_ tab: TabRuntime, remember allowed: Bool?, forPermission key: String) {
         guard !isIncognito else { return }

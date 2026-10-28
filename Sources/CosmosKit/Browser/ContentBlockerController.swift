@@ -23,6 +23,9 @@ final class ContentBlockerController {
     @ObservationIgnored private var environments: [WeakEnvironment] = []
     /// What every profile blocks; `nil` while blocking is off.
     @ObservationIgnored private(set) var installed: [CompiledBlockingList]?
+    /// The malware and phishing lists Cosmos warns from (`BrowserStore.dangerousSites`), and when they were last looked at.
+    @ObservationIgnored private let dangerLists: DangerousSiteLists
+    @ObservationIgnored private var dangerChecked: Date?
     /// Bumped by every `reload`; a slower, older reload that finishes late must not overwrite a newer one.
     @ObservationIgnored private var generation = 0
 
@@ -34,6 +37,7 @@ final class ContentBlockerController {
         self.offline = offline
         manager = FilterListManager(directory: directory.appendingPathComponent("FilterLists", isDirectory: true),
                                     settingsURL: directory.appendingPathComponent("blocking.json"))
+        dangerLists = DangerousSiteLists(directory: directory.appendingPathComponent("FilterLists", isDirectory: true))
     }
 
     // MARK: Environments
@@ -53,6 +57,7 @@ final class ContentBlockerController {
     /// Installs what is on disk straight away, then brings the lists up to date in the background.
     func start() {
         Task { await reload(refresh: !offline, force: false) }
+        Task { await loadDangerousSites() }
     }
 
     func settingsDidChange() {
@@ -67,6 +72,7 @@ final class ContentBlockerController {
     /// Called every minute by the store; refreshes at most every six hours (each list is only re-downloaded once it is
     /// 24 hours old, and a "not modified" answer costs one small request).
     func refreshIfStale() {
+        if !offline, let dangerChecked, Date().timeIntervalSince(dangerChecked) > 3600 { Task { await loadDangerousSites() } }
         guard !offline, !isUpdating else { return }
         if let lastRefresh, Date().timeIntervalSince(lastRefresh) < 6 * 3600 { return }
         Task { await reload(refresh: true, force: false) }
@@ -121,6 +127,16 @@ final class ContentBlockerController {
             isUpdating = false
             statuses = await manager.status()
         }
+    }
+
+    /// What is on disk at once, then whatever is newer (each list is downloaded at most twice a day), whether or not ads
+    /// are blocked; nothing is downloaded while the warnings are off.
+    private func loadDangerousSites() async {
+        dangerChecked = Date()
+        if store?.dangerousSites.count == 0 { store?.dangerousSites = await dangerLists.cached() }
+        guard !offline, store?.settings.warnAboutDangerousSites == true else { return }
+        let fresh = await dangerLists.refresh()
+        store?.dangerousSites = fresh
     }
 
     /// Hands the lists to every profile (`nil` turns blocking off).

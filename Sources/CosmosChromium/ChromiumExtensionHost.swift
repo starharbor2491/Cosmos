@@ -9,10 +9,14 @@ import CosmosEngine
 final class ChromiumExtensionHost: EngineExtensions {
     unowned let profile: ChromiumProfile
     var onChange: (() -> Void)?
+    var onNotification: ((String, EngineNotification) -> Void)?
+    var onNotificationClosed: ((String, String) -> Void)?
 
     struct Loaded {
         let id: String
         let folder: URL
+        /// The extension's name, as its notifications say who they are from.
+        var name = ""
         var title: String
         var icon: Data?
         var popup: String
@@ -24,6 +28,10 @@ final class ChromiumExtensionHost: EngineExtensions {
         var tabPopup: [Int: String] = [:]
         var tabEnabled: [Int: Bool] = [:]
         var menus: [ExtensionMenuItem] = []
+        /// `chrome.sidePanel`: the panel's page and whether it is on, by tab; whether the button opens it.
+        var sidePanelPath: [Int: String] = [:]
+        var sidePanelEnabled: [Int: Bool] = [:]
+        var opensSidePanelOnAction = false
         var commands: [ExtensionCommand] = []
         /// What applies to every tab (tab id -1 in these tables).
         static let everyTab = -1
@@ -73,7 +81,10 @@ final class ChromiumExtensionHost: EngineExtensions {
         var item = loaded[id] ?? Loaded(id: id, folder: folder, title: "", icon: nil, popup: "")
         let action = (manifest["action"] ?? manifest["browser_action"]) as? [String: Any] ?? [:]
         item.title = action["default_title"] as? String ?? manifest["name"] as? String ?? ""
+        let name = manifest["name"] as? String ?? ""
+        item.name = name.isEmpty || name.hasPrefix("__MSG_") ? item.title : name
         item.popup = action["default_popup"] as? String ?? ""
+        if let panel = (manifest["side_panel"] as? [String: Any])?["default_path"] as? String { item.sidePanelPath[Loaded.everyTab] = panel }
         item.icon = Self.iconData(action["default_icon"] ?? manifest["icons"], folder: folder)
         item.commands = Self.commands(manifest, extensionID: id)
         loaded[id] = item
@@ -212,6 +223,25 @@ final class ChromiumExtensionHost: EngineExtensions {
             item.menus.removeAll { $0.itemID == itemID || $0.parentID == itemID }
         case "menuRemoveAll":
             item.menus.removeAll()
+        case "notification":
+            let note = EngineNotification(id: m["id"] as? String ?? "", title: m["title"] as? String ?? "", body: m["message"] as? String ?? "",
+                                          source: item.name, icon: Self.iconData(m["iconUrl"], folder: item.folder), buttons: m["buttons"] as? [String] ?? [])
+            onNotification?(id, note)
+            return
+        case "notificationClosed":
+            onNotificationClosed?(id, m["id"] as? String ?? "")
+            return
+        case "sidePanelOptions":
+            if let path = m["path"] as? String { item.sidePanelPath[tab] = path }
+            if let enabled = m["enabled"] as? Bool { item.sidePanelEnabled[tab] = enabled }
+        case "sidePanelBehavior":
+            item.opensSidePanelOnAction = m["openOnAction"] as? Bool ?? false
+        case "sidePanelOpen":
+            onSidePanelRequest?(id, (m["tabId"] as? Int).flatMap(page(forTab:)))
+            return
+        case "authFlow":
+            startAuthFlow(m, from: id)
+            return
         default:
             return
         }
@@ -277,6 +307,11 @@ final class ChromiumExtensionHost: EngineExtensions {
     }
 
     func performAction(_ extensionID: String, on page: EnginePage) async -> EnginePage? {
+        // `setPanelBehavior({ openPanelOnActionClick: true })`: the button opens the side panel, which Cosmos draws.
+        if loaded[extensionID]?.opensSidePanelOnAction == true {
+            onSidePanelRequest?(extensionID, page)
+            return nil
+        }
         guard let page = page as? ChromiumPage, let c = profile.connection else { return nil }
         _ = await tabID(of: page)
         guard let tab = await tabTarget(of: page) else { return nil }
@@ -334,14 +369,85 @@ final class ChromiumExtensionHost: EngineExtensions {
         await fire("__cosmosFireCommand(\(ChromiumResources.jsString(command.name)), \(tab.map(String.init) ?? "null"))", in: command.extensionID)
     }
 
+    // MARK: Side panels
+
+    var onSidePanelRequest: ((String, EnginePage?) -> Void)?
+
+    func openSidePanel(_ extensionID: String, for page: EnginePage?) async -> EnginePage? {
+        guard let item = loaded[extensionID] else { return nil }
+        let tab = await (page as? ChromiumPage).asyncMap { await tabID(of: $0) } ?? nil
+        let path = tab.flatMap { item.sidePanelPath[$0] } ?? item.sidePanelPath[Loaded.everyTab]
+        let enabled = tab.flatMap { item.sidePanelEnabled[$0] } ?? item.sidePanelEnabled[Loaded.everyTab] ?? true
+        guard enabled, let path, let url = URL(string: "chrome-extension://\(extensionID)/\(path.hasPrefix("/") ? String(path.dropFirst()) : path)") else { return nil }
+        return profile.openPage(url)
+    }
+
+    /// The page of a `chrome.tabs` id, among the pages Cosmos has asked about.
+    private func page(forTab tab: Int) -> ChromiumPage? {
+        tabIDs.first { $0.value == tab }.flatMap { profile.page(forTarget: $0.key) }
+    }
+
+    // MARK: Signing in
+
+    /// One `identity.launchWebAuthFlow` that needs the user: its page, until it reaches the extension's address or closes.
+    private final class AuthFlow { var finished = false }
+
+    /// The sign-in page opens in a window of its own, as a site's popup does; when it heads for the extension's own
+    /// address (`https://<id>.chromiumapp.org/`), that address is the answer, and the window closes.
+    private func startAuthFlow(_ m: [String: Any], from id: String) {
+        guard let flow = m["flow"] as? Int, let back = m["redirect"] as? String, !back.isEmpty,
+              let url = (m["url"] as? String).flatMap(URL.init(string:)), ["http", "https"].contains(url.scheme ?? "") else {
+            if let flow = m["flow"] as? Int { Task { await finishAuthFlow(flow, of: id, url: nil, error: "Authorization page could not be loaded.") } }
+            return
+        }
+        let state = AuthFlow()
+        let request = NewPageRequest(url: url, features: ["width=520", "height=680"], fromExtension: true)
+        guard let page = profile.openPage(url, request: request) else {
+            Task { await finishAuthFlow(flow, of: id, url: nil, error: "Authorization page could not be loaded.") }
+            return
+        }
+        page.onDocumentRequest = { [weak self, weak page] next in
+            guard !state.finished, next.absoluteString.hasPrefix(back) else { return }
+            state.finished = true
+            page?.stop()
+            Task {
+                await self?.finishAuthFlow(flow, of: id, url: next.absoluteString, error: nil)
+                if let page { if let d = page.delegate { d.pageRequestsClose(page) } else { page.close() } }
+            }
+        }
+        page.onClose = { [weak self] in
+            guard !state.finished else { return }
+            state.finished = true
+            Task { await self?.finishAuthFlow(flow, of: id, url: nil, error: "The user did not approve access.") }
+        }
+    }
+
+    private func finishAuthFlow(_ flow: Int, of extensionID: String, url: String?, error: String?) async {
+        let answer = url.map(ChromiumResources.jsString) ?? "null"
+        await fire("__cosmosFinishAuthFlow(\(flow), \(answer), \(ChromiumResources.jsString(error ?? "")))", in: extensionID)
+    }
+
+    func notification(_ id: String, of extensionID: String, did action: NotificationAction) async {
+        let (name, index): (String, Int) = switch action {
+        case .clicked: ("clicked", 0)
+        case .button(let i): ("button", i)
+        case .closed: ("closed", 0)
+        }
+        await fire("__cosmosFireNotification(\(ChromiumResources.jsString(id)), '\(name)', \(index))", in: extensionID)
+    }
+
     /// Runs one of the shim's fire functions in a worker of the extension that can still reach its APIs. A worker that
-    /// cannot (Chromium replaced it, and it lingers because Cosmos is attached) is let go, and the next one is asked.
+    /// cannot (Chromium replaced it, and it lingers because Cosmos is attached) answers 'dead' and is let go; one that
+    /// answers false is alive but not the one; the next is asked either way.
     private func fire(_ expression: String, in extensionID: String) async {
         guard let c = profile.connection else { return }
         for session in workers.filter({ $0.value == extensionID }).map(\.key) {
             let r = try? await c.send("Runtime.evaluate", ["expression": expression, "awaitPromise": true, "returnByValue": true, "userGesture": true],
                                       session: session)
-            if (r?["result"] as? [String: Any])?["value"] as? Bool == true { return }
+            let value = (r?["result"] as? [String: Any])?["value"]
+            if value as? Bool == true { return }
+            // Alive, but not the worker this is for (a sign-in another worker started): ask the next one.
+            if value as? Bool == false { continue }
             workers[session] = nil
             shimmed.remove(session)
             c.post("Target.detachFromTarget", ["sessionId": session])

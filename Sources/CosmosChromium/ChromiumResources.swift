@@ -1,11 +1,17 @@
 import Foundation
 
-/// Files Cosmos ships for Chromium: the bridge extension and the helper script for Cosmos's isolated world.
+/// Files Cosmos ships for Chromium: the bridge extension, the helper script for Cosmos's isolated world and the one for
+/// the page's world.
 enum ChromiumResources {
     static var bridgeExtension: URL? { Bundle.module.url(forResource: "Bridge", withExtension: nil) }
 
     static let engineHelper: String? = {
         guard let url = Bundle.module.url(forResource: "engine-helper", withExtension: "js") else { return nil }
+        return try? String(contentsOf: url, encoding: .utf8)
+    }()
+
+    static let pageBridge: String? = {
+        guard let url = Bundle.module.url(forResource: "page-bridge", withExtension: "js") else { return nil }
         return try? String(contentsOf: url, encoding: .utf8)
     }()
 

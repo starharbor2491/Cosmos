@@ -1,4 +1,5 @@
 import AppKit
+import CosmosBlocking
 import CosmosCore
 import CosmosEngine
 
@@ -23,6 +24,10 @@ public final class BrowserStore: TabHost {
     public let history: HistoryStore
     public let favicons: FaviconStore
     let haptics = Haptics()
+    /// Where the Mac is, for sites the user let know: macOS is asked by Cosmos, never by the engine. Tests replace it.
+    @ObservationIgnored var locate: @MainActor () async -> PageLocation? = { await LocationSource.shared.current() }
+    /// Asks for a user name and password for a site: a sheet over the tab. Tests replace it.
+    @ObservationIgnored var signIn: @MainActor (TabRuntime, AuthChallenge) async -> PageCredentials? = { tab, challenge in await tab.askForCredentials(challenge) }
     public let downloads = DownloadsManager()
     let resources = ResourceMonitor()
     public let catalog = SearchCatalog.bundled
@@ -73,6 +78,16 @@ public final class BrowserStore: TabHost {
     /// "Try Again" after the engine could not be fetched.
     @ObservationIgnored var onRetryEngine: (() -> Void)?
     @ObservationIgnored var onPopupWindow: ((TabRuntime, NewPageRequest, _ bringForward: Bool) -> Void)?
+    /// Shows a tab's video in a floating window (the app's Picture in Picture panel), and closes it.
+    @ObservationIgnored var onPictureInPicture: ((TabRuntime, NSView) -> Bool)?
+    @ObservationIgnored var onPictureInPictureEnded: ((TabRuntime) -> Void)?
+    /// Brings a tab to the front in its window (a click on its notification).
+    @ObservationIgnored var onShowTab: ((TabRuntime) -> Void)?
+    /// Where sites' and extensions' notifications go: macOS. Tests replace it.
+    @ObservationIgnored var notifier: Notifying = SystemNotifier.shared
+    /// Sites on the malware and phishing lists, and the ones the user chose to visit anyway (until Cosmos quits).
+    @ObservationIgnored var dangerousSites = DangerousSites()
+    @ObservationIgnored var dangerousSitesVisitedAnyway: Set<String> = []
 
     // MARK: Persistence plumbing
 
@@ -338,6 +353,7 @@ public final class BrowserStore: TabHost {
         if isIncognito || id == nil {
             if let e = incognitoEnvironment { return e }
             let e = ProfileEnvironment(profileID: nil, engineProfile: engine.makeProfile(id: nil, directory: nil), store: self)
+            e.engineProfile.setPermissionDecisions(permissionDecisionList)
             blocker?.attach(to: e)
             incognitoEnvironment = e
             return e
@@ -347,11 +363,20 @@ public final class BrowserStore: TabHost {
         let profile = workspace.profile(pid) ?? workspace.profiles[0]
         let folder = dataDirectory?.appendingPathComponent("Engine Profiles", isDirectory: true).appendingPathComponent(profile.id.uuidString, isDirectory: true)
         let e = ProfileEnvironment(profileID: profile.id, engineProfile: engine.makeProfile(id: profile.id, directory: folder), store: self)
+        e.engineProfile.setPermissionDecisions(permissionDecisionList)
         e.installBoosts(boosts)
         if let blocker { blocker.attach(to: e) }
         environments[pid] = e
         extensionCenter?.environmentCreated(e)
         return e
+    }
+
+    /// What the user decided about sites' permissions, as the engine takes it.
+    var permissionDecisionList: [PermissionDecision] {
+        settings.permissionDecisions.compactMap { key, allowed in
+            guard let p = SitePermission(key: key, allowed: allowed), let kind = PermissionRequest.Kind(rawValue: p.kind) else { return nil }
+            return PermissionDecision(host: p.host, kind: kind, allowed: allowed)
+        }
     }
 
     /// The engine's side of every profile this store has opened.
@@ -412,6 +437,9 @@ public final class BrowserStore: TabHost {
         }
         if old.appearance != settings.appearance { NSApp?.appearance = settings.appearance.nsAppearance }
         if old.engine != settings.engine { onEngineSettingsChanged?() }
+        if old.permissionDecisions != settings.permissionDecisions {
+            for profile in engineProfiles { profile.setPermissionDecisions(permissionDecisionList) }
+        }
         // Not remembering the page forgets the one that was: the copies the file made while it was there go too.
         if old.menuBar.rememberPage && !settings.menuBar.rememberPage { try? settingsFile?.rewriteDiscardingBackups(settings) }
         haptics.isEnabled = settings.trackpadHaptics

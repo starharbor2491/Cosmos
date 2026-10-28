@@ -17,6 +17,7 @@ public final class ChromiumEngine: BrowserEngine {
     private let install: ChromiumInstall
     private let override: URL?
     private let offline: Bool
+    let extraFlags: [String]
     private(set) public var state: ChromiumInstallState
     private var app: URL?
     private var waiting: [CheckedContinuation<URL?, Never>] = []
@@ -27,10 +28,12 @@ public final class ChromiumEngine: BrowserEngine {
     /// - Parameter supportDirectory: where Chromium is kept (`~/Library/Application Support/Cosmos/Chromium`).
     /// - Parameter application: a Chromium.app to use as it is, without downloading or updating (tests, the harness).
     /// - Parameter offline: never touch the network.
-    public init(supportDirectory: URL, application: URL? = nil, offline: Bool = false) {
+    /// - Parameter extraFlags: more of Chromium's command-line switches (tests give it a fake camera and microphone).
+    public init(supportDirectory: URL, application: URL? = nil, offline: Bool = false, extraFlags: [String] = []) {
         install = ChromiumInstall(root: supportDirectory)
         override = application
         self.offline = offline
+        self.extraFlags = extraFlags
         state = install.loadState()
     }
 

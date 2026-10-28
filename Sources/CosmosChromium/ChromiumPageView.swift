@@ -11,9 +11,12 @@ final class ChromiumPageView: NSView, NSTextInputClient {
     private var keyDownCommands: [String]?
     private var keyDownText: String?
     private(set) var lastContextClick: ContextClick?
+    /// What the drag over the page carries, while it is over the page.
+    private var dragging: [String: Any]?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
+        registerForDraggedTypes([.fileURL, .URL, .string, .html])
         wantsLayer = true
         layer?.backgroundColor = NSColor.white.cgColor
         layer?.contentsGravity = .topLeft
@@ -75,6 +78,27 @@ final class ChromiumPageView: NSView, NSTextInputClient {
 
     var isShowing: Bool { window != nil && !isHiddenOrHasHiddenAncestor }
     var backingScale: CGFloat { window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2 }
+
+    // MARK: Accessibility
+
+    /// The page area is the page's scroll area for VoiceOver; the page itself is in it, read from Chromium once an
+    /// assistive app first looks (`ChromiumAccessibility`).
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .scrollArea }
+
+    override func accessibilityChildren() -> [Any]? {
+        guard let page else { return [] }
+        let accessibility = page.accessibilityWanted()
+        accessibility.touched()
+        return accessibility.root.map { [$0] } ?? []
+    }
+
+    override func accessibilityHitTest(_ point: NSPoint) -> Any? { page?.accessibility?.element(at: point) ?? self }
+
+    override var accessibilityFocusedUIElement: Any? {
+        guard window?.firstResponder === self, let focused = page?.accessibility?.focusedElement else { return self }
+        return focused
+    }
 
     // MARK: Cursor
 
@@ -179,6 +203,7 @@ final class ChromiumPageView: NSView, NSTextInputClient {
         let dx = -event.scrollingDeltaX * lines / zoom
         let dy = -event.scrollingDeltaY * lines / zoom
         guard dx != 0 || dy != 0 else { return }
+        page?.accessibility?.refreshSoon(after: 0.3)
         let p = point(event)
         page?.input("Input.dispatchMouseEvent", ["type": "mouseWheel", "x": p.x, "y": p.y, "deltaX": dx, "deltaY": dy,
                                                  "modifiers": Self.modifiers(event.modifierFlags), "button": "none", "buttons": pressedButtons])
@@ -196,6 +221,58 @@ final class ChromiumPageView: NSView, NSTextInputClient {
                                         uptime: event.timestamp)
     }
 
+    // MARK: Drops
+
+    /// What a drag from another app carries, as Chromium takes it: files, links, text. Nil for a drag that started in
+    /// Cosmos itself (a sidebar tab): pages never get those.
+    static func dragData(from pasteboard: NSPasteboard, fromInsideCosmos: Bool) -> [String: Any]? {
+        guard !fromInsideCosmos else { return nil }
+        let urls = pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL] ?? []
+        let files = urls.filter(\.isFileURL).map(\.path)
+        var items: [[String: Any]] = []
+        let links = urls.filter { !$0.isFileURL }.map(\.absoluteString)
+        if !links.isEmpty { items.append(["mimeType": "text/uri-list", "data": links.joined(separator: "\r\n")]) }
+        if let text = pasteboard.string(forType: .string) { items.append(["mimeType": "text/plain", "data": text]) }
+        if let html = pasteboard.string(forType: .html) { items.append(["mimeType": "text/html", "data": html]) }
+        guard !files.isEmpty || !items.isEmpty else { return nil }
+        // Copy, link or move: the page chooses.
+        var data: [String: Any] = ["items": items, "dragOperationsMask": 1 | 2 | 16]
+        if !files.isEmpty { data["files"] = files }
+        return data
+    }
+
+    func sendDrag(_ type: String, data: [String: Any], at point: CGPoint) {
+        let zoom = page?.zoom ?? 1
+        page?.input("Input.dispatchDragEvent", ["type": type, "x": point.x / zoom, "y": point.y / zoom, "data": data,
+                                                "modifiers": Self.modifiers(NSEvent.modifierFlags)])
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        // A drag from another app has no source in Cosmos.
+        dragging = Self.dragData(from: sender.draggingPasteboard, fromInsideCosmos: sender.draggingSource != nil)
+        guard let dragging else { return [] }
+        sendDrag("dragEnter", data: dragging, at: convert(sender.draggingLocation, from: nil))
+        return .copy
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard let dragging else { return [] }
+        sendDrag("dragOver", data: dragging, at: convert(sender.draggingLocation, from: nil))
+        return .copy
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        if let dragging { sendDrag("dragCancel", data: dragging, at: .zero) }
+        dragging = nil
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let dragging else { return false }
+        sendDrag("drop", data: dragging, at: convert(sender.draggingLocation, from: nil))
+        self.dragging = nil
+        return true
+    }
+
     // MARK: Keyboard
 
     override func keyDown(with event: NSEvent) {
@@ -210,6 +287,8 @@ final class ChromiumPageView: NSView, NSTextInputClient {
         // A key the input method used (composing kana, choosing a candidate) is not the page's.
         if wasComposing || hasMarkedText() { return }
         send(event, type: text == nil ? "rawKeyDown" : "keyDown", text: text, commands: commands)
+        // Tab moves the focus, arrows and space scroll: what VoiceOver reads may have changed.
+        page?.accessibility?.refreshSoon(after: 0.3)
     }
 
     override func keyUp(with event: NSEvent) {

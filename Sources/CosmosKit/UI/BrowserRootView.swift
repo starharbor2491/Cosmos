@@ -23,6 +23,10 @@ struct BrowserRootView: View {
                     SidebarResizeHandle(window: window, store: store)
                 }
                 ContentArea(store: store, window: window)
+                if let panel = window.sidePanel {
+                    ExtensionSidePanelView(store: store, window: window, panel: panel)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
             }
 
             if !window.sidebarVisible { SidebarRevealLayer(store: store, window: window) }
@@ -40,9 +44,41 @@ struct BrowserRootView: View {
         .environment(\.haptics, store.haptics)
         .animation(Motion.glide, value: space.id)
         .animation(Motion.standard, value: window.sidebarVisible)
+        .animation(Motion.standard, value: window.sidePanel?.extensionID)
         .animation(Motion.quick, value: window.overlay)
         .preferredColorScheme(palette.isDark ? .dark : .light)
         .frame(minWidth: 760, minHeight: 480)
+    }
+}
+
+// MARK: - Extension side panel
+
+/// An extension's side panel (`chrome.sidePanel`), beside the page: its name, a close button, and its page.
+struct ExtensionSidePanelView: View {
+    let store: BrowserStore
+    let window: WindowState
+    let panel: WindowState.SidePanel
+    @Environment(\.palette) private var palette
+
+    static let width: CGFloat = 360
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: Metrics.Space.s) {
+                Text(panel.title).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(palette.text).lineLimit(1)
+                Spacer(minLength: 0)
+                ToolbarButton(symbol: "xmark", size: 11, box: Metrics.Height.compactButton, help: "Close side panel") {
+                    panel.runtime.tearDown()
+                    window.sidePanel = nil
+                }
+                .accessibilityLabel("Close side panel")
+            }
+            .frame(height: Metrics.Height.toolbar)
+            WebContentRepresentable(runtimes: [panel.runtime], focusedID: nil, orientation: .horizontal, weights: [],
+                                    accent: NSColor(palette.accentRaw), wantsFocus: false, revision: store.runtimeRevision, onWeights: { _ in })
+        }
+        .frame(width: Self.width)
+        .padding(EdgeInsets(top: 0, leading: Metrics.Space.s, bottom: Metrics.Space.s, trailing: Metrics.Space.s))
     }
 }
 
@@ -86,6 +122,7 @@ struct ContentArea: View {
 
                 if !store.engineStatus.isReady, !window.libraryOpen { EngineStatusCard(store: store).transition(.opacity) }
                 if window.overlay == .find, !window.libraryOpen { FindBar(store: store, window: window).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing).padding(14) }
+                if !window.libraryOpen, let rt = panes.first(where: { $0.danger != nil }) { DangerBar(runtime: rt).transition(.opacity) }
                 if let peek = window.peek { PeekOverlay(store: store, window: window, peek: peek) }
                 StatusBubble(store: store, window: window)
                 ToastView(window: window)
@@ -194,6 +231,37 @@ struct ToastView: View {
 
 /// Over the page area while there is no engine to draw pages: Chromium is being downloaded on the first launch, or could
 /// not be.
+/// Under the warning page Cosmos shows in place of a site on a malware or phishing list: back to safety, or on anyway.
+struct DangerBar: View {
+    let runtime: TabRuntime
+    @Environment(\.palette) private var palette
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.shield.fill").font(.system(size: 15, weight: .semibold)).foregroundStyle(.red)
+            Text(runtime.danger?.kind == .malware ? "This site may harm your Mac." : "This site may be pretending to be another.")
+                .font(.system(size: 12.5, weight: .medium)).foregroundStyle(palette.text)
+            Button { runtime.leaveDangerousSite() } label: {
+                Text("Go Back").font(.system(size: 12.5, weight: .semibold))
+                    .padding(.horizontal, 14).padding(.vertical, 5)
+                    .background(Capsule().fill(palette.accentFill)).foregroundStyle(palette.onAccent)
+            }
+            .buttonStyle(.plain)
+            Button { runtime.visitDangerousSiteAnyway() } label: {
+                Text("Visit Anyway").font(.system(size: 12.5)).foregroundStyle(palette.secondary).padding(.horizontal, 6)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 9)
+        .background(.regularMaterial, in: Capsule())
+        .background(Capsule().fill(palette.panel))
+        .overlay(Capsule().strokeBorder(palette.stroke, lineWidth: 0.6))
+        .shadow(color: palette.shadow, radius: 16, y: 5)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .padding(.bottom, 22)
+    }
+}
+
 struct EngineStatusCard: View {
     let store: BrowserStore
     @Environment(\.palette) private var palette

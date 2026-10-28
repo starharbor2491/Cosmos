@@ -36,7 +36,7 @@ struct FaviconView: View {
         .frame(width: size, height: size)
         .animation(Motion.standard, value: store.favicons.has(host: host ?? ""))
         .task(id: fetch ? (host ?? "") : "") {
-            if fetch { store.favicons.ensure(url: url) }
+            if fetch, url.flatMap({ store.danger(at: $0) }) == nil { store.favicons.ensure(url: url) }
         }
     }
 }

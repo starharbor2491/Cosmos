@@ -42,6 +42,10 @@ struct EnginePane: View {
                     SwitchControl(isOn: $store.settings.engine.preloadPages)
                 }
                 Hairline()
+                SettingRow(title: "Warn about dangerous sites", detail: "Stops pages from sites on public malware and phishing lists (URLhaus, OpenPhish, PhishTank), checked on this Mac; the lists are fetched twice a day.", symbol: "exclamationmark.shield") {
+                    SwitchControl(isOn: $store.settings.warnAboutDangerousSites)
+                }
+                Hairline()
                 SettingRow(title: "Always use secure connections", detail: "Tries HTTPS first and warns before a site that has none.", symbol: "lock") {
                     SwitchControl(isOn: $store.settings.engine.httpsFirst)
                 }

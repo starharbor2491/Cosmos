@@ -217,6 +217,19 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
         store.onPopupWindow = { runtime, request, bringForward in
             PopupWindows.present(runtime, request: request, bringForward: bringForward)
         }
+        store.onPictureInPicture = { [weak self, weak store] runtime, video in
+            guard let self, let store else { return false }
+            return self.showPictureInPicture(video, for: runtime, of: store)
+        }
+        store.onShowTab = { [weak self, weak store] runtime in
+            guard let self, let store else { return }
+            self.showTab(runtime, of: store)
+        }
+        store.onPictureInPictureEnded = { [weak self] runtime in
+            guard let panel = self?.pictureInPicture, panel.runtime === runtime else { return }
+            self?.pictureInPicture = nil
+            panel.closeBecausePageEnded()
+        }
         store.onRetryEngine = { [weak self] in
             guard let engine = self?.engine else { return }
             Task { await engine.checkForUpdate(force: true) }
@@ -229,6 +242,32 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
             guard let self, let store else { return }
             self.activeState(for: store)?.showToast("Downloading \(item.filename)", symbol: "arrow.down.circle.fill")
         }
+    }
+
+    // MARK: Picture in Picture
+
+    /// One video at a time, as in Chrome: a new one sends the one before back to its page.
+    private var pictureInPicture: PictureInPicturePanel?
+
+    private func showPictureInPicture(_ video: NSView, for runtime: TabRuntime, of store: BrowserStore) -> Bool {
+        if let previous = pictureInPicture { pictureInPicture = nil; previous.close() }
+        let panel = PictureInPicturePanel(showing: video, for: runtime)
+        panel.onBackToTab = { [weak self, weak store, weak runtime] in
+            guard let self, let store, let runtime else { return }
+            self.showTab(runtime, of: store)
+        }
+        panel.onClose = { [weak self, weak panel] in if self?.pictureInPicture === panel { self?.pictureInPicture = nil } }
+        panel.orderFrontRegardless()
+        pictureInPicture = panel
+        return true
+    }
+
+    /// Brings a tab to the front: its window, and the tab in it.
+    private func showTab(_ runtime: TabRuntime, of store: BrowserStore) {
+        guard let state = store.window(showing: runtime.itemID) ?? activeState(for: store) else { return }
+        if store.workspace.item(runtime.itemID) != nil { store.select(runtime.itemID, in: state) }
+        controllers.first { $0.state === state }?.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func activeState(for store: BrowserStore) -> WindowState? {

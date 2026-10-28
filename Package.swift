@@ -30,7 +30,7 @@ let package = Package(
         .target(
             name: "CosmosChromium",
             dependencies: ["CosmosCore", "CosmosEngine"],
-            resources: [.copy("Resources/Bridge"), .process("Resources/engine-helper.js"), .process("Resources/extension-shim.js")]
+            resources: [.copy("Resources/Bridge"), .process("Resources/engine-helper.js"), .process("Resources/extension-shim.js"), .process("Resources/page-bridge.js")]
         ),
         .target(
             name: "CosmosKit",

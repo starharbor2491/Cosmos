@@ -39,6 +39,7 @@ final class FakeProfile: EngineProfile {
     private(set) var scripts: [PageScript] = []
     /// The last `setContentBlocking`, nil before the first.
     private(set) var blocking: (lists: [CompiledBlockingList]?, allowlist: [String])?
+    private(set) var permissionDecisions: [PermissionDecision] = []
     private(set) var pages: [FakePage] = []
     private(set) var restarts = 0
     private(set) var clearedSiteData = 0
@@ -62,6 +63,7 @@ final class FakeProfile: EngineProfile {
 
     func setPageScripts(_ scripts: [PageScript]) { self.scripts = scripts }
     func setContentBlocking(_ lists: [CompiledBlockingList]?, allowlist: [String]) { blocking = (lists, allowlist) }
+    func setPermissionDecisions(_ decisions: [PermissionDecision]) { permissionDecisions = decisions }
     func clearSiteData() async { clearedSiteData += 1 }
     func processIDs() async -> [Int32] { processes }
     func restart() { restarts += 1; delegate?.profileDidRestart(self) }
@@ -119,6 +121,10 @@ final class FakePage: EnginePage {
     func download(_ url: URL) { downloads.append(url) }
     func recentContextClick() -> ContextClick? { contextClick }
     func showInspector() -> Bool { false }
+    private(set) var leftPictureInPicture = 0
+    func leavePictureInPicture() { leftPictureInPicture += 1 }
+    private(set) var notificationActions: [(id: String, action: NotificationAction)] = []
+    func notification(_ id: String, did action: NotificationAction) { notificationActions.append((id, action)) }
     func usage() async -> PageUsage? { reportedUsage }
     func activate() { activations += 1 }
     func close() { isClosed = true }
@@ -175,6 +181,13 @@ final class FakeExtensions: EngineExtensions {
     func menuItems(for page: EnginePage?) -> [ExtensionMenuItem] { items }
     func performMenuItem(_ item: ExtensionMenuItem, context: ExtensionClickContext, on page: EnginePage) async { clicked.append((item, context)) }
     func performCommand(_ command: ExtensionCommand, on page: EnginePage?) async { performed.append(command.name) }
+    var onSidePanelRequest: ((String, EnginePage?) -> Void)?
+    private(set) var sidePanelsOpened: [String] = []
+    func openSidePanel(_ extensionID: String, for page: EnginePage?) async -> EnginePage? { sidePanelsOpened.append(extensionID); return FakePage() }
+    var onNotification: ((String, EngineNotification) -> Void)?
+    var onNotificationClosed: ((String, String) -> Void)?
+    private(set) var notificationActions: [(id: String, extensionID: String, action: NotificationAction)] = []
+    func notification(_ id: String, of extensionID: String, did action: NotificationAction) async { notificationActions.append((id, extensionID, action)) }
 }
 
 extension TabRuntime {
@@ -221,12 +234,23 @@ final class PageServer: @unchecked Sendable {
 
 /// Serves fixed responses by path on 127.0.0.1 and records every request line's path (query included), so a test can
 /// check both what a client got and what it asked for.
+/// Stands in for macOS's Notification Center: records what Cosmos posts, and lets a test click it.
+@MainActor
+final class FakeNotifier: Notifying {
+    var shown: [(note: EngineNotification, key: String, onAction: (NotificationAction) -> Void)] = []
+    var closed: [String] = []
+    func show(_ note: EngineNotification, key: String, onAction: @escaping (NotificationAction) -> Void) { shown.append((note, key, onAction)) }
+    func close(key: String) { closed.append(key) }
+}
+
 final class SiteServer: @unchecked Sendable {
     struct Route {
         var type: String
         var body: Data
         /// Seconds the server waits before answering, to be in the middle of a request when something else happens.
         var delay: TimeInterval = 0
+        /// "user:password": without them in a Basic `Authorization` header the answer is 401 and a Basic challenge.
+        var basicAuth: String? = nil
     }
 
     private final class Recorder: @unchecked Sendable {
@@ -247,12 +271,16 @@ final class SiteServer: @unchecked Sendable {
         l.newConnectionHandler = { connection in
             connection.start(queue: .global())
             connection.receive(minimumIncompleteLength: 1, maximumLength: 16384) { data, _, _, _ in
-                let line = data.flatMap { String(decoding: $0, as: UTF8.self).components(separatedBy: "\r\n").first } ?? ""
-                let path = line.split(separator: " ").dropFirst().first.map(String.init) ?? "/"
-                recorder.add(path)
+                let lines = data.map { String(decoding: $0, as: UTF8.self).components(separatedBy: "\r\n") } ?? []
+                let path = lines.first?.split(separator: " ").dropFirst().first.map(String.init) ?? "/"
+                // A connection that sends nothing (Chromium connects ahead of a page it may load) asks for nothing.
+                if !lines.isEmpty { recorder.add(path) }
                 let route = routes[path.components(separatedBy: "?").first ?? path]
-                let body = route?.body ?? Data()
-                let head = "HTTP/1.1 \(route == nil ? "404 Not Found" : "200 OK")\r\nContent-Type: \(route?.type ?? "text/plain")\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
+                let credentials = route?.basicAuth.map { "authorization: basic " + Data($0.utf8).base64EncodedString().lowercased() }
+                let refused = credentials.map { c in !lines.contains { $0.lowercased() == c } } ?? false
+                let body = refused ? Data("<body>sign in</body>".utf8) : route?.body ?? Data()
+                let status = route == nil ? "404 Not Found" : refused ? "401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"Cosmos test\"" : "200 OK"
+                let head = "HTTP/1.1 \(status)\r\nContent-Type: \(refused ? "text/html" : route?.type ?? "text/plain")\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
                 let send = { connection.send(content: Data(head.utf8) + body, completion: .contentProcessed { _ in connection.cancel() }) }
                 if let delay = route?.delay, delay > 0 { DispatchQueue.global().asyncAfter(deadline: .now() + delay, execute: send) } else { send() }
             }

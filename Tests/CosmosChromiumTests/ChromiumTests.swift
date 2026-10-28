@@ -256,10 +256,22 @@ import CosmosEngine
     /// without one they are nil, and comparing them traps.
     init() { _ = NSApplication.shared }
 
-    /// A sidebar tab dragged over the page must not navigate it, and Cosmos does not pass drops to pages: the page
-    /// view takes none.
-    @Test func thePageTakesNoDrops() {
-        #expect(ChromiumPageView(frame: .zero).registeredDraggedTypes.isEmpty)
+    /// Files, links and text dragged in from other apps go to the page. A drag that started in Cosmos (a sidebar tab)
+    /// never does, so a tab dragged over the page cannot land in it.
+    @Test func thePageTakesWhatOtherAppsDropButNotSidebarTabs() throws {
+        #expect(ChromiumPageView(frame: .zero).registeredDraggedTypes.contains(.fileURL))
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("cosmos-test-\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        pasteboard.writeObjects([URL(fileURLWithPath: "/tmp/notes.txt") as NSURL])
+        let files = try #require(ChromiumPageView.dragData(from: pasteboard, fromInsideCosmos: false))
+        #expect(files["files"] as? [String] == ["/tmp/notes.txt"])
+        #expect(ChromiumPageView.dragData(from: pasteboard, fromInsideCosmos: true) == nil)
+        pasteboard.clearContents()
+        pasteboard.setString("hello", forType: .string)
+        let text = try #require(ChromiumPageView.dragData(from: pasteboard, fromInsideCosmos: false))
+        #expect((text["items"] as? [[String: Any]])?.first?["data"] as? String == "hello")
+        #expect((text["items"] as? [[String: Any]])?.first?["mimeType"] as? String == "text/plain")
     }
 
     /// A menu from the keyboard's menu key is not tied to a click from half a minute ago.
@@ -285,6 +297,67 @@ import CosmosEngine
         #expect(ChromiumPageView.modifiers([.command, .shift]) == 4 | 8)
         #expect(ChromiumPageView.modifiers([.option, .control]) == 1 | 2)
         #expect(ChromiumPageView.modifiers([.capsLock]) == 0)
+    }
+}
+
+/// What VoiceOver reads: Chromium's accessibility tree of a page, as Cosmos hands it to AppKit.
+@Suite struct ChromiumAccessibilityTests {
+    private func node(_ id: String, _ role: String, _ name: String = "", parent: String? = nil, children: [String] = [], ignored: Bool = false,
+                      backend: Int? = nil, properties: [[String: Any]] = []) -> [String: Any] {
+        var n: [String: Any] = ["nodeId": id, "ignored": ignored, "role": ["type": "role", "value": role],
+                                "name": ["type": "computedString", "value": name], "childIds": children, "properties": properties]
+        if let parent { n["parentId"] = parent }
+        if let backend { n["backendDOMNodeId"] = backend }
+        return n
+    }
+
+    /// Nodes no one reads (ignored ones, wrappers without a name, the boxes text is laid out in) are left out, and what
+    /// they held moves up to their parent.
+    @Test func whatIsNotReadIsLeftOutAndWhatItHeldMovesUp() throws {
+        let nodes: [[String: Any]] = [
+            node("1", "RootWebArea", "Test page", children: ["2"], backend: 1),
+            node("2", "none", parent: "1", children: ["3", "4", "7"], ignored: true),
+            node("3", "heading", "Welcome", parent: "2", children: ["5"], backend: 10, properties: [["name": "level", "value": ["type": "integer", "value": 2]]]),
+            node("5", "StaticText", "Welcome", parent: "3", children: ["6"], backend: 11),
+            node("6", "InlineTextBox", "Welcome", parent: "5"),
+            node("4", "generic", parent: "2", children: ["8"]),
+            node("8", "link", "More", parent: "4", backend: 12, properties: [
+                ["name": "url", "value": ["type": "string", "value": "https://example.com/more"]],
+                ["name": "focusable", "value": ["type": "booleanOrUndefined", "value": true]],
+            ]),
+            node("7", "button", "Press", parent: "2", backend: 13, properties: [["name": "disabled", "value": ["type": "boolean", "value": true]]]),
+        ]
+        let root = try #require(AXPageNode.tree(nodes))
+        #expect(root.role == "RootWebArea" && root.name == "Test page")
+        #expect(root.children.map(\.role) == ["heading", "link", "button"])
+        let heading = root.children[0]
+        #expect(heading.properties["level"] == "2")
+        #expect(heading.children.map(\.role) == ["StaticText"])
+        #expect(heading.children[0].children.isEmpty, "text boxes are left out")
+        #expect(root.children[1].properties["url"] == "https://example.com/more")
+        #expect(root.children[1].properties["focusable"] == "true")
+        #expect(root.children[2].properties["disabled"] == "true")
+        #expect(root.children[2].backendNodeID == 13)
+    }
+
+    /// Chromium's roles become the ones VoiceOver knows on the Mac, landmarks included.
+    @Test func chromiumsRolesBecomeTheMacsOwn() {
+        func role(_ r: String, _ properties: [String: String] = [:]) -> (NSAccessibility.Role, NSAccessibility.Subrole?) {
+            let mac = AXPageNode(id: "1", role: r, name: "", properties: properties).macRole
+            return (mac.role, mac.subrole)
+        }
+        #expect(role("RootWebArea").0.rawValue == "AXWebArea")
+        #expect(role("heading").0.rawValue == "AXHeading")
+        #expect(role("link").0 == .link)
+        #expect(role("button").0 == .button)
+        #expect(role("StaticText").0 == .staticText)
+        #expect(role("image").0 == .image)
+        #expect(role("textbox").0 == .textField)
+        #expect(role("textbox", ["multiline": "true"]).0 == .textArea)
+        #expect(role("checkbox").0 == .checkBox)
+        #expect(role("navigation").0 == .group && role("navigation").1?.rawValue == "AXLandmarkNavigation")
+        #expect(role("main").1?.rawValue == "AXLandmarkMain")
+        #expect(role("somethingNew").0 == .group)
     }
 }
 

@@ -142,6 +142,42 @@ import CosmosEngine
         #expect(engine.clicked.first?.1 == context)
     }
 
+    /// An extension's notification goes to macOS (here, the stand-in), and what the user does with it goes back to the
+    /// extension.
+    @Test func anExtensionsNotificationIsPostedAndAnsweredThroughTheCenter() async throws {
+        let (rig, _, _, engine) = try started()
+        let notifier = FakeNotifier()
+        rig.store.notifier = notifier
+        let note = EngineNotification(id: "n1", title: "Done", body: "Uploaded", source: "Uploader", buttons: ["Open"])
+        engine.onNotification?("ext-uploader", note)
+        let shown = try #require(notifier.shown.first)
+        #expect(shown.note == note)
+        shown.onAction(.button(0))
+        try await until { engine.notificationActions.count == 1 }
+        #expect(engine.notificationActions.first?.id == "n1")
+        #expect(engine.notificationActions.first?.extensionID == "ext-uploader")
+        #expect(engine.notificationActions.first?.action == .button(0))
+        engine.onNotificationClosed?("ext-uploader", "n1")
+        #expect(notifier.closed == [shown.key])
+    }
+
+    /// An extension asks for its side panel: the window shows the panel's page beside the tab's, and asking again (the
+    /// button, a second time) closes it.
+    @Test func anExtensionsSidePanelOpensInTheWindowAndClosesOnTheSecondAsk() async throws {
+        let (rig, center, runtime, engine) = try started()
+        let source = rig.dir.appendingPathComponent("src-ext", isDirectory: true)
+        try writeTestExtension(to: source)
+        let installed = try await center.install(from: source, origin: "x") { _ in true }
+        let id = FakeExtensions.id(for: center.folder(for: installed))
+        engine.onSidePanelRequest?(id, runtime.page)
+        try await until { rig.window.sidePanel != nil }
+        #expect(rig.window.sidePanel?.extensionID == id)
+        #expect(rig.window.sidePanel?.title == "Cosmos Test Extension")
+        #expect(engine.sidePanelsOpened == [id])
+        engine.onSidePanelRequest?(id, runtime.page)
+        try await until { rig.window.sidePanel == nil }
+    }
+
     @Test func aProfileOpenedLaterGetsTheEnabledExtensions() async throws {
         let (rig, center, _, _) = try started()
         let source = rig.dir.appendingPathComponent("src-ext", isDirectory: true)
@@ -194,8 +230,10 @@ import CosmosEngine
         #expect(v2.problems.contains { $0.contains("Manifest V2") })
         #expect(v2.permissions == ["tabs"])
         #expect(v2.hostPatterns == ["https://a.com/*"])
-        let unsupported = ExtensionRequestSummary.read(["manifest_version": 3, "version": "2", "permissions": ["sidePanel", "storage", "identity"]])
-        #expect(unsupported.problems == ["Cosmos can't show its side panel, Google sign-in yet."])
+        let shown = ExtensionRequestSummary.read(["manifest_version": 3, "version": "2", "permissions": ["sidePanel", "notifications", "identity"]])
+        #expect(shown.problems.isEmpty, "side panels, notifications and sign-in pages are all drawn by Cosmos")
+        let google = ExtensionRequestSummary.read(["manifest_version": 3, "version": "2", "permissions": ["identity"], "oauth2": ["client_id": "x"]])
+        #expect(google.problems == ["Its Google sign-in goes through a web page instead of a Google account in the browser; some Google services refuse that."])
         let fine = ExtensionRequestSummary.read(["manifest_version": 3, "version": "3", "permissions": ["storage"],
                                                  "content_scripts": [["matches": ["https://b.com/*", "https://b.com/*"]]]])
         #expect(fine.problems.isEmpty)

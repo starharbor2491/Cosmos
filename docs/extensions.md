@@ -19,6 +19,10 @@ that end in browser UI:
 | `chrome.contextMenus` / `chrome.menus`: items, children, `update`, `remove`, contexts `page` `link` `image` `selection` `editable` `video` `audio` `all`, `%s` in titles | the items appear in the page's right-click menu (in the radial menu under More); a click reaches `onClicked` with the click's `info` and the tab |
 | `chrome.commands` (`commands` in the manifest, `_execute_action`) | the shortcut works in Cosmos windows; `onCommand` gets the command and the tab |
 | `chrome.tabs.create`, an options page | the page opens as a Cosmos tab (a script-sized popup window opens as a popup) |
+| `chrome.notifications`: `create`, `update`, `clear`, buttons, icons | posted to macOS as Cosmos's own notifications; a click, a button or closing it reaches `onClicked`, `onButtonClicked` and `onClosed` |
+| `chrome.sidePanel`: `side_panel` in the manifest, `setOptions` (per tab too), `setPanelBehavior({ openPanelOnActionClick })`, `open` | the panel page in a column at the right of the window, with the extension's own APIs; the action button opens and closes it when the extension asks |
+| `chrome.identity.launchWebAuthFlow` (interactive) | the sign-in page opens in a window; the flow ends when the site sends it to `https://<id>.chromiumapp.org/…` |
+| `chrome.identity.getAuthToken` | Google's sign-in page for the manifest's `oauth2` client, through the same window (see below) |
 
 ## Adding extensions
 
@@ -31,8 +35,8 @@ Open **Cosmos ▸ Extensions…** (or type "extensions" in the Command Bar).
 | **Choose a Folder** | Any unpacked extension folder that contains `manifest.json`. Handy for extensions you are writing. |
 
 Before anything is copied, Cosmos shows what the extension asks for in plain words ("Read and change your data on all
-websites", "See your network requests", "Read files on your Mac that you open in Cosmos") and any parts that will not
-show. Adding is a yes or no.
+websites", "See your network requests", "Read files on your Mac that you open in Cosmos") and, for an extension that
+signs in to Google, that its sign-in goes through a web page. Adding is a yes or no.
 
 Cosmos copies the extension into its own folder (`Extensions/<id>/` in the data folder), so it keeps working after you
 delete Arc. Reading from Arc never changes Arc's files. After an Arc import, the summary tells you how many extensions
@@ -47,9 +51,11 @@ Arc had and where to add them.
 
 ## What does not work
 
-- **APIs whose result Chrome shows in its own interface and Cosmos does not draw yet:** `sidePanel`, `notifications`
-  and `identity` (Google sign-in). The Add prompt names them when an extension asks for them; the extension still
-  loads, and the parts that use those APIs do nothing visible.
+- **`identity.getAuthToken` has no Google account in the browser.** Chrome signs an extension in with the Google
+  account Chrome is signed in to; Chromium has none here, so Cosmos opens Google's own sign-in page for the extension's
+  `oauth2` client instead, as `launchWebAuthFlow` would. Some Google services refuse a token made that way, and the
+  Add prompt says so for an extension with `oauth2` in its manifest. `launchWebAuthFlow` itself works as in Chrome: an
+  interactive flow opens as a window, and ends when the site sends it to the extension's `chromiumapp.org` address.
 - **Chromium's own stores, not Cosmos's.** `chrome.bookmarks` sees Chromium's bookmark store, which is empty (Cosmos's
   pinned tabs and Favorites are not Chromium bookmarks); `chrome.history` sees the history Chromium keeps for the
   profile, not Cosmos's History; `chrome.windows` sees Chromium's invisible windows, not Cosmos's.
@@ -67,14 +73,19 @@ Arc had and where to add them.
   the menu item and the shortcut each reach the worker, which messages the right tab. This test found that an
   extension can have a second, dead worker that Chromium has replaced: Cosmos now delivers to the worker that can
   still reach the extension's APIs and lets go of the other.
+- **Live, too:** an extension's notification is posted and its click and button reach the extension
+  (`anExtensionsNotificationIsPostedAndItsClickReachesTheExtension`); its side panel opens as a page with the
+  extension's APIs (`anExtensionsSidePanelOpensAsAPageCosmosShows`); an interactive `launchWebAuthFlow` opens a window
+  and resolves with the address the site sent it to (`anExtensionsSignInOpensAWindowAndEndsWhereTheSiteSendsBack`).
+  `getAuthToken` against Google itself was not tried.
 - `ChromiumExtensionHostTests`: the mirror of buttons, badges, icons, popups and menus from what the shim reports, and
   that icons are only read from inside the extension's own folder.
 - `ExtensionTests`, `ExtensionShortcutTests` (on the fake engine): adding, the permission summary, enabling, removing,
   shortcut parsing and matching, which tab a menu item or shortcut is run over.
 - `ChromiumExtensionTests` (CosmosImport): finding extensions in a profile (versions, localized names, themes and apps
   skipped), Web Store link and id parsing, and unwrapping `.crx` packages (CRX2 and CRX3).
-- Not checked: real extensions from the Web Store one by one, popups on screen, and anything that needs a person at
-  the keyboard.
+- Not checked: real extensions from the Web Store one by one, popups, side panels and notifications on screen, and
+  anything that needs a person at the keyboard.
 
 ## For developers
 
@@ -86,5 +97,5 @@ Arc had and where to add them.
 | `CosmosKit/UI/ExtensionButtons.swift` | the button row |
 | `CosmosEngine/Engine.swift` (`EngineExtensions`) | what the browser asks of an engine's extensions: load, unload, buttons, menu items, commands |
 | `CosmosChromium/ChromiumExtensionHost.swift` | loads extensions over the pipe (`Extensions.loadUnpacked`), attaches to their service workers, mirrors their UI, delivers clicks (`Extensions.triggerAction` for buttons) |
-| `CosmosChromium/Resources/extension-shim.js` | runs in each extension worker before its own code: reports badge, icon, popup and menu calls to Cosmos, and fires `contextMenus.onClicked` and `commands.onCommand` when Cosmos says so |
+| `CosmosChromium/Resources/extension-shim.js` | runs in each extension worker before its own code: reports badge, icon, popup, menu, notification, side panel and sign-in calls to Cosmos, and fires `contextMenus.onClicked`, `commands.onCommand`, the notification events and the end of a sign-in flow when Cosmos says so |
 | `CosmosChromium/Resources/Bridge/` | Cosmos's own small extension in every profile: tab ids for extension events, page zoom, clearing site data |
