@@ -18,6 +18,8 @@ enum Motion {
 
     /// A row entering or leaving a list: it grows out of (and shrinks into) the row above it.
     static let row: AnyTransition = .opacity.combined(with: .scale(scale: 0.94, anchor: .top))
+    /// A whole page of the window changing (the Library taking the page's place): it fades and settles in from just behind.
+    static let lift: AnyTransition = .opacity.combined(with: .scale(scale: 0.985))
     /// A control appearing on hover: pops in from its centre.
     static let pop: AnyTransition = .scale(scale: 0.7).combined(with: .opacity)
 }

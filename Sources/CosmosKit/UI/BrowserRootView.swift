@@ -68,7 +68,7 @@ struct ContentArea: View {
             ZStack {
                 if window.libraryOpen {
                     // The Library takes the page's place; the tab's page stays loaded behind it, out of the hierarchy.
-                    LibraryView(store: store, window: window).transition(.opacity)
+                    LibraryView(store: store, window: window).transition(Motion.lift)
                 } else if panes.isEmpty {
                     EmptyStateView(store: store, window: window)
                 } else {

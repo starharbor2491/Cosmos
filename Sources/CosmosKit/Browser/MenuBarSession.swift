@@ -23,6 +23,8 @@ final class MenuBarSession {
     @ObservationIgnored var onPinChange: () -> Void = {}
     /// Whether the panel is on screen: a window its page opens is the user's to see only then.
     @ObservationIgnored var isPanelOpen: () -> Bool = { false }
+    /// The panel was resized by hand to this size.
+    @ObservationIgnored var onResized: (CGSize) -> Void = { _ in }
     /// A page that belongs in a browser window (⌘-click, "Open in Cosmos").
     @ObservationIgnored var onOpenInCosmos: (URL) -> Void = { _ in }
     @ObservationIgnored private var host: MenuBarHost?

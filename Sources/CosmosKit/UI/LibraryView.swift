@@ -18,7 +18,6 @@ struct LibraryView: View {
                 switch window.librarySection {
                 case .downloads: DownloadsSection(store: store, window: window)
                 case .history: HistorySection(store: store, window: window)
-                case .archive: ArchiveSection(store: store, window: window)
                 case .resources: ResourcesSection(store: store, window: window)
                 }
             }
@@ -65,7 +64,7 @@ struct LibraryControlLabel: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: symbol).font(.system(size: 12, weight: .semibold))
-            Text(title).font(.system(size: 12.5, weight: .medium)).lineLimit(1)
+            if !title.isEmpty { Text(title).font(.system(size: 12.5, weight: .medium)).lineLimit(1) }
         }
         .foregroundStyle(palette.secondary)
         .opacity(enabled ? 1 : 0.5)
@@ -98,6 +97,41 @@ struct LibraryFilterMenu<Option: Hashable & CaseIterable>: View where Option.All
         .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
         .accessibilityLabel("Filter")
         .accessibilityValue(title(selection))
+    }
+}
+
+/// The History section's Filter: which kind of entry to show and from when. Plain "Filter" while both are at their widest.
+struct TimelineFilterMenu: View {
+    @Binding var kind: TimelineKind
+    @Binding var period: HistoryWindow
+
+    private var summary: String {
+        let parts = [kind == .everything ? nil : kind.title, period == .allTime ? nil : period.title].compactMap { $0 }
+        return parts.isEmpty ? "Filter" : parts.joined(separator: " · ")
+    }
+
+    var body: some View {
+        Menu {
+            Section("Show") {
+                ForEach(TimelineKind.allCases) { option in
+                    Button { kind = option } label: {
+                        if option == kind { Label(option.title, systemImage: "checkmark") } else { Text(option.title) }
+                    }
+                }
+            }
+            Section("When") {
+                ForEach(HistoryWindow.allCases, id: \.self) { option in
+                    Button { period = option } label: {
+                        if option == period { Label(option.title, systemImage: "checkmark") } else { Text(option.title) }
+                    }
+                }
+            }
+        } label: {
+            LibraryControlLabel(symbol: "line.3.horizontal.decrease", title: summary)
+        }
+        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+        .accessibilityLabel("Filter")
+        .accessibilityValue(summary)
     }
 }
 
@@ -152,27 +186,6 @@ enum DownloadFilter: CaseIterable, Hashable {
     func matches(_ state: DownloadItem.State) -> Bool {
         switch (self, state) {
         case (.all, _), (.inProgress, .running), (.finished, .finished), (.stopped, .failed), (.stopped, .cancelled): return true
-        default: return false
-        }
-    }
-}
-
-/// Why a tab is in the Archive, for the Archive section's Filter.
-enum ArchiveFilter: CaseIterable, Hashable {
-    case all, closed, automatic, imported
-
-    var title: String {
-        switch self {
-        case .all: "All"
-        case .closed: "Closed"
-        case .automatic: "Automatic"
-        case .imported: "Imported"
-        }
-    }
-
-    func matches(_ item: ArchivedItem) -> Bool {
-        switch (self, item.reason) {
-        case (.all, _), (.closed, .closed), (.closed, .cleared), (.automatic, .auto), (.imported, .imported): return true
         default: return false
         }
     }

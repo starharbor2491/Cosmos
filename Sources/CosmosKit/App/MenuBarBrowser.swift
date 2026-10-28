@@ -19,11 +19,6 @@ final class MenuBarBrowser: NSObject {
     private(set) var panel: MenuBarPanel?
     private var closedAt: Date?
     private var resignObserver: NSObjectProtocol?
-    private var moveObserver: NSObjectProtocol?
-    /// Where the panel was last put by `place`, to tell a move by the user (dragging its edge) from that.
-    private var placedFrame: CGRect?
-    /// The user dragged the panel somewhere: it stays there, at whatever size, until it is closed.
-    private var movedByUser = false
     private let showSettings: () -> Void
     private let showBrowser: () -> Void
 
@@ -44,6 +39,8 @@ final class MenuBarBrowser: NSObject {
             guard let self else { return }
             self.panel?.level = self.session.isPinned ? .floating : .statusBar
         }
+        // A size the user dragged the panel to is kept (for this layout) and used the next time it opens.
+        session.onResized = { [weak self] size in self?.store.settings.menuBar.setSize(size) }
         session.onOpenInCosmos = { [weak self] url in
             self?.hide()
             openInCosmos(url)
@@ -52,7 +49,6 @@ final class MenuBarBrowser: NSObject {
 
     deinit {
         if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
-        if let moveObserver { NotificationCenter.default.removeObserver(moveObserver) }
     }
 
     // MARK: Following the settings
@@ -69,10 +65,11 @@ final class MenuBarBrowser: NSObject {
             return
         }
         if statusItem == nil { installStatusItem() }
-        // A panel that is open follows a change of layout or profile where it is, without taking the keyboard back.
+        // A panel that is open follows a change of layout or profile, without taking the keyboard back. (One the user has just
+        // resized already has the size that was kept, and stays where it is.)
         if let panel, panel.isVisible {
             session.prepare()
-            place(panel)
+            if panel.frame.size != store.settings.menuBar.size { place(panel) }
         }
     }
 
@@ -141,30 +138,19 @@ final class MenuBarBrowser: NSObject {
         let blank = session.runtime?.url == nil
         session.prepare()
         let panel = makePanelIfNeeded()
-        // Opened again, it comes back under the icon; a panel that is already open is kept where the user put it.
-        if !panel.isVisible { movedByUser = false }
         place(panel)
         panel.makeKeyAndOrderFront(nil)
         if blank { session.focusAddress() }
     }
 
-    /// Puts the panel under the icon (or at the top right with none), at the size the layout asks for; one the user has
-    /// dragged stays where it is and only takes the new size.
+    /// Puts the panel under the icon (or at the top right with none), at the size it has (the layout's, or the one the user
+    /// dragged it to).
     private func place(_ panel: MenuBarPanel) {
-        let size = store.settings.menuBar.layout.size
-        let frame: CGRect
-        if movedByUser {
-            let visible = panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
-            frame = MenuBarPlacement.resized(panel.frame, to: size, visible: visible)
-        } else {
-            let button = statusItem?.button
-            let anchor = button.flatMap { b in b.window.map { $0.convertToScreen(b.convert(b.bounds, to: nil)) } }
-            let screen = button?.window?.screen ?? NSScreen.main
-            let visible = screen?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
-            frame = MenuBarPlacement.frame(anchor: anchor, size: size, visible: visible)
-        }
-        placedFrame = frame
-        panel.setFrame(frame, display: true)
+        let button = statusItem?.button
+        let anchor = button.flatMap { b in b.window.map { $0.convertToScreen(b.convert(b.bounds, to: nil)) } }
+        let screen = button?.window?.screen ?? NSScreen.main
+        let visible = screen?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
+        panel.setFrame(MenuBarPlacement.frame(anchor: anchor, size: store.settings.menuBar.size, visible: visible), display: true)
         panel.level = session.isPinned ? .floating : .statusBar
     }
 
@@ -176,7 +162,7 @@ final class MenuBarBrowser: NSObject {
 
     private func makePanelIfNeeded() -> MenuBarPanel {
         if let panel { return panel }
-        let made = MenuBarPanel(contentRect: NSRect(origin: .zero, size: store.settings.menuBar.layout.size),
+        let made = MenuBarPanel(contentRect: NSRect(origin: .zero, size: store.settings.menuBar.size),
                                 styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         made.isReleasedWhenClosed = false
         made.title = "Cosmos menu bar browser"
@@ -197,13 +183,6 @@ final class MenuBarBrowser: NSObject {
             MainActor.assumeIsolated {
                 guard let self, let panel = self.panel, !self.session.isPinned, panel.attachedSheet == nil else { return }
                 self.hide()
-            }
-        }
-        // A move that `place` did not make is the user dragging the panel by its edge.
-        moveObserver = NotificationCenter.default.addObserver(forName: NSWindow.didMoveNotification, object: made, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, let panel = self.panel, panel.isVisible, let placed = self.placedFrame else { return }
-                if abs(panel.frame.origin.x - placed.origin.x) > 0.5 || abs(panel.frame.origin.y - placed.origin.y) > 0.5 { self.movedByUser = true }
             }
         }
         panel = made

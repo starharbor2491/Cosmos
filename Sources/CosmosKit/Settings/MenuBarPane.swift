@@ -31,6 +31,10 @@ struct MenuBarPane: View {
                     ])
                     .frame(width: Metrics.Control.segmentedWidth)
                 }
+                Hairline()
+                SettingRow(title: "Panel size", detail: "Drag any edge or corner of the panel to change it. Now \(Int(menuBar.size.width)) × \(Int(menuBar.size.height)).", symbol: "arrow.up.left.and.arrow.down.right") {
+                    ActionButton(title: "Reset", enabled: menuBar.hasCustomSize) { store.settings.menuBar.resetSize() }
+                }
             }
             .opacity(menuBar.enabled ? 1 : 0.45)
             .disabled(!menuBar.enabled)

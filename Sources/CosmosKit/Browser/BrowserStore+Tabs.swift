@@ -437,8 +437,9 @@ extension BrowserStore {
     }
 
     /// Slides to the Library and shows one of its sections.
-    func openLibrary(_ section: LibrarySection, in window: WindowState) {
+    func openLibrary(_ section: LibrarySection, timeline: TimelineKind? = nil, in window: WindowState) {
         window.librarySection = section
+        if let timeline { window.libraryTimeline = timeline }
         window.overlay = nil
         show(.library, in: window)
     }

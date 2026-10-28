@@ -2,7 +2,8 @@ import SwiftUI
 
 /// Draws the sidebar's pages where `SidebarSlide` says they are: the one that is shown and, while the strip moves, the one
 /// it is coming from or going to beside it. Both are the same views throughout (keyed by page), so a page keeps its
-/// scrolling and its state when it goes from arriving to resting.
+/// scrolling and its state when it goes from arriving to resting. Pages that are away from their place dim and draw back
+/// (`PageLook`), so the strip changes pages the way a transition does and not only by moving.
 struct SidebarPager<Content: View>: View {
     let slide: SidebarSlide
     let width: CGFloat
@@ -23,8 +24,11 @@ struct SidebarPager<Content: View>: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             ForEach(placed) { item in
+                let look = PageLook.at(offset: item.x, width: width)
                 content(item.page)
                     .frame(width: width)
+                    .scaleEffect(look.scale)
+                    .opacity(look.opacity)
                     .offset(x: item.x)
             }
         }

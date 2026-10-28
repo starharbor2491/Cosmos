@@ -33,10 +33,32 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     /// Open on the page that was showing when the panel was last closed.
     public var rememberPage = true { didSet { if !rememberPage { lastAddress = nil } } }
     public var lastAddress: String?
+    /// The size the user dragged each layout's panel to, by layout name. A layout with none uses its own size.
+    public private(set) var customSizes: [String: CGSize] = [:]
+
+    /// The most a panel can be made (the screen limits it further).
+    public static let maximumSize = CGSize(width: 3000, height: 3000)
 
     public init() {}
 
-    private enum CodingKeys: String, CodingKey { case enabled, layout, profileID, homeAddress, rememberPage, lastAddress }
+    /// The size of the panel now: what the user dragged this layout's to, or the layout's own.
+    public var size: CGSize { customSizes[layout.rawValue] ?? layout.size }
+    public var hasCustomSize: Bool { customSizes[layout.rawValue] != nil }
+
+    /// Keeps `size` as this layout's panel size, brought within what can work. Nothing is kept for a size that is not a number.
+    public mutating func setSize(_ size: CGSize) {
+        guard size.width.isFinite, size.height.isFinite else { return }
+        customSizes[layout.rawValue] = Self.clamped(size)
+    }
+
+    public mutating func resetSize() { customSizes[layout.rawValue] = nil }
+
+    private static func clamped(_ size: CGSize) -> CGSize {
+        CGSize(width: min(max(size.width, MenuBarPlacement.minimumSize.width), maximumSize.width),
+               height: min(max(size.height, MenuBarPlacement.minimumSize.height), maximumSize.height))
+    }
+
+    private enum CodingKeys: String, CodingKey { case enabled, layout, profileID, homeAddress, rememberPage, lastAddress, customSizes }
 
     // A file written by another build must not lock anyone out: unknown or wrong-typed keys keep their defaults.
     public init(from decoder: Decoder) throws {
@@ -48,6 +70,12 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         if let v = try? c.decode(String.self, forKey: .homeAddress) { homeAddress = v }
         if let v = try? c.decode(Bool.self, forKey: .rememberPage) { rememberPage = v }
         if let v = try? c.decode(String.self, forKey: .lastAddress) { lastAddress = v }
+        // Sizes that are not a size, or for a layout there is not, are dropped one by one.
+        if let raw = try? c.decode([String: CGSize].self, forKey: .customSizes) {
+            for (key, size) in raw where Layout(rawValue: key) != nil && size.width.isFinite && size.height.isFinite
+                && size.width >= MenuBarPlacement.minimumSize.width && size.height >= MenuBarPlacement.minimumSize.height
+                && size.width <= Self.maximumSize.width && size.height <= Self.maximumSize.height { customSizes[key] = size }
+        }
         // A file left by an older build (or edited by hand) may still hold a page that is not meant to be kept.
         if !rememberPage { lastAddress = nil }
     }
@@ -107,29 +135,29 @@ public enum MenuBarPlacement {
 }
 
 extension MenuBarPlacement {
-    /// How much of the panel stays on the screen when it is dragged toward an edge, so there is always something to grab.
-    public static let grip: CGFloat = 48
+    /// The least the panel can be made.
+    public static let minimumSize = CGSize(width: 280, height: 240)
 
-    /// `frame` after a drag: not above the bottom of the menu bar, and never so far to a side or the bottom that less than
-    /// `grip` of it is left to take hold of. The size is not touched.
-    public static func dragged(_ frame: CGRect, visible: CGRect) -> CGRect {
-        var out = frame
-        out.origin.y = min(out.origin.y, visible.maxY - out.height)
-        out.origin.y = max(out.origin.y, visible.minY + grip - out.height)
-        out.origin.x = min(out.origin.x, visible.maxX - grip)
-        out.origin.x = max(out.origin.x, visible.minX + grip - out.width)
-        return out
+    /// The sides of the panel a drag has hold of: one for an edge, two for a corner.
+    public struct Edges: OptionSet, Sendable {
+        public let rawValue: Int
+        public init(rawValue: Int) { self.rawValue = rawValue }
+        public static let left = Edges(rawValue: 1)
+        public static let right = Edges(rawValue: 2)
+        public static let top = Edges(rawValue: 4)
+        public static let bottom = Edges(rawValue: 8)
     }
 
-    /// The panel at a new size (another layout) where the user put it: its top-left corner stays, and it is pulled back in
-    /// if the new size would run it off the screen.
-    public static func resized(_ current: CGRect, to size: CGSize, visible: CGRect, margin: CGFloat = margin) -> CGRect {
-        let width = max(0, min(size.width, visible.width - 2 * margin))
-        let x = min(max(current.minX, visible.minX + margin), max(visible.minX + margin, visible.maxX - margin - width))
-        // The top stays put; a panel that is taller than what is left below it is made shorter, not moved up.
-        let top = min(current.maxY, visible.maxY)
-        let height = max(0, min(size.height, top - visible.minY - margin))
-        return CGRect(x: x, y: top - height, width: width, height: height)
+    /// `frame` with the edges in `edges` moved by `delta` (screen coordinates, y up: dragging the top edge up grows the panel).
+    /// The edges not taken stay where they are, the panel keeps at least `minimum`, and no edge goes past the visible screen
+    /// (so the top never goes up under the menu bar).
+    public static func resized(_ frame: CGRect, edges: Edges, delta: CGSize, visible: CGRect, minimum: CGSize = minimumSize) -> CGRect {
+        var minX = frame.minX, maxX = frame.maxX, minY = frame.minY, maxY = frame.maxY
+        if edges.contains(.left) { minX = min(max(minX + delta.width, visible.minX), maxX - minimum.width) }
+        if edges.contains(.right) { maxX = max(min(maxX + delta.width, visible.maxX), minX + minimum.width) }
+        if edges.contains(.bottom) { minY = min(max(minY + delta.height, visible.minY), maxY - minimum.height) }
+        if edges.contains(.top) { maxY = max(min(maxY + delta.height, visible.maxY), minY + minimum.height) }
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
     }
 }
 
