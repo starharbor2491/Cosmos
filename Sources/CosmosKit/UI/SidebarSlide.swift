@@ -9,6 +9,28 @@ enum SidebarPage: Hashable {
     static func all(spaces: [UUID]) -> [SidebarPage] { [.library] + spaces.map { .space($0) } }
 }
 
+/// How a page looks while it is away from its place: it dims and draws back a little the further it is, so two pages passing
+/// each other dissolve into one another as well as moving. Pure, so it can be tested; the pager applies it to every page
+/// while the fingers are down and while the strip settles.
+struct PageLook: Equatable {
+    var opacity: CGFloat
+    var scale: CGFloat
+
+    /// A page a whole width away is this much dimmer and smaller. Both change in a straight line with the distance, so the
+    /// animation that settles the page (which moves its offset) carries them along with it.
+    static let fade: CGFloat = 0.75
+    static let shrink: CGFloat = 0.06
+
+    static let rest = PageLook(opacity: 1, scale: 1)
+
+    /// `offset` is how far the page is from its place at rest, to either side.
+    static func at(offset: CGFloat, width: CGFloat) -> PageLook {
+        guard width > 0, offset.isFinite else { return .rest }
+        let distance = min(abs(offset) / width, 1)
+        return PageLook(opacity: 1 - fade * distance, scale: 1 - shrink * distance)
+    }
+}
+
 /// Where the sidebar's pages sit while it slides from one to another. At rest only `shown` is on screen. While it moves,
 /// `other` is the page it is coming from or going to, one width to the side of `shown`.
 ///

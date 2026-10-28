@@ -183,55 +183,117 @@ import Testing
     }
 }
 
-/// The panel can be moved by its edges; it keeps where it was put when its size changes, and cannot be lost off screen.
-@Suite struct MenuBarDragTests {
+/// The panel can be resized by dragging its edges and corners. Screen coordinates, y up: dragging the top edge up grows it.
+@Suite struct MenuBarResizeTests {
     private let visible = CGRect(x: 0, y: 0, width: 1440, height: 875)
     private let panel = CGRect(x: 600, y: 100, width: 390, height: 680)
 
-    @Test func aPanelOnTheScreenIsLeftWhereItIsPut() {
-        #expect(MenuBarPlacement.dragged(panel, visible: visible) == panel)
+    private func resized(_ edges: MenuBarPlacement.Edges, _ dx: CGFloat, _ dy: CGFloat, from frame: CGRect? = nil) -> CGRect {
+        MenuBarPlacement.resized(frame ?? panel, edges: edges, delta: CGSize(width: dx, height: dy), visible: visible)
     }
 
-    @Test func thePanelCannotBeDraggedUnderTheMenuBar() {
-        let high = panel.offsetBy(dx: 0, dy: 400)
-        let frame = MenuBarPlacement.dragged(high, visible: visible)
-        #expect(frame.maxY == visible.maxY)
-        #expect(frame.minX == high.minX)
+    @Test func theRightEdgeMovesAndTheLeftStaysPut() {
+        let frame = resized(.right, 80, 0)
+        #expect(frame.minX == panel.minX && frame.maxX == panel.maxX + 80)
+        #expect(frame.minY == panel.minY && frame.height == panel.height, "nothing else changed")
     }
 
-    @Test func aPartOfItAlwaysStaysOnEachSideSoItCanBeDraggedBack() {
-        let grip = MenuBarPlacement.grip
-        let right = MenuBarPlacement.dragged(panel.offsetBy(dx: 2000, dy: 0), visible: visible)
-        #expect(right.minX == visible.maxX - grip)
-        let left = MenuBarPlacement.dragged(panel.offsetBy(dx: -3000, dy: 0), visible: visible)
-        #expect(left.maxX == visible.minX + grip)
-        let low = MenuBarPlacement.dragged(panel.offsetBy(dx: 0, dy: -2000), visible: visible)
-        #expect(low.maxY == visible.minY + grip)
+    @Test func theLeftEdgeMovesAndTheRightStaysPut() {
+        let frame = resized(.left, -50, 0)
+        #expect(frame.maxX == panel.maxX && frame.minX == panel.minX - 50 && frame.width == panel.width + 50)
     }
 
-    @Test func draggingNeverChangesTheSize() {
-        for dx in [-5000.0, 0, 5000] {
-            for dy in [-5000.0, 0, 5000] {
-                #expect(MenuBarPlacement.dragged(panel.offsetBy(dx: dx, dy: dy), visible: visible).size == panel.size)
-            }
+    @Test func theTopEdgeGrowsUpwardAndTheBottomEdgeDownward() {
+        let up = resized(.top, 0, 40)
+        #expect(up.minY == panel.minY && up.maxY == panel.maxY + 40)
+        let down = resized(.bottom, 0, -30)
+        #expect(down.maxY == panel.maxY && down.minY == panel.minY - 30 && down.height == panel.height + 30)
+    }
+
+    @Test func aCornerMovesTwoEdgesAtOnce() {
+        let frame = resized([.left, .bottom], -20, -10)
+        #expect(frame.maxX == panel.maxX && frame.maxY == panel.maxY)
+        #expect(frame.width == panel.width + 20 && frame.height == panel.height + 10)
+    }
+
+    @Test func itNeverGetsSmallerThanTheLeastThatWorksAndTheEdgeOppositeStaysWhereItIs() {
+        let least = MenuBarPlacement.minimumSize
+        let right = resized(.right, -5000, 0)
+        #expect(right.width == least.width && right.minX == panel.minX)
+        let left = resized(.left, 5000, 0)
+        #expect(left.width == least.width && left.maxX == panel.maxX, "pushed past the other side, it stops at the least width")
+        let top = resized(.top, 0, -5000)
+        #expect(top.height == least.height && top.minY == panel.minY)
+        let bottom = resized(.bottom, 0, 5000)
+        #expect(bottom.height == least.height && bottom.maxY == panel.maxY)
+    }
+
+    @Test func noEdgeGoesPastTheScreen() {
+        #expect(resized(.right, 9000, 0).maxX == visible.maxX)
+        #expect(resized(.left, -9000, 0).minX == visible.minX)
+        #expect(resized(.top, 0, 9000).maxY == visible.maxY, "not up under the menu bar")
+        #expect(resized(.bottom, 0, -9000).minY == visible.minY)
+    }
+
+    @Test func noMovementChangesNothing() {
+        for edges: MenuBarPlacement.Edges in [.left, .right, .top, .bottom, [.left, .top], [.right, .bottom]] {
+            #expect(resized(edges, 0, 0) == panel)
         }
     }
 
-    @Test func aNewSizeKeepsTheTopLeftCornerWhereThePanelWas() {
-        let frame = MenuBarPlacement.resized(panel, to: CGSize(width: 520, height: 600), visible: visible)
-        #expect(frame.minX == panel.minX)
-        #expect(frame.maxY == panel.maxY)
-        #expect(frame.size == CGSize(width: 520, height: 600))
+    @Test func edgesThatAreNotTakenDoNotMove() {
+        let frame = resized(.right, 30, 500)
+        #expect(frame.minY == panel.minY && frame.height == panel.height, "a sideways edge ignores the vertical movement")
+    }
+}
+
+@Suite struct MenuBarSizeSettingsTests {
+    @Test func aLayoutHasItsOwnSizeUntilTheUserChangesIt() {
+        var settings = MenuBarSettings()
+        #expect(settings.size == MenuBarSettings.Layout.phone.size && !settings.hasCustomSize)
+        settings.setSize(CGSize(width: 450, height: 720))
+        #expect(settings.size == CGSize(width: 450, height: 720) && settings.hasCustomSize)
     }
 
-    @Test func aNewSizeThatWouldRunOffTheScreenIsPulledBackIn() {
-        let nearRight = CGRect(x: 1300, y: 100, width: 130, height: 680)
-        let frame = MenuBarPlacement.resized(nearRight, to: CGSize(width: 520, height: 680), visible: visible)
-        #expect(frame.maxX == visible.maxX - MenuBarPlacement.margin)
-        let nearBottom = CGRect(x: 600, y: 20, width: 390, height: 300)
-        let taller = MenuBarPlacement.resized(nearBottom, to: CGSize(width: 390, height: 680), visible: visible)
-        #expect(taller.maxY == nearBottom.maxY, "the top stays where it was")
-        #expect(taller.minY == visible.minY + MenuBarPlacement.margin, "and the panel is only as tall as the screen leaves room for")
+    @Test func eachLayoutKeepsItsOwnSize() {
+        var settings = MenuBarSettings()
+        settings.setSize(CGSize(width: 450, height: 720))
+        settings.layout = .desktop
+        #expect(settings.size == MenuBarSettings.Layout.desktop.size, "the desktop panel was not resized")
+        settings.setSize(CGSize(width: 800, height: 600))
+        settings.layout = .phone
+        #expect(settings.size == CGSize(width: 450, height: 720))
+    }
+
+    @Test func resettingGoesBackToTheLayoutsSize() {
+        var settings = MenuBarSettings()
+        settings.setSize(CGSize(width: 450, height: 720))
+        settings.resetSize()
+        #expect(settings.size == MenuBarSettings.Layout.phone.size && !settings.hasCustomSize)
+    }
+
+    @Test func aSizeIsKeptWithinWhatCanWork() {
+        var settings = MenuBarSettings()
+        settings.setSize(CGSize(width: 10, height: 10))
+        #expect(settings.size == MenuBarPlacement.minimumSize)
+        settings.setSize(CGSize(width: 90_000, height: 90_000))
+        #expect(settings.size.width <= MenuBarSettings.maximumSize.width && settings.size.height <= MenuBarSettings.maximumSize.height)
+        settings.setSize(CGSize(width: CGFloat.nan, height: 500))
+        #expect(settings.size.width.isFinite, "a size that is not a number is not kept")
+    }
+
+    @Test func aSizeSurvivesBeingSavedAndRead() throws {
+        var settings = MenuBarSettings()
+        settings.setSize(CGSize(width: 450, height: 720))
+        let back = try JSONDecoder().decode(MenuBarSettings.self, from: JSONEncoder().encode(settings))
+        #expect(back.size == CGSize(width: 450, height: 720))
+    }
+
+    @Test func aFileWithNoSizeOrNonsenseSizesStillOpens() throws {
+        let none = try JSONDecoder().decode(MenuBarSettings.self, from: Data(#"{"enabled":true}"#.utf8))
+        #expect(none.size == MenuBarSettings.Layout.phone.size)
+        let junk = try JSONDecoder().decode(MenuBarSettings.self, from: Data(#"{"customSizes":{"phone":{"width":-5,"height":1e99},"nope":{"width":400,"height":500},"desktop":"wide"}}"#.utf8))
+        #expect(junk.size == MenuBarSettings.Layout.phone.size && !junk.hasCustomSize)
     }
 }
 

@@ -21,7 +21,7 @@ public enum Overlay: Equatable {
 
 /// What the Library shows beside its rail.
 public enum LibrarySection: String, CaseIterable, Identifiable {
-    case downloads, history, archive, resources
+    case downloads, history, resources
 
     public var id: String { rawValue }
 
@@ -29,7 +29,6 @@ public enum LibrarySection: String, CaseIterable, Identifiable {
         switch self {
         case .downloads: "Downloads"
         case .history: "History"
-        case .archive: "Archive"
         case .resources: "Resources"
         }
     }
@@ -38,8 +37,22 @@ public enum LibrarySection: String, CaseIterable, Identifiable {
         switch self {
         case .downloads: "arrow.down.circle"
         case .history: "clock"
-        case .archive: "archivebox"
         case .resources: "gauge.with.dots.needle.67percent"
+        }
+    }
+}
+
+/// Which entries the History section lists: pages visited and tabs archived are one list, narrowed here.
+public enum TimelineKind: String, CaseIterable, Identifiable {
+    case everything, visited, archived
+
+    public var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .everything: "Everything"
+        case .visited: "Pages visited"
+        case .archived: "Archived tabs"
         }
     }
 }
@@ -76,6 +89,8 @@ public final class WindowState: Identifiable {
     public var libraryOpen = false
     /// The part of the Library that is showing while it is open (and the one it opens on next time).
     public var librarySection = LibrarySection.downloads
+    /// What the History section lists (⇧⌘A sets it to the archived tabs).
+    public var libraryTimeline = TimelineKind.everything
     /// Selected sidebar item per space (a tab, or a split).
     public var selection: [UUID: UUID] = [:] { didSet { radial = nil } }
     /// The Library's rail is in the sidebar: hiding the sidebar leaves the Library, so the bar over the page (Back, Forward,

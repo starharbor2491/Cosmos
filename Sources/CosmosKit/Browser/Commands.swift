@@ -232,8 +232,8 @@ extension BrowserStore {
         case .viewSource: if let url = currentURL(in: window) { openViewSource(of: url, rt: rt, in: window) }
         case .showLibrary: show(.library, in: window)
         case .showResources: openLibrary(.resources, in: window)
-        case .showArchive: openLibrary(.archive, in: window)
-        case .showHistory: openLibrary(.history, in: window)
+        case .showArchive: openLibrary(.history, timeline: .archived, in: window)
+        case .showHistory: openLibrary(.history, timeline: .everything, in: window)
         case .showDownloads: openLibrary(.downloads, in: window)
         case .showBoosts: window.overlay = .boosts
         case .showSettings: onShowSettings?()

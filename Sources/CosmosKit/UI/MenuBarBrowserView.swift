@@ -1,15 +1,15 @@
 import SwiftUI
 import CosmosCore
 
-/// The menu-bar browser: the page on the current space's sky, with a compact row of controls under it. The strips around
-/// the page and the gaps between the controls move the panel.
+/// The menu-bar browser: the page on the current space's sky, with a compact row of controls under it. The panel's edges and
+/// corners resize it.
 struct MenuBarBrowserView: View {
     let store: BrowserStore
     let session: MenuBarSession
     @Local private var text = ""
     @FocusState private var typing: Bool
 
-    /// The strip of sky around the page, and what the panel can be taken by.
+    /// The strip of sky around the page; the panel's edges, which resize it, lie in it.
     private static let edge = Metrics.Space.s
 
     var body: some View {
@@ -18,7 +18,6 @@ struct MenuBarBrowserView: View {
         let shape = RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous)
         ZStack {
             ThemeBackground(theme: theme, animated: false)
-            PanelDragArea()
             VStack(spacing: 0) {
                 if let runtime = session.runtime {
                     RuntimeWebHost(runtime: runtime)
@@ -27,6 +26,7 @@ struct MenuBarBrowserView: View {
                     toolbar(runtime, palette)
                 }
             }
+            PanelResizeArea { session.onResized($0) }
         }
         .clipShape(shape)
         .overlay(shape.strokeBorder(palette.stroke, lineWidth: 0.8))

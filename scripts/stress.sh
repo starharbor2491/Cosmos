@@ -64,9 +64,9 @@ for i in range(steps):
         s.append({"do": "radial", "dump": True, "hover": r.randrange(-1, 10)})
         s.append({"do": "radial", r.choice(["choose", "back"]): r.randrange(-1, 10) if r.random() < 0.5 else True})
     elif k < 0.992:
-        a = r.choice(["enable", "open", "open", "close", "pin", "go", "go", "configure", "configure", "disable", "state", "drag"])
+        a = r.choice(["enable", "open", "open", "close", "pin", "go", "go", "configure", "configure", "disable", "state", "resize"])
         step = {"do": "menuBar", "action": a}
-        if a == "drag": step.update({"x": r.randrange(0, 300), "y": r.randrange(0, 300), "dx": r.randrange(-3000, 3000), "dy": r.randrange(-3000, 3000)})
+        if a == "resize": step.update({"edge": r.choice(["left", "right", "top", "bottom", "topLeft", "topRight", "bottomLeft", "bottomRight"]), "dx": r.randrange(-3000, 3000), "dy": r.randrange(-3000, 3000)})
         if a == "go": step["text"] = r.choice(words + ["github.com", "http://127.0.0.1:1/", "data:text/html,<h1>x</h1>"])
         if a == "configure":
             step["layout"] = r.choice(["phone", "desktop", "bogus"]); step["home"] = r.choice(["", "example.com", "two words", "javascript:alert(1)", "x" * 3000])

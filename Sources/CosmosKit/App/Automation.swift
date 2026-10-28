@@ -72,7 +72,8 @@ final class Automation {
             case "commandBar": st.overlay = .commandBar(step["mode"] as? String == "current" ? .currentTab : .newTab)
             case "archive", "history", "downloads", "resources":
                 // These live in the Library now; the names still work in scripts.
-                if let s = store, let section = LibrarySection(rawValue: name) { s.openLibrary(section, in: st) }
+                if let s = store, name == "archive" { s.openLibrary(.history, timeline: .archived, in: st) }
+                else if let s = store, let section = LibrarySection(rawValue: name) { s.openLibrary(section, in: st) }
             case "boosts": st.overlay = .boosts
             case "welcome": st.overlay = .welcome
             case "shortcuts": st.overlay = .shortcuts
@@ -99,7 +100,8 @@ final class Automation {
         case "library":
             // Slides the sidebar to the Library, the page left of the first space ("back": true returns to the space).
             if let s = store, let st = state {
-                if let name = step["section"] as? String, let section = LibrarySection(rawValue: name) { s.openLibrary(section, in: st) }
+                if step["section"] as? String == "archive" { s.openLibrary(.history, timeline: .archived, in: st) }
+                else if let name = step["section"] as? String, let section = LibrarySection(rawValue: name) { s.openLibrary(section, in: st) }
                 else { s.show(step["back"] as? Bool == true ? .space(st.focusedSpaceID) : .library, in: st) }
             }
         case "swipe":
@@ -271,15 +273,17 @@ final class Automation {
             case "open": browser.show()
             case "close": browser.hide()
             case "pin": browser.session.isPinned.toggle()
-            case "drag":
-                // Takes hold of the panel by its edge (`x`, `y` from its top-left, by default just inside a corner) and drags it
-                // `dx`, `dy` points (right and down), through the application as a person's mouse would.
+            case "resize":
+                // Takes hold of an edge or corner of the panel (`edge`: left, right, top, bottom, topLeft, topRight, bottomLeft or
+                // bottomRight) and drags it `dx`, `dy` points (right and down), through the application as a person's mouse would.
                 if let panel = browser.panel, panel.isVisible {
-                    let x = step["x"] as? Double ?? 4, y = step["y"] as? Double ?? 4
+                    let w = panel.frame.width, h = panel.frame.height, near = 2.0
+                    let edge = step["edge"] as? String ?? "right"
+                    let x: Double = edge.lowercased().contains("left") ? near : (edge.lowercased().contains("right") ? w - near : w / 2)
+                    let y: Double = edge.lowercased().contains("bottom") ? near : (edge.lowercased().contains("top") ? h - near : h / 2)
                     let dx = step["dx"] as? Double ?? 0, dy = step["dy"] as? Double ?? 0
-                    let start = NSPoint(x: x, y: panel.frame.height - y)
-                    // The panel follows the pointer, so after the move the pointer is still where it took hold of the panel.
-                    for (type, point) in [(NSEvent.EventType.leftMouseDown, start), (.leftMouseDragged, NSPoint(x: start.x + dx, y: start.y - dy)), (.leftMouseUp, start)] {
+                    let start = NSPoint(x: x, y: y)
+                    for (type, point) in [(NSEvent.EventType.leftMouseDown, start), (.leftMouseDragged, NSPoint(x: x + dx, y: y - dy)), (.leftMouseUp, NSPoint(x: x + dx, y: y - dy))] {
                         if let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
                                                           windowNumber: panel.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1) {
                             NSApp.sendEvent(event)

@@ -71,7 +71,7 @@ import Testing
     }
 
     /// History, the Archive, Downloads and System Resources are sections of the Library, whatever opens them.
-    @Test(arguments: [(BrowserCommand.showHistory, LibrarySection.history), (.showArchive, .archive), (.showDownloads, .downloads), (.showResources, .resources)])
+    @Test(arguments: [(BrowserCommand.showHistory, LibrarySection.history), (.showArchive, .history), (.showDownloads, .downloads), (.showResources, .resources)])
     func theCommandsForItsSectionsOpenTheLibraryOnThem(command: BrowserCommand, section: LibrarySection) {
         let rig = Rig(seed: true)
         rig.window.overlay = .shortcuts
@@ -79,6 +79,20 @@ import Testing
         #expect(rig.window.sidebarPage == .library)
         #expect(rig.window.librarySection == section)
         #expect(rig.window.overlay == nil, "a panel that was up gives way to it")
+    }
+
+    /// The Archive is part of History now: ⇧⌘A shows that one list narrowed to the archived tabs, ⌘Y shows all of it.
+    @Test func theArchiveCommandNarrowsHistoryToArchivedTabsAndTheHistoryCommandShowsEverything() {
+        let rig = Rig(seed: true)
+        rig.store.perform(.showArchive, in: rig.window)
+        #expect(rig.window.libraryTimeline == .archived)
+        rig.store.perform(.showHistory, in: rig.window)
+        #expect(rig.window.libraryTimeline == .everything)
+    }
+
+    @Test func theLibraryHasNoSectionOfItsOwnForTheArchive() {
+        #expect(LibrarySection.allCases == [.downloads, .history, .resources])
+        #expect(LibrarySection(rawValue: "archive") == nil)
     }
 
     @Test func theLibraryRemembersWhichSectionWasShown() {

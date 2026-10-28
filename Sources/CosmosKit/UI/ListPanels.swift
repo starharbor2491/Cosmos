@@ -27,56 +27,6 @@ private struct ConfirmStrip: View {
     }
 }
 
-/// Everything that left the sidebar: auto-archived tabs, closed tabs and cleared ones. Searchable and restorable.
-struct ArchiveSection: View {
-    let store: BrowserStore
-    let window: WindowState
-    @Environment(\.palette) private var palette
-    @Local private var query = ""
-    @Local private var confirmingClear = false
-    @Local private var filter = ArchiveFilter.all
-
-    var body: some View {
-        let entries = store.archive.search(query).filter(filter.matches)
-        VStack(spacing: 0) {
-            LibraryHeader(title: "Archive", query: $query, prompt: "Search archived tabs") {
-                LibraryFilterMenu(title: \.title, selection: $filter)
-                Menu {
-                    ForEach(ArchiveInterval.allCases, id: \.self) { i in
-                        Button { store.archive.interval = i } label: {
-                            if store.archive.interval == i { Label(i.label, systemImage: "checkmark") } else { Text(i.label) }
-                        }
-                    }
-                } label: {
-                    LibraryControlLabel(symbol: "clock.arrow.circlepath", title: store.archive.interval.label)
-                }
-                .help("Tabs are archived \(store.archive.interval.label.lowercased())")
-                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
-                Button { confirmingClear = true } label: { LibraryControlLabel(symbol: "trash", title: "Clear") }
-                    .buttonStyle(.plain).disabled(store.archive.entries.isEmpty).help("Clear the Archive")
-            }
-            if confirmingClear {
-                ConfirmStrip(message: "Clear the Archive? Every closed tab in it is removed, with its address. This can't be undone.",
-                             confirmTitle: "Clear Archive", label: "Confirm clearing the archive",
-                             cancel: { confirmingClear = false }, confirm: { store.clearArchive(); confirmingClear = false })
-            }
-            if entries.isEmpty {
-                EmptyPanelMessage(symbol: "archivebox", title: query.isEmpty && filter == .all ? "Nothing archived yet" : "No matches",
-                                  detail: query.isEmpty && filter == .all ? "Tabs you leave untouched for \(store.archive.interval.label.lowercased().replacingOccurrences(of: "after ", with: "")) land here, so your sidebar stays tidy." : nil)
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 2) {
-                        ForEach(entries.prefix(300)) { entry in
-                            ArchiveRow(store: store, window: window, entry: entry)
-                        }
-                    }
-                    .padding(.horizontal, 8).padding(.bottom, 10)
-                }
-            }
-        }
-    }
-}
-
 private struct ArchiveRow: View {
     let store: BrowserStore
     let window: WindowState
@@ -109,8 +59,9 @@ private struct ArchiveRow: View {
     }
 
     private var subtitle: String {
-        if entry.tabCount > 1 { return "\(entry.tabCount) tabs" }
-        return entry.url.map { URLInput.display($0) } ?? ""
+        // Mixed in with visited pages, so it says what it is.
+        if entry.tabCount > 1 { return "Archived · \(entry.tabCount) tabs" }
+        return "Archived · " + (entry.url.map { URLInput.display($0) } ?? "")
     }
 }
 
@@ -185,6 +136,8 @@ private enum HistoryRange: CaseIterable {
     }
 }
 
+/// Pages you visited and tabs that left the sidebar for the Archive, in one list by day. The Filter narrows it to one kind or a
+/// time range; visited pages can be deleted one by one, archived tabs restored.
 struct HistorySection: View {
     let store: BrowserStore
     let window: WindowState
@@ -193,64 +146,89 @@ struct HistorySection: View {
     @Local private var entries: [HistoryEntry] = []
     @Local private var revision = 0
     @Local private var pendingRange: HistoryRange?
+    @Local private var confirmingClearArchive = false
     @Local private var period = HistoryWindow.allTime
 
+    private var kind: Binding<TimelineKind> { Binding(get: { window.libraryTimeline }, set: { window.libraryTimeline = $0 }) }
+
     var body: some View {
+        let items = Timeline.merge(visits: entries, archived: store.archive.search(query), kind: window.libraryTimeline, period: period)
         VStack(spacing: 0) {
-            LibraryHeader(title: "History", query: $query, prompt: "Search history") {
-                LibraryFilterMenu(title: \.title, selection: $period)
+            LibraryHeader(title: "History", query: $query, prompt: "Search history and archived tabs") {
+                TimelineFilterMenu(kind: kind, period: $period)
                 Menu {
                     ForEach(HistoryRange.allCases, id: \.self) { range in
                         if range == .all { Divider() }
                         Button(range.menuTitle) { pendingRange = range }
                     }
+                    Divider()
+                    Button("Clear Archive…") { confirmingClearArchive = true }.disabled(store.archive.entries.isEmpty)
                 } label: {
                     LibraryControlLabel(symbol: "trash", title: "Clear…")
                 }
                 .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                Menu {
+                    Section("Archive tabs") {
+                        ForEach(ArchiveInterval.allCases, id: \.self) { interval in
+                            Button { store.archive.interval = interval } label: {
+                                if store.archive.interval == interval { Label(interval.label, systemImage: "checkmark") } else { Text(interval.label) }
+                            }
+                        }
+                    }
+                } label: {
+                    LibraryControlLabel(symbol: "ellipsis", title: "")
+                }
+                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                .help("Tabs are archived \(store.archive.interval.label.lowercased())")
+                .accessibilityLabel("Archive settings")
             }
             if let range = pendingRange {
                 ConfirmStrip(message: "\(range.question) \(range.detail)", confirmTitle: range.confirmTitle, label: "Confirm clearing history",
                              cancel: { pendingRange = nil }, confirm: { store.clearHistory(since: range.since); revision += 1; pendingRange = nil })
             }
-            if shown.isEmpty {
-                EmptyPanelMessage(symbol: "clock", title: query.isEmpty && period == .allTime ? "No history yet" : "No matches")
+            if confirmingClearArchive {
+                ConfirmStrip(message: "Clear the Archive? Every closed tab in it is removed, with its address. This can't be undone.",
+                             confirmTitle: "Clear Archive", label: "Confirm clearing the archive",
+                             cancel: { confirmingClearArchive = false }, confirm: { store.clearArchive(); confirmingClearArchive = false })
+            }
+            if items.isEmpty {
+                emptyMessage
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 2) {
-                        ForEach(grouped, id: \.0) { day, items in
-                            Text(day).font(.system(size: 11, weight: .bold)).foregroundStyle(palette.tertiary)
+                        ForEach(Timeline.groups(items.prefix(500).map { $0 }), id: \.title) { group in
+                            Text(group.title).font(.system(size: 11, weight: .bold)).foregroundStyle(palette.tertiary)
                                 .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 2)
-                            ForEach(items) { e in HistoryRow(store: store, window: window, entry: e) { revision += 1 } }
+                            ForEach(group.items) { item in
+                                switch item.payload {
+                                case .visit(let entry): HistoryRow(store: store, window: window, entry: entry) { revision += 1 }
+                                case .archived(let archived): ArchiveRow(store: store, window: window, entry: archived)
+                                }
+                            }
                         }
                     }
                     .padding(.horizontal, 8).padding(.bottom, 10)
                 }
             }
         }
-        .task(id: "\(query)|\(revision)|\(period.title)") {
+        .task(id: "\(query)|\(revision)|\(period.title)|\(window.libraryTimeline.rawValue)") {
+            guard window.libraryTimeline != .archived else { entries = []; return }
             if !query.isEmpty { try? await Task.sleep(for: .milliseconds(120)) }
             let limit = period.loadLimit(searching: !query.isEmpty)
             entries = query.isEmpty ? store.history.recent(limit: limit) : store.history.search(query, limit: limit)
         }
     }
 
-    /// What was loaded, through the Filter's time range.
-    private var shown: [HistoryEntry] { entries.filter { period.contains($0.lastVisit) } }
-
-    private var grouped: [(String, [HistoryEntry])] {
-        guard query.isEmpty else { return [("Results", shown)] }
-        let cal = Calendar.current
-        var out: [(String, [HistoryEntry])] = []
-        let fmt = DateFormatter(); fmt.dateStyle = .full; fmt.timeStyle = .none
-        for e in shown {
-            let label: String
-            if cal.isDateInToday(e.lastVisit) { label = "Today" }
-            else if cal.isDateInYesterday(e.lastVisit) { label = "Yesterday" }
-            else { label = fmt.string(from: e.lastVisit) }
-            if let last = out.indices.last, out[last].0 == label { out[last].1.append(e) } else { out.append((label, [e])) }
+    @ViewBuilder private var emptyMessage: some View {
+        let narrowed = !query.isEmpty || period != .allTime || window.libraryTimeline != .everything
+        switch window.libraryTimeline {
+        case .archived where query.isEmpty && period == .allTime:
+            EmptyPanelMessage(symbol: "archivebox", title: "Nothing archived yet",
+                              detail: "Tabs you leave untouched for \(store.archive.interval.label.lowercased().replacingOccurrences(of: "after ", with: "")) land here, so your sidebar stays tidy.")
+        default:
+            EmptyPanelMessage(symbol: "clock", title: narrowed ? "No matches" : "Nothing here yet",
+                              detail: narrowed ? nil : "Pages you visit, and tabs that leave your sidebar, show up here.")
         }
-        return out
     }
 }
 

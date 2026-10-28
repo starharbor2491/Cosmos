@@ -7,7 +7,11 @@ import CoreGraphics
 struct SwipeTracker {
     enum Tick { case none, armed, disarmed }
 
-    /// How far the fingers must travel before lifting them counts.
+    /// How much of the fingers' movement counts: the page follows a little behind them, so a swipe is a deliberate thing and
+    /// a brush against the trackpad does not slide the sidebar.
+    static let damping: CGFloat = 0.8
+
+    /// How far the fingers must travel (after damping) before lifting them counts.
     var commitDistance: CGFloat = 70
     /// The most the content can be pulled along when the swipe is allowed: one page.
     var maxTravel: CGFloat = 96
@@ -19,15 +23,15 @@ struct SwipeTracker {
 
     private var allowed: Bool { travelled < 0 ? canGoNext : canGoPrevious }
 
-    /// Where the content should sit right now: when there is a page in that direction it comes in under the fingers,
-    /// one to one; when there is not, the content barely moves.
+    /// Where the content should sit right now: when there is a page in that direction it comes in under the fingers (a
+    /// little behind them, see `damping`); when there is not, the content barely moves.
     var offset: CGFloat {
         allowed ? max(-maxTravel, min(maxTravel, travelled)) : Self.band(travelled, limit: 28, stiffness: 0.55)
     }
 
     /// Adds one scroll event. The result says when to tick under the finger.
     mutating func update(delta: CGFloat) -> Tick {
-        travelled += delta
+        travelled += delta * Self.damping
         let nowArmed = allowed && abs(travelled) >= commitDistance
         defer { armed = nowArmed }
         if nowArmed && !armed { return .armed }

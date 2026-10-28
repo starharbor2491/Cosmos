@@ -108,8 +108,9 @@ import Testing
 
     @Test func crossingTheCommitDistanceTicksOnceAndPullingBackTicksAgain() {
         var t = tracker()
-        #expect(t.update(delta: -40) == .none)
-        #expect(t.update(delta: -40) == .armed)
+        // (The fingers' movement is damped a little before it counts: see `SwipeTracker.damping`.)
+        #expect(t.update(delta: -45) == .none)
+        #expect(t.update(delta: -45) == .armed)
         #expect(t.update(delta: -10) == .none, "already armed")
         #expect(t.update(delta: 40) == .disarmed)
         #expect(t.finish() == nil)
@@ -138,15 +139,26 @@ import Testing
     }
 
     /// The next page comes in under the fingers, so the page has to keep up with them, not lag behind a rubber band.
-    @Test func aPageThatCanBeReachedFollowsTheFingersOneToOne() {
+    @Test func aPageThatCanBeReachedFollowsTheFingersAtAStraightRatio() {
         var t = tracker()
         t.maxTravel = 248
         _ = t.update(delta: -50)
-        #expect(t.offset == -50)
+        #expect(abs(t.offset - -50 * SwipeTracker.damping) < 0.001)
         _ = t.update(delta: 130)
-        #expect(t.offset == 80)
+        #expect(abs(t.offset - 80 * SwipeTracker.damping) < 0.001)
         _ = t.update(delta: -1000)
         #expect(t.offset == -248, "but never further than one page")
+    }
+
+    /// Damped a tad: the page moves a little less than the fingers and a swipe has to go a little further to count.
+    @Test func theSwipeIsDampedABit() {
+        #expect(SwipeTracker.damping < 1 && SwipeTracker.damping >= 0.7, "a tad, not a drag")
+        var t = tracker()
+        _ = t.update(delta: -(t.commitDistance + 1))
+        #expect(t.finish() == nil, "fingers that moved just over the commit distance have not got there")
+        var far = tracker()
+        _ = far.update(delta: -(t.commitDistance / SwipeTracker.damping + 1))
+        #expect(far.finish() == 1)
     }
 
     @Test func aFinishedSwipeStartsFromZeroNextTime() {

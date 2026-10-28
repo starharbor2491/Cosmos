@@ -218,3 +218,57 @@ import Testing
         #expect(slide == before)
     }
 }
+
+/// The pages dissolve and draw back as they pass each other, so changing space reads as a transition and not just a movement.
+@Suite struct PageLookTests {
+    private let width: CGFloat = 248
+
+    @Test func aPageAtRestIsUntouched() {
+        #expect(PageLook.at(offset: 0, width: width) == .rest)
+        #expect(PageLook.rest.opacity == 1 && PageLook.rest.scale == 1)
+    }
+
+    @Test func theFurtherAPageIsTheDimmerAndSmallerItIs() {
+        var last = PageLook.rest
+        for step in stride(from: CGFloat(10), through: width, by: 10) {
+            let look = PageLook.at(offset: step, width: width)
+            #expect(look.opacity < last.opacity && look.scale < last.scale, "at \(step) points")
+            last = look
+        }
+    }
+
+    @Test func bothSidesLookTheSame() {
+        for x in [CGFloat(1), 37, 120, 248] {
+            #expect(PageLook.at(offset: x, width: width) == PageLook.at(offset: -x, width: width))
+        }
+    }
+
+    /// A page that is only partly away is still plainly there; one a whole width away is faint but not gone, and nothing
+    /// further goes beyond that.
+    @Test func itNeverDisappearsAndNeverGrows() {
+        let half = PageLook.at(offset: width / 2, width: width)
+        #expect(half.opacity > 0.5 && half.scale > 0.95)
+        for x in [width, width * 2, 100_000] {
+            let far = PageLook.at(offset: x, width: width)
+            #expect(far.opacity == 1 - PageLook.fade && far.scale == 1 - PageLook.shrink)
+            #expect(far.opacity > 0 && far.scale > 0.9)
+        }
+    }
+
+    @Test func aDegenerateWidthLeavesPagesAlone() {
+        #expect(PageLook.at(offset: 50, width: 0) == .rest)
+        #expect(PageLook.at(offset: .nan, width: width) == .rest)
+        #expect(PageLook.at(offset: .infinity, width: width) == .rest)
+    }
+
+    /// The settle animates the offset, and the look follows by interpolating between its two ends; that matches the look at
+    /// each offset only because it is a straight line in the distance.
+    @Test func theLookIsALinearFunctionOfTheDistance() {
+        let a = PageLook.at(offset: 0, width: width), b = PageLook.at(offset: width, width: width)
+        for t in [CGFloat(0.1), 0.3, 0.5, 0.9] {
+            let look = PageLook.at(offset: t * width, width: width)
+            #expect(abs(look.opacity - (a.opacity + (b.opacity - a.opacity) * t)) < 1e-9)
+            #expect(abs(look.scale - (a.scale + (b.scale - a.scale) * t)) < 1e-9)
+        }
+    }
+}
