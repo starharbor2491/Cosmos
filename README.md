@@ -32,7 +32,7 @@ git clone <this repository> && cd Cosmos
 scripts/build-app.sh --install     # builds a release app and copies it to ~/Applications
 ```
 
-**Prebuilt:** the [Releases](../../releases) page has `Cosmos-1.1.0-macos-arm64.zip` (Apple silicon, macOS 14 or later). Unzip it and move `Cosmos.app` to Applications; the first launch needs the right-click Open described below (or `xattr -dr com.apple.quarantine Cosmos.app`).
+**Prebuilt:** the [Releases](../../releases) page has `Cosmos-1.1.1-macos-arm64.zip` (Apple silicon, macOS 14 or later). Unzip it and move `Cosmos.app` to Applications; the first launch needs the right-click Open described below (or `xattr -dr com.apple.quarantine Cosmos.app`).
 
 `scripts/build-app.sh` alone leaves `build/Cosmos.app` in the repository. The app is signed ad hoc and is not notarized, so the first time you open it, **right-click it and choose Open**, then confirm.
 
