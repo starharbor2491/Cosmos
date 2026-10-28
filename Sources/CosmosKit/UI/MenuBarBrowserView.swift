@@ -45,7 +45,7 @@ struct MenuBarBrowserView: View {
             ToolbarButton(symbol: "chevron.left", size: 12, box: box, enabled: runtime.canGoBack, help: "Back") { runtime.goBack() }
             ToolbarButton(symbol: "chevron.right", size: 12, box: box, enabled: runtime.canGoForward, help: "Forward") { runtime.goForward() }
             ToolbarButton(symbol: runtime.isLoading ? "xmark" : "arrow.clockwise", size: 12, box: box, help: runtime.isLoading ? "Stop" : "Reload") {
-                if runtime.isLoading { runtime.webView.stopLoading() } else { runtime.reload() }
+                if runtime.isLoading { runtime.stop() } else { runtime.reload() }
             }
             address(runtime, palette)
             ToolbarButton(symbol: session.isPinned ? "pin.fill" : "pin", size: 12, box: box, help: session.isPinned ? "Let it close when you click away" : "Keep it open") {

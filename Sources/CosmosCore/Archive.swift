@@ -75,7 +75,9 @@ public struct ArchiveData: Codable, Equatable, Sendable {
 
     public mutating func add(_ entry: ArchivedItem) {
         entries.removeAll { $0.id == entry.id }
-        entries.insert(entry, at: 0)
+        // Newest first. An entry archived earlier (one imported from another browser) goes where its date puts it, so
+        // what is cut at the limit is the oldest, not what was just closed.
+        entries.insert(entry, at: entries.firstIndex { $0.archivedAt <= entry.archivedAt } ?? entries.count)
         if entries.count > limit { entries.removeLast(entries.count - limit) }
     }
 

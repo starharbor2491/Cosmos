@@ -1,12 +1,12 @@
 import Foundation
 import Observation
-import WebKit
 import CosmosCore
 import CosmosBlocking
+import CosmosEngine
 
-/// Connects the filter-list engine (`CosmosBlocking`) to WebKit: keeps the enabled lists downloaded and compiled,
-/// turns them into `WKContentRuleList`s with `WKContentRuleListStore`, and attaches them to every profile's content
-/// controller. The Settings screen reads the observable status properties.
+/// Connects the filter-list engine (`CosmosBlocking`) to the browser engine: keeps the enabled lists downloaded and
+/// compiled, and hands them, with the sites blocking is off for, to every profile. The Settings screen reads the
+/// observable status properties.
 @MainActor
 @Observable
 final class ContentBlockerController {
@@ -20,25 +20,18 @@ final class ContentBlockerController {
     @ObservationIgnored private weak var store: BrowserStore?
     @ObservationIgnored let manager: FilterListManager
     @ObservationIgnored private let offline: Bool
-    @ObservationIgnored private let ruleListStore: WKContentRuleListStore?
     @ObservationIgnored private var environments: [WeakEnvironment] = []
-    @ObservationIgnored private var installed: [WKContentRuleList] = []
-    @ObservationIgnored private var installedIdentifiers: [String] = []
+    /// What every profile blocks; `nil` while blocking is off.
+    @ObservationIgnored private(set) var installed: [CompiledBlockingList]?
     /// Bumped by every `reload`; a slower, older reload that finishes late must not overwrite a newer one.
     @ObservationIgnored private var generation = 0
 
     private struct WeakEnvironment { weak var value: ProfileEnvironment? }
 
     /// - Parameter offline: never touch the network (demos and automated runs); the cached or bundled lists are used.
-    /// - Parameter ruleListStore: where WebKit keeps the compiled lists; tests pass a private one.
-    convenience init(store: BrowserStore, directory: URL, offline: Bool = false) {
-        self.init(store: store, directory: directory, offline: offline, ruleListStore: .default())
-    }
-
-    init(store: BrowserStore, directory: URL, offline: Bool, ruleListStore: WKContentRuleListStore?) {
+    init(store: BrowserStore, directory: URL, offline: Bool = false) {
         self.store = store
         self.offline = offline
-        self.ruleListStore = ruleListStore
         manager = FilterListManager(directory: directory.appendingPathComponent("FilterLists", isDirectory: true),
                                     settingsURL: directory.appendingPathComponent("blocking.json"))
     }
@@ -48,8 +41,10 @@ final class ContentBlockerController {
     func attach(to environment: ProfileEnvironment) {
         environments.removeAll { $0.value == nil }
         if !environments.contains(where: { $0.value === environment }) { environments.append(WeakEnvironment(value: environment)) }
-        if !installed.isEmpty { environment.setRuleLists(installed) }
+        if let installed { environment.engineProfile.setContentBlocking(installed, allowlist: allowlist) }
     }
+
+    private var allowlist: [String] { store?.settings.adBlockAllowlist ?? [] }
 
     private var liveEnvironments: [ProfileEnvironment] { environments.compactMap(\.value) }
 
@@ -98,7 +93,7 @@ final class ContentBlockerController {
         let settings = store.settings
 
         guard settings.adBlockingEnabled else {
-            await install([], generation: mine)
+            install(nil, generation: mine)
             if mine == generation { statuses = await manager.status(); isUpdating = false }
             return
         }
@@ -113,13 +108,13 @@ final class ContentBlockerController {
 
         let cached = await manager.cachedRuleLists()
         guard mine == generation else { return }
-        await install(cached, generation: mine)
+        install(cached, generation: mine)
 
         if refresh {
             isUpdating = true
             let fresh = await manager.refresh(force: force)
             guard mine == generation else { return }
-            if fresh.map(\.storeIdentifier) != cached.map(\.storeIdentifier) { await install(fresh, generation: mine) }
+            if fresh.map(\.digest) != cached.map(\.digest) { install(fresh, generation: mine) }
             lastRefresh = Date()
         }
         if mine == generation {
@@ -128,37 +123,24 @@ final class ContentBlockerController {
         }
     }
 
-    /// Compiles (or looks up) each list in WebKit's rule-list store and attaches the result to every environment.
-    private func install(_ lists: [CompiledRuleList], generation mine: Int) async {
-        guard let wkStore = ruleListStore else { return }
-        var ready: [WKContentRuleList] = []
-        var identifiers: [String] = []
-        var count = 0
-        for list in lists {
-            // The digest is part of the identifier, so a hit means the stored rules are current.
-            if let existing = try? await wkStore.contentRuleList(forIdentifier: list.storeIdentifier) {
-                ready.append(existing)
-            } else if let compiled = try? await wkStore.compileContentRuleList(forIdentifier: list.storeIdentifier, encodedContentRuleList: list.json) {
-                ready.append(compiled)
-            } else {
-                continue
-            }
-            identifiers.append(list.storeIdentifier)
-            count += list.ruleCount
-        }
+    /// Hands the lists to every profile (`nil` turns blocking off).
+    private func install(_ lists: [CompiledRuleList]?, generation mine: Int) {
         guard mine == generation else { return }
-        installed = ready
-        installedIdentifiers = identifiers
-        installedRuleCount = count
-        for e in liveEnvironments { e.setRuleLists(ready) }
-
-        let keep = Set(identifiers)
-        for id in await wkStore.availableIdentifiers() ?? [] where id.hasPrefix("cosmos.") && !keep.contains(id) {
-            try? await wkStore.removeContentRuleList(forIdentifier: id)
-        }
+        let converted = lists?.map { CompiledBlockingList(name: $0.name, json: $0.json, kind: $0.kind == .network ? .network : .cosmetic, digest: $0.digest) }
+        installed = converted
+        installedRuleCount = lists?.reduce(0) { $0 + $1.ruleCount } ?? 0
+        for e in liveEnvironments { e.engineProfile.setContentBlocking(converted, allowlist: allowlist) }
     }
 
     // MARK: Per-site switch
+
+    /// The allowlist after the user turned blocking on or off for `url`'s site. Turning it on takes away every entry that
+    /// covers the site (a parent domain too); turning it off adds the host unless an entry already covers it.
+    nonisolated static func allowlist(_ list: [String], blocking on: Bool, for url: URL) -> [String] {
+        guard let host = url.host?.lowercased() else { return list }
+        if on { return list.filter { !isAllowlisted(url, allowlist: [$0]) } }
+        return isAllowlisted(url, allowlist: list) ? list : list + [host]
+    }
 
     /// True when `url` belongs to a host the user turned blocking off for (the host itself or a subdomain of it).
     nonisolated static func isAllowlisted(_ url: URL, allowlist: [String]) -> Bool {
@@ -167,21 +149,5 @@ final class ContentBlockerController {
             let e = entry.lowercased()
             return host == e || host.hasSuffix("." + e)
         }
-    }
-
-    /// Applies the user's blocking settings to one navigation. WebKit keeps the page's rule lists attached; this turns
-    /// them off for just this page (it has no public switch, so the private preference is used when it exists).
-    static func configure(_ preferences: WKWebpagePreferences, for url: URL, settings: Settings) {
-        guard settings.adBlockingEnabled, !isAllowlisted(url, allowlist: settings.adBlockAllowlist) else {
-            setContentBlockers(enabled: false, on: preferences)
-            return
-        }
-    }
-
-    private static func setContentBlockers(enabled: Bool, on preferences: WKWebpagePreferences) {
-        let selector = NSSelectorFromString("_setContentBlockersEnabled:")
-        guard preferences.responds(to: selector), let imp = preferences.method(for: selector) else { return }
-        typealias Setter = @convention(c) (AnyObject, Selector, Bool) -> Void
-        unsafeBitCast(imp, to: Setter.self)(preferences, selector, enabled)
     }
 }

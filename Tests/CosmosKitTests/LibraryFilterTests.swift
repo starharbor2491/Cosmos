@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import CosmosEngine
 @testable import CosmosKit
 @testable import CosmosCore
 
@@ -38,9 +39,29 @@ import Testing
         #expect(HistoryWindow.yesterday.contains(earlySunday, now: monday, calendar: ny))
     }
 
-    @Test func downloadsCanBeClearedOnlyWhereFinishedOnesAreShown() {
-        #expect(DownloadFilter.all.showsFinished && DownloadFilter.finished.showsFinished && DownloadFilter.stopped.showsFinished)
-        #expect(!DownloadFilter.inProgress.showsFinished, "Clear would remove entries the viewer cannot see")
+    /// Clear takes what the list shows and is over: nothing the filter or the search hides, and nothing still coming down.
+    @MainActor @Test func clearTakesOnlyTheFinishedDownloadsThatAreShown() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-downloads-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let manager = DownloadsManager()
+        manager.directory = dir
+        func start(_ name: String) -> EngineDownload {
+            let d = EngineDownload(url: URL(string: "https://example.com/\(name)"), suggestedFilename: name, cancel: {})
+            manager.began(d)
+            return d
+        }
+        let staged = dir.appendingPathComponent("staged")
+        try Data("x".utf8).write(to: staged)
+        start("done.zip").update(state: .finished(staged))
+        start("failed.zip").update(state: .failed("offline"))
+        _ = start("running.zip")
+
+        let stopped = manager.items.filter { DownloadFilter.stopped.matches($0.state) }
+        manager.clear(stopped)
+        #expect(manager.items.map(\.filename).sorted() == ["done.zip", "running.zip"])
+        manager.clear(manager.items)
+        #expect(manager.items.map(\.filename) == ["running.zip"])
     }
 
     @Test func historyLoadsFurtherBackWhenAFilterNeedsIt() {

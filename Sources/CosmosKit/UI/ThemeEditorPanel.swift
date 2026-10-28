@@ -106,7 +106,7 @@ struct ThemeEditorPanel: View {
             HStack(spacing: 12) {
                 ForEach(Array(space.theme.colors.enumerated()), id: \.offset) { index, color in
                     VStack(spacing: 4) {
-                        ColorPicker("", selection: Binding(
+                        ColorPicker("Colour \(index + 1)", selection: Binding(
                             get: { Color(color) },
                             set: { new in
                                 if let rgba = new.rgba { store.updateSpace(spaceID) { $0.theme.colors[index] = rgba; $0.theme.name = "Custom" } }
@@ -117,6 +117,7 @@ struct ThemeEditorPanel: View {
                                 Image(systemName: "minus.circle").font(.system(size: 11))
                             }
                             .buttonStyle(.plain).foregroundStyle(palette.tertiary)
+                            .accessibilityLabel("Remove colour \(index + 1)")
                         }
                     }
                 }

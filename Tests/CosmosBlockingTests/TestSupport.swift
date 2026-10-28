@@ -42,28 +42,58 @@ func hide(_ selector: String, include: [String] = [], exclude: [String] = [], ex
     .filter(.cosmetic(CosmeticFilter(selector: selector, domains: DomainList(include: include, exclude: exclude), isException: exception)))
 }
 
-/// The rule JSON objects of the first network list for `filters`, without the two fixed top-level-navigation guards.
-func networkRules(_ text: String, options: ContentRuleCompiler.Options = .init()) -> [String] {
-    // A list made only of exceptions is pointless (and empty lists are invalid), so a throwaway block keeps it alive.
-    let out = ContentRuleCompiler(options: options).compile(FilterParser.parse("||zz-base.invalid^\n" + text))
-    guard let first = out.networkLists.first else { return [] }
-    return first.filter { !protectionRules.contains($0) && !$0.contains("zz-base") }
+/// The network rules `text` compiles to, each decoded, in order across all rulesets.
+func networkRules(_ text: String, options: DNRCompiler.Options = .init()) -> [NSDictionary] {
+    DNRCompiler(options: options).compile(FilterParser.parse(text)).networkLists.flatMap { $0 }.map(decode)
 }
 
-func cosmeticRules(_ text: String, options: ContentRuleCompiler.Options = .init()) -> [String] {
-    ContentRuleCompiler(options: options).compile(FilterParser.parse(text)).cosmeticLists.first ?? []
+func cosmetic(_ text: String) -> DNRCompiler.Cosmetic {
+    DNRCompiler().compile(FilterParser.parse(text)).cosmetic
 }
 
-let protectionRules: Set<String> = [
-    #"{"trigger":{"url-filter":".*","resource-type":["popup"]},"action":{"type":"ignore-previous-rules"}}"#,
-    #"{"trigger":{"url-filter":".*","resource-type":["document"],"load-context":["top-frame"]},"action":{"type":"ignore-previous-rules"}}"#,
-]
+func decode(_ json: String) -> NSDictionary {
+    (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? NSDictionary ?? [:]
+}
 
-/// Evaluates a WebKit `url-filter` against a URL the way WebKit would (case-insensitively unless told otherwise),
-/// using ICU regular expressions, which are a superset of the subset WebKit supports.
-func urlFilterMatches(_ filter: String, _ url: String, caseSensitive: Bool = false) -> Bool {
-    guard let re = try? NSRegularExpression(pattern: filter, options: caseSensitive ? [] : [.caseInsensitive]) else { return false }
-    return re.firstMatch(in: url, range: NSRange(url.startIndex..., in: url)) != nil
+/// What Chromium's `declarativeNetRequest` accepts in a static ruleset, as its documentation states it: a rule that
+/// breaks one of these is dropped when the extension loads. Returns what is wrong with each rule of a list's JSON.
+func dnrProblems(_ json: String) -> [String] {
+    guard let rules = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [[String: Any]] else { return ["not a JSON array of rules"] }
+    let actions: Set<String> = ["block", "allow", "allowAllRequests", "upgradeScheme", "redirect", "modifyHeaders"]
+    let keys: Set<String> = ["urlFilter", "regexFilter", "isUrlFilterCaseSensitive", "initiatorDomains", "excludedInitiatorDomains",
+                             "requestDomains", "excludedRequestDomains", "resourceTypes", "excludedResourceTypes", "domainType",
+                             "requestMethods", "excludedRequestMethods", "tabIds", "excludedTabIds"]
+    let types: Set<String> = ["main_frame", "sub_frame", "stylesheet", "script", "image", "font", "object", "xmlhttprequest", "ping",
+                              "csp_report", "media", "websocket", "webtransport", "webbundle", "other"]
+    var problems: [String] = []
+    for (i, rule) in rules.enumerated() {
+        func bad(_ what: String) { problems.append("rule \(i): \(what)") }
+        guard let priority = rule["priority"] as? Int, priority >= 1 else { bad("priority"); continue }
+        guard let action = (rule["action"] as? [String: Any])?["type"] as? String, actions.contains(action) else { bad("action"); continue }
+        guard let condition = rule["condition"] as? [String: Any] else { bad("no condition"); continue }
+        if let unknown = condition.keys.first(where: { !keys.contains($0) }) { bad("unknown key \(unknown)") }
+        let url = condition["urlFilter"] as? String, regex = condition["regexFilter"] as? String
+        if url != nil && regex != nil { bad("both urlFilter and regexFilter") }
+        if let url {
+            if url.isEmpty || !url.unicodeScalars.allSatisfy(\.isASCII) { bad("urlFilter \(url)") }
+            if url.hasPrefix("||*") { bad("urlFilter starts with ||*") }
+        }
+        if let regex, regex.isEmpty || !regex.unicodeScalars.allSatisfy(\.isASCII) || (try? NSRegularExpression(pattern: regex)) == nil {
+            bad("regexFilter \(regex)")
+        }
+        let ruleTypes = condition["resourceTypes"] as? [String]
+        if let ruleTypes, ruleTypes.isEmpty || !ruleTypes.allSatisfy(types.contains) { bad("resourceTypes \(ruleTypes)") }
+        if action == "allowAllRequests", !(ruleTypes.map { !$0.isEmpty && Set($0).isSubset(of: ["main_frame", "sub_frame"]) } ?? false) {
+            bad("allowAllRequests needs main_frame/sub_frame resourceTypes")
+        }
+        if let domainType = condition["domainType"] as? String, !["firstParty", "thirdParty"].contains(domainType) { bad("domainType") }
+        for key in ["initiatorDomains", "excludedInitiatorDomains", "requestDomains", "excludedRequestDomains"] {
+            guard let domains = condition[key] else { continue }
+            guard let list = domains as? [String], !list.isEmpty,
+                  list.allSatisfy({ !$0.isEmpty && $0 == $0.lowercased() && $0.unicodeScalars.allSatisfy(\.isASCII) }) else { bad(key); continue }
+        }
+    }
+    return problems
 }
 
 /// Downloads public lists once per test run (several suites need the same text). `nil` when offline.

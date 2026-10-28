@@ -78,7 +78,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
 
     func windowDidBecomeKey(_ notification: Notification) {
         store.activeWindow = state
-        store.extensionCenter?.windowFocused(state)
         BrowserWindowRegistry.shared.didBecomeKey(self)
     }
 

@@ -105,10 +105,13 @@ enum ArcSpaceStyle {
             if let n = Int(t), let scalar = Unicode.Scalar(UInt32(clamping: n)) { return String(Character(scalar)) }
             return t.isEmpty || t.unicodeScalars.allSatisfy(\.isASCII) || t.count > 16 ? nil : t
         }
-        if let n = ArcJSON.number(value), let scalar = Unicode.Scalar(UInt32(clamping: Int(n))) { return String(Character(scalar)) }
+        // A code point is a whole number that fits; anything else in Arc's file is not one (and `Int(_:)` would trap).
+        func scalar(_ n: Double) -> Unicode.Scalar? { UInt32(exactly: n).flatMap(Unicode.Scalar.init) }
+        if let n = ArcJSON.number(value), let scalar = scalar(n) { return String(Character(scalar)) }
         if let a = value as? [Any] {
-            let scalars = a.compactMap { ArcJSON.number($0) }.compactMap { Unicode.Scalar(UInt32(clamping: Int($0))) }
-            return scalars.isEmpty ? nil : String(String.UnicodeScalarView(scalars))
+            let numbers = a.compactMap { ArcJSON.number($0) }
+            let scalars = numbers.compactMap(scalar)
+            return scalars.isEmpty || scalars.count != numbers.count ? nil : String(String.UnicodeScalarView(scalars))
         }
         return nil
     }

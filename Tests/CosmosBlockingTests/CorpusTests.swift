@@ -29,11 +29,11 @@ import Testing
 
         var validatorSeconds = 0.0
         var problems: [String] = []
-        for list in result.lists {
-            #expect(list.ruleCount <= 40_000, "\(list.name) has \(list.ruleCount) rules")
+        for list in result.lists where list.kind == .network {
+            #expect(list.ruleCount <= DNRCompiler.Options().maxRulesPerList, "\(list.name) has \(list.ruleCount) rules")
             #expect(list.ruleCount > 0)
             let t = Date()
-            problems += RuleListValidator.validate(json: list.json).map { "\(list.name): \($0)" }
+            problems += dnrProblems(list.json).map { "\(list.name): \($0)" }
             validatorSeconds += Date().timeIntervalSince(t)
         }
         #expect(problems.isEmpty, "\(problems.prefix(10))")

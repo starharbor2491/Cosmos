@@ -95,7 +95,7 @@ public struct FilterListStatus: Sendable, Identifiable, Equatable {
 /// Keeps filter lists downloaded, compiled and cached.
 ///
 /// Files live in `CosmosPaths.dataDirectory/FilterLists/`: `<id>.txt` (downloaded text), `<id>.meta.json`
-/// (validators and check time) and `compiled/` (the JSON handed to WebKit, keyed by the SHA-256 of the list text plus
+/// (validators and check time) and `compiled/` (the rulesets handed to the engine, keyed by the SHA-256 of the list text plus
 /// `ContentBlocker.compilerVersion`, so an unchanged list is never recompiled). Which lists are enabled is stored in
 /// `blocking.json`. Offline, the cached copy is used; with no copy at all, the bundled fallback list stands in.
 public actor FilterListManager {

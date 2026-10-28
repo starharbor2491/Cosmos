@@ -4,6 +4,8 @@ import AppKit
 /// Reports a two-finger horizontal swipe made anywhere over its area: every movement while the fingers are down,
 /// then the lift. Vertical scrolling and mouse wheels pass through untouched.
 struct SwipeCatcher: NSViewRepresentable {
+    /// False while something covers the area (a panel over the window): no swipe is taken then.
+    var isEnabled = true
     /// Horizontal movement since the last event, positive when the fingers move right (whatever the "natural
     /// scrolling" setting says).
     let onMove: (CGFloat) -> Void
@@ -13,6 +15,7 @@ struct SwipeCatcher: NSViewRepresentable {
         let v = SwipeView()
         v.onMove = onMove
         v.onEnd = onEnd
+        v.isEnabled = isEnabled
         v.install()
         return v
     }
@@ -20,6 +23,7 @@ struct SwipeCatcher: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {
         (nsView as? SwipeView)?.onMove = onMove
         (nsView as? SwipeView)?.onEnd = onEnd
+        (nsView as? SwipeView)?.isEnabled = isEnabled
     }
 
     static func dismantleNSView(_ nsView: NSView, coordinator: ()) { (nsView as? SwipeView)?.uninstall() }
@@ -39,6 +43,7 @@ struct SwipeCatcher: NSViewRepresentable {
     final class SwipeView: NSView {
         var onMove: ((CGFloat) -> Void)?
         var onEnd: (() -> Void)?
+        var isEnabled = true
         private var monitor: Any?
 
         private enum Gesture { case idle, undecided(CGFloat, CGFloat), horizontal, vertical }
@@ -73,7 +78,7 @@ struct SwipeCatcher: NSViewRepresentable {
             }
 
             if sample.phase.contains(.began) || sample.phase.contains(.mayBegin) {
-                gesture = sample.inside ? .undecided(0, 0) : .idle
+                gesture = sample.inside && isEnabled ? .undecided(0, 0) : .idle
                 swallowMomentum = false
             }
 

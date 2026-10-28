@@ -1,11 +1,11 @@
 import AppKit
 import Foundation
 import Testing
-import WebKit
+import CosmosEngine
 @testable import CosmosKit
 @testable import CosmosCore
 
-/// Stands in for WebKit's menu target: what a ring slice runs when it is chosen.
+/// Stands in for a menu item's target: what a ring slice runs when it is chosen.
 @MainActor
 final class MenuTarget: NSObject {
     var fired: [String] = []
@@ -34,8 +34,8 @@ enum RadialFixture {
     /// A link's menu: three actions the default ring knows.
     static func linkMenu(_ target: MenuTarget, openEnabled: Bool = true) -> NSMenu {
         menu([
-            item("Open Link", id: "WKMenuItemIdentifierOpenLink", action: #selector(MenuTarget.openLink), target: target, enabled: openEnabled),
-            item("Copy Link", id: "WKMenuItemIdentifierCopyLink", action: #selector(MenuTarget.copyLink), target: target),
+            item("Open Link", id: "cosmos.openLink", action: #selector(MenuTarget.openLink), target: target, enabled: openEnabled),
+            item("Copy Link", id: "cosmos.copyLink", action: #selector(MenuTarget.copyLink), target: target),
         ])
     }
 
@@ -60,13 +60,13 @@ enum RadialFixture {
     @Test func aSystemMenuBecomesEntriesWithSubmenusAsGroups() {
         let target = MenuTarget()
         let menu = RadialFixture.menu([
-            RadialFixture.item("Copy Link", id: "WKMenuItemIdentifierCopyLink", action: #selector(MenuTarget.copyLink), target: target),
+            RadialFixture.item("Copy Link", id: "cosmos.copyLink", action: #selector(MenuTarget.copyLink), target: target),
             .separator(),
             { let hidden = RadialFixture.item("Hidden", action: #selector(MenuTarget.openLink), target: target); hidden.isHidden = true; return hidden }(),
             RadialFixture.item("  ", action: #selector(MenuTarget.openLink), target: target),
             RadialFixture.submenuItem("Spelling and Grammar", children: [RadialFixture.item("Show Spelling", action: #selector(MenuTarget.spelling), target: target)]),
             RadialFixture.submenuItem("Empty", children: []),
-            RadialFixture.item("Copy Link Again", id: "WKMenuItemIdentifierCopyLink", action: #selector(MenuTarget.copyLink), target: target),
+            RadialFixture.item("Copy Link Again", id: "cosmos.copyLink", action: #selector(MenuTarget.copyLink), target: target),
         ])
 
         let built = RadialMenuBuilder.entries(from: menu)
@@ -235,9 +235,9 @@ enum RadialFixture {
     @Test func theKeyboardStepsAroundTheEnabledSlicesAndWraps() {
         let target = MenuTarget()
         let menu = RadialFixture.menu([
-            RadialFixture.item("Open Link", id: "WKMenuItemIdentifierOpenLink", action: #selector(MenuTarget.openLink), target: target),
-            RadialFixture.item("Copy Link", id: "WKMenuItemIdentifierCopyLink", action: #selector(MenuTarget.copyLink), target: target, enabled: false),
-            RadialFixture.item("Open Link in New Tab", id: "WKMenuItemIdentifierOpenLinkInNewWindow", action: #selector(MenuTarget.openLink), target: target),
+            RadialFixture.item("Open Link", id: "cosmos.openLink", action: #selector(MenuTarget.openLink), target: target),
+            RadialFixture.item("Copy Link", id: "cosmos.copyLink", action: #selector(MenuTarget.copyLink), target: target, enabled: false),
+            RadialFixture.item("Open Link in New Tab", id: "cosmos.openLinkInNewTab", action: #selector(MenuTarget.openLink), target: target),
         ])
         let (session, _, _) = session(menu)
         let enabled = session.ring.indices.filter { session.ring[$0].isEnabled }
@@ -303,20 +303,18 @@ enum RadialFixture {
         #expect(rig.window.radial == nil)
     }
 
-    @Test func aSiteTurnedOffGetsTheSystemMenu() async throws {
+    @Test func aSiteTurnedOffGetsTheSystemMenu() throws {
         let rig = Rig()
-        let page = try await PageServer(html: "<html><body>hello</body></html>")
-        let runtime = try shown(rig, url: "about:blank")
-        runtime.webView.load(URLRequest(url: URL(string: "http://127.0.0.1:\(page.port)/")!))
-        for _ in 0..<150 where runtime.webView.url?.host != "127.0.0.1" { try await Task.sleep(for: .milliseconds(20)) }
-        #expect(runtime.webView.url?.host == "127.0.0.1")
+        let runtime = try shown(rig, url: "https://quiet.example/")
+        runtime.fake.navigate(to: URL(string: "https://quiet.example/")!)
+        #expect(runtime.url?.host == "quiet.example")
 
         #expect(show(rig, runtime, menu: RadialFixture.linkMenu(MenuTarget())))
         rig.window.radial = nil
-        rig.store.settings.radialMenu.disable(host: "127.0.0.1")
+        rig.store.settings.radialMenu.disable(host: "quiet.example")
         #expect(!show(rig, runtime, menu: RadialFixture.linkMenu(MenuTarget())))
         #expect(rig.window.radial == nil)
-        rig.store.settings.radialMenu.enable(host: "127.0.0.1")
+        rig.store.settings.radialMenu.enable(host: "quiet.example")
         #expect(show(rig, runtime, menu: RadialFixture.linkMenu(MenuTarget())))
     }
 
@@ -329,7 +327,7 @@ enum RadialFixture {
         main.store.settings.radialMenu.setRing([.copyLink], for: .link)
         main.store.settings.trackpadHaptics = false
 
-        let incognito = BrowserStore(directory: nil, incognito: true)
+        let incognito = BrowserStore(directory: nil, incognito: true, engine: FakeEngine())
         #expect(incognito.settings.radialMenu == RadialSettings(), "starts with the defaults")
         incognito.inheritPreferences(from: main.store)
 
@@ -371,7 +369,7 @@ enum RadialFixture {
         #expect(show(rig, current, menu: RadialFixture.linkMenu(MenuTarget())))
         #expect(rig.window.radial != nil)
 
-        current.webView(current.webView, didStartProvisionalNavigation: nil)
+        current.pageDidStartNavigation(current.page)
 
         #expect(rig.window.radial == nil, "the page the ring was made over is going away")
     }
@@ -403,20 +401,31 @@ enum RadialFixture {
 
 @MainActor
 @Suite struct RadialPresentationTests {
-    /// The runtime's web view in a real (never shown) window, with what the page agent reports before a menu is asked for.
+    /// The runtime's page in a real (never shown) window, with what the page agent reports before a menu is asked for.
     private func rigWithWindow() throws -> (Rig, TabRuntime, NSWindow) {
         _ = NSApplication.shared
         let rig = Rig()
         _ = rig.store.newTab(url: URL(string: "https://example.com/"), in: rig.window)
         let runtime = try #require(rig.store.currentRuntime(in: rig.window))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.titled], backing: .buffered, defer: true)
-        window.contentView?.addSubview(runtime.webView)
-        runtime.webView.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+        window.contentView?.addSubview(runtime.view)
+        runtime.view.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
         return (rig, runtime, window)
     }
 
+    /// What the agent reports on a right click. Marked as handled, so no menu goes up on its own here: each test asks.
     private func report(_ runtime: TabRuntime, _ body: [String: Any]) {
-        runtime.handleAgentMessage(["type": "context"].merging(body) { $1 }, fromMainFrame: true)
+        runtime.handleAgentMessage(["type": "context", "handled": true].merging(body) { $1 }, fromMainFrame: true)
+    }
+
+    /// Asks for the ring where the menu for the last right click would go.
+    private func present(_ runtime: TabRuntime, _ menu: NSMenu, in window: NSWindow) -> Bool {
+        let at = runtime.contextMenuLocation(in: window)
+        return runtime.presentRadialMenu(menu, at: at.point, modifiers: at.modifiers)
+    }
+
+    private func click(at point: NSPoint, flags: NSEvent.ModifierFlags = []) -> ContextClick {
+        ContextClick(location: point, modifiers: flags, uptime: ProcessInfo.processInfo.systemUptime)
     }
 
     @Test(.disabled(if: NSWorkspace.shared.isVoiceOverEnabled, "the ring steps aside for VoiceOver, on purpose"))
@@ -424,7 +433,7 @@ enum RadialFixture {
         let (rig, runtime, window) = try rigWithWindow()
         report(runtime, ["link": "https://example.com/a", "x": 120.0, "y": 80.0])
 
-        #expect(runtime.presentRadialMenu(RadialFixture.linkMenu(MenuTarget())))
+        #expect(present(runtime, RadialFixture.linkMenu(MenuTarget()), in: window))
 
         let open = try #require(rig.window.radial)
         #expect(open.context == .link)
@@ -435,38 +444,33 @@ enum RadialFixture {
     @Test(.disabled(if: NSWorkspace.shared.isVoiceOverEnabled, "the ring steps aside for VoiceOver, on purpose"))
     func whatIsUnderThePointerChoosesTheRing() throws {
         let (rig, runtime, window) = try rigWithWindow()
-        let menu = RadialFixture.menu([RadialFixture.item("Copy", id: "WKMenuItemIdentifierCopy", action: #selector(MenuTarget.copyLink), target: MenuTarget())])
+        let menu = RadialFixture.menu([RadialFixture.item("Copy", id: "cosmos.copy", action: #selector(MenuTarget.copyLink), target: MenuTarget())])
 
         report(runtime, ["selection": "some words", "x": 50.0, "y": 50.0])
-        #expect(runtime.presentRadialMenu(menu))
+        #expect(present(runtime, menu, in: window))
         #expect(rig.window.radial?.context == .selection)
 
         rig.window.radial = nil
         report(runtime, ["editable": true, "selection": "words", "x": 50.0, "y": 50.0])
-        #expect(runtime.presentRadialMenu(menu))
+        #expect(present(runtime, menu, in: window))
         #expect(rig.window.radial?.context == .editable)
         withExtendedLifetime(window) {}
     }
 
-    private func click(_ type: NSEvent.EventType = .rightMouseDown, at point: NSPoint, flags: NSEvent.ModifierFlags = [], in window: NSWindow) -> NSEvent {
-        NSEvent.mouseEvent(with: type, location: point, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
-                           windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
-    }
-
-    /// The ring goes where the click was, read from the click itself. The page's own idea of where it was (its client
-    /// coordinates times the zoom) is only a guess, and a wrong one once the view is pinched.
+    /// The ring goes where the click was, read from the click itself. Without one (the keyboard's menu key) the page's
+    /// report is used, in its own pixels times the page zoom.
     @Test(.disabled(if: NSWorkspace.shared.isVoiceOverEnabled, "the ring steps aside for VoiceOver, on purpose"))
-    func theRingOpensWhereTheClickWasEvenWhenThePageIsPinchZoomed() throws {
+    func theRingOpensWhereTheClickWasEvenWhenThePageIsZoomed() throws {
         let (rig, runtime, window) = try rigWithWindow()
+        runtime.fake.zoom = 2
         report(runtime, ["link": "https://example.com/a", "x": 10.0, "y": 10.0])
-        runtime.webView.allowsMagnification = true
-        runtime.webView.setMagnification(2, centeredAt: .zero)
-        runtime.webView.noteClick(click(at: NSPoint(x: 300, y: 400), in: window))
+        #expect(present(runtime, RadialFixture.linkMenu(MenuTarget()), in: window))
+        #expect(rig.window.radial?.origin == CGPoint(x: 20, y: 20), "the page's pixels, zoomed")
 
-        #expect(runtime.presentRadialMenu(RadialFixture.linkMenu(MenuTarget())))
-
-        let open = try #require(rig.window.radial)
-        #expect(open.origin == CGPoint(x: 300, y: 600 - 400), "the click, with y turned over for the ring")
+        rig.window.radial = nil
+        runtime.fake.contextClick = click(at: NSPoint(x: 300, y: 400))
+        #expect(present(runtime, RadialFixture.linkMenu(MenuTarget()), in: window))
+        #expect(rig.window.radial?.origin == CGPoint(x: 300, y: 600 - 400), "the click, with y turned over for the ring")
         withExtendedLifetime(window) {}
     }
 
@@ -476,26 +480,16 @@ enum RadialFixture {
         let (rig, runtime, window) = try rigWithWindow()
         report(runtime, ["link": "https://example.com/a", "x": 10.0, "y": 10.0])
 
-        runtime.webView.noteClick(click(at: NSPoint(x: 100, y: 100), flags: .option, in: window))
-        #expect(!runtime.presentRadialMenu(RadialFixture.linkMenu(MenuTarget())), "⌥-click: the system menu")
+        runtime.fake.contextClick = click(at: NSPoint(x: 100, y: 100), flags: .option)
+        #expect(!present(runtime, RadialFixture.linkMenu(MenuTarget()), in: window), "⌥-click: the system menu")
         #expect(rig.window.radial == nil)
 
-        runtime.webView.noteClick(click(at: NSPoint(x: 100, y: 100), in: window))
-        #expect(runtime.presentRadialMenu(RadialFixture.linkMenu(MenuTarget())), "a later plain click: the ring")
+        runtime.fake.contextClick = click(at: NSPoint(x: 100, y: 100))
+        #expect(present(runtime, RadialFixture.linkMenu(MenuTarget()), in: window), "a later plain click: the ring")
     }
 
-    @Test func aClickLongPastIsNotWhereTheMenuIsAskedFor() throws {
-        let (_, runtime, window) = try rigWithWindow()
-        let old = NSEvent.mouseEvent(with: .rightMouseDown, location: NSPoint(x: 5, y: 5), modifierFlags: .option, timestamp: ProcessInfo.processInfo.systemUptime - 30,
-                                     windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
-        runtime.webView.noteClick(old)
-        #expect(runtime.webView.recentClick() == nil, "a menu from the keyboard's menu key is not tied to a click from half a minute ago")
-        runtime.webView.noteClick(click(at: NSPoint(x: 9, y: 9), in: window))
-        #expect(runtime.webView.recentClick()?.location == NSPoint(x: 9, y: 9))
-    }
-
-    /// Peek and Split View are items Cosmos adds. They carry their link, so a page that moves on while the ring is open
-    /// does not turn them into slices that silently do nothing.
+    /// Peek and Split View carry their link, so a page that moves on while the ring is open does not turn them into
+    /// slices that silently do nothing.
     @Test func openInPeekAndSplitKeepTheirLinkWhileThePageMovesOn() throws {
         _ = NSApplication.shared
         let rig = Rig()
@@ -505,10 +499,7 @@ enum RadialFixture {
         let recorder = RecordingHost(store: rig.store) { opened.append(($0, $1)) }
         runtime.host = recorder
         report(runtime, ["link": "https://example.com/target", "x": 5.0, "y": 5.0])
-        let target = MenuTarget()
-        let menu = RadialFixture.menu([RadialFixture.item("Open Link in New Window", id: "WKMenuItemIdentifierOpenLinkInNewWindow", action: #selector(MenuTarget.openLink), target: target)])
-
-        runtime.customiseContextMenu(menu)
+        let menu = runtime.contextMenu()
         report(runtime, ["x": 5.0, "y": 5.0])   // the page moves on: nothing is under the pointer any more
 
         for id in ["cosmos.openLinkInPeek", "cosmos.openLinkInSplit"] {
@@ -529,13 +520,36 @@ enum RadialFixture {
         let session = MenuBarSession(store: rig.store)
         let runtime = session.prepare()
         report(runtime, ["link": link, "x": 5.0, "y": 5.0])
-        let target = MenuTarget()
-        let menu = RadialFixture.menu([RadialFixture.item("Open Link in New Window", id: "WKMenuItemIdentifierOpenLinkInNewWindow", action: #selector(MenuTarget.openLink), target: target)])
-
-        runtime.customiseContextMenu(menu)
-
+        let menu = runtime.contextMenu()
+        #expect(menu.items.contains { $0.identifier?.rawValue == "cosmos.copyLink" })
         #expect(!menu.items.contains { $0.identifier?.rawValue.hasPrefix("cosmos.openLinkIn") == true })
         #expect(!TabRuntime.isWebLink(URL(string: link)!))
+        session.teardown()
+    }
+
+    /// Chrome offers an extension's `page` items only when the click is on nothing more particular (a link, an image, a
+    /// selection, a field), and `all` items everywhere.
+    @Test func anExtensionsPageItemsAreForThePageAloneAndItsAllItemsForEverything() throws {
+        _ = NSApplication.shared
+        let rig = Rig()
+        let session = MenuBarSession(store: rig.store)
+        let runtime = session.prepare()
+        let recorder = RecordingHost(store: rig.store) { _, _ in }
+        recorder.extensionItems = [
+            ExtensionMenuItem(extensionID: "e", itemID: "p", title: "Page item", contexts: ["page"]),
+            ExtensionMenuItem(extensionID: "e", itemID: "l", title: "Link item", contexts: ["link"]),
+            ExtensionMenuItem(extensionID: "e", itemID: "a", title: "Every item", contexts: ["all"]),
+        ]
+        runtime.host = recorder
+        func titles() -> Set<String> { Set(runtime.contextMenu().items.filter { $0.identifier?.rawValue.hasPrefix("extension.") == true }.map(\.title)) }
+
+        report(runtime, ["link": "https://example.com/a", "x": 5.0, "y": 5.0])
+        #expect(titles() == ["Link item", "Every item"])
+        report(runtime, ["x": 5.0, "y": 5.0])
+        #expect(titles() == ["Page item", "Every item"])
+        report(runtime, ["selection": "words", "x": 5.0, "y": 5.0])
+        #expect(titles() == ["Every item"])
+        withExtendedLifetime(recorder) {}
         session.teardown()
     }
 
@@ -544,11 +558,11 @@ enum RadialFixture {
         report(runtime, ["link": "https://example.com/a", "x": 10.0, "y": 10.0])
 
         rig.store.settings.radialMenu.enabled = false
-        #expect(!runtime.presentRadialMenu(RadialFixture.linkMenu(MenuTarget())))
+        #expect(!present(runtime, RadialFixture.linkMenu(MenuTarget()), in: window))
         rig.store.settings.radialMenu.enabled = true
 
-        runtime.webView.removeFromSuperview()
-        #expect(!runtime.presentRadialMenu(RadialFixture.linkMenu(MenuTarget())))
+        runtime.view.removeFromSuperview()
+        #expect(!runtime.presentRadialMenu(RadialFixture.linkMenu(MenuTarget()), at: NSPoint(x: 10, y: 10), modifiers: []))
         #expect(rig.window.radial == nil)
         withExtendedLifetime(window) {}
     }
@@ -684,11 +698,12 @@ enum RadialFixture {
     }
 }
 
-/// A host that only notes what pages ask it to open.
+/// A host that only notes what pages ask it to open, with extension menu items a test sets.
 @MainActor
 private final class RecordingHost: TabHost {
     private let store: BrowserStore
     private let note: (URL, LinkDisposition) -> Void
+    var extensionItems: [ExtensionMenuItem] = []
     init(store: BrowserStore, note: @escaping (URL, LinkDisposition) -> Void) { self.store = store; self.note = note }
     var settings: Settings { store.settings }
     var favicons: FaviconStore { store.favicons }
@@ -698,10 +713,39 @@ private final class RecordingHost: TabHost {
     func tabDidFinishLoading(_ tab: TabRuntime) {}
     func tabIsPinnedOrFavorite(_ tab: TabRuntime) -> Bool { false }
     func tab(_ tab: TabRuntime, open url: URL, as disposition: LinkDisposition) { note(url, disposition) }
-    func tab(_ tab: TabRuntime, createChildWith configuration: WKWebViewConfiguration, features: WKWindowFeatures) -> WKWebView? { nil }
+    func tab(_ tab: TabRuntime, didOpen page: EnginePage, request: NewPageRequest) -> Bool { false }
     func tabRequestsClose(_ tab: TabRuntime) {}
     func tabRequestsEscape(_ tab: TabRuntime) {}
     func tab(_ tab: TabRuntime, boostZoomFor host: String) -> Double? { nil }
     func tab(_ tab: TabRuntime, remember allowed: Bool?, forPermission key: String) {}
     func tab(_ tab: TabRuntime, showRadialMenu menu: NSMenu, context: RadialContext, center: CGPoint, windowSize: CGSize) -> Bool { false }
+    func extensionMenuItems(for tab: TabRuntime, contexts: Set<String>) -> [ExtensionMenuItem] {
+        extensionItems.filter { !contexts.isDisjoint(with: $0.contexts) }
+    }
+}
+
+/// Who has the keyboard: the page in front, again once a panel over it (the Command Bar) has closed.
+@MainActor
+@Suite struct PageFocusTests {
+    @Test func thePageHasTheKeyboardAgainWhenAPanelOverItCloses() async throws {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.titled], backing: .buffered, defer: true)
+        let content = try #require(window.contentView)
+        let host = WebContentHostView(frame: content.bounds)
+        content.addSubview(host)
+        let runtime = TabRuntime(itemID: UUID(), profileID: nil, page: FakePage(), host: nil)
+        func update(focus: Bool) async throws {
+            host.update(panes: [.init(runtime: runtime, isFocused: true)], orientation: .horizontal, weights: [1], accent: .systemPink, wantsFocus: focus)
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        try await update(focus: true)
+        #expect(window.firstResponder === runtime.view)
+
+        try await update(focus: false)           // the Command Bar opens, and its field takes the keyboard
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 100, height: 20))
+        content.addSubview(field)
+        window.makeFirstResponder(field)
+        field.removeFromSuperview()              // it closes
+        try await update(focus: true)
+        #expect(window.firstResponder === runtime.view)
+    }
 }

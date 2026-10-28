@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import CosmosCore
+import CosmosEngine
 
 /// Probe: a small floating window for a link that arrives from another app (Arc's Little Arc). Read it, then either
 /// close it or send it to a space.
@@ -13,8 +14,8 @@ final class ProbeWindowController: NSWindowController, NSWindowDelegate {
 
     init(store: BrowserStore, url: URL?, profileID: UUID?, spaceTheme: SpaceTheme) {
         self.store = store
-        let env = store.environment(forProfile: profileID)
-        runtime = TabRuntime(itemID: UUID(), profileID: store.isIncognito ? nil : profileID, configuration: env.makeConfiguration(), host: store)
+        let pid = store.isIncognito ? nil : profileID
+        runtime = TabRuntime(itemID: UUID(), profileID: pid, environment: store.environment(forProfile: pid), host: store)
         runtime.isEphemeral = true
         if let url, url.scheme != "about" { runtime.load(url) }
 
@@ -122,23 +123,46 @@ private struct ProbeView: View {
 
 @MainActor
 enum PopupWindows {
-    static func present(_ runtime: TabRuntime, features: WKWindowFeaturesBox, bringForward: Bool) {
-        let width = max(360, features.width ?? 520), height = max(320, features.height ?? 640)
+    /// Where and how big a page asked its window to be (`window.open`'s `left=`, `top=`, `width=`, `height=`).
+    struct Features: Equatable {
+        var x: Double?, y: Double?, width: Double?, height: Double?
+
+        init(_ features: [String]) {
+            var values: [String: Double] = [:]
+            for f in features {
+                let parts = f.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+                if parts.count == 2, let v = Double(parts[1]), v.isFinite { values[parts[0]] = v }
+            }
+            x = values["left"] ?? values["screenx"]; y = values["top"] ?? values["screeny"]
+            width = values["width"] ?? values["innerwidth"]; height = values["height"] ?? values["innerheight"]
+        }
+    }
+
+    /// A popup always names the site it is on, whatever the page calls itself: a sign-in window has to show whose it is.
+    static func title(url: URL?, pageTitle: String) -> String {
+        let host = url?.host ?? ""
+        guard !pageTitle.isEmpty, pageTitle != host else { return host.isEmpty ? "Sign in" : host }
+        return host.isEmpty ? pageTitle : "\(host) — \(pageTitle)"
+    }
+
+    static func present(_ runtime: TabRuntime, request: NewPageRequest, bringForward: Bool) {
+        let features = Features(request.features)
+        let width = min(1600, max(360, features.width ?? 520)), height = min(1200, max(320, features.height ?? 640))
         let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
                            styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         win.isReleasedWhenClosed = false
         win.isRestorable = false   // its title is the page's host
         let container = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
-        runtime.webView.frame = container.bounds
-        runtime.webView.autoresizingMask = [.width, .height]
-        container.addSubview(runtime.webView)
+        runtime.view.frame = container.bounds
+        runtime.view.autoresizingMask = [.width, .height]
+        container.addSubview(runtime.view)
         win.contentView = container
         if let x = features.x, let y = features.y, let screen = NSScreen.main {
             win.setFrameTopLeftPoint(NSPoint(x: x, y: screen.frame.height - y))
         } else {
             win.center()
         }
-        win.title = runtime.url?.host ?? "Sign in"
+        win.title = title(url: runtime.url ?? request.url, pageTitle: runtime.title)
         let delegate = PopupDelegate(runtime: runtime)
         objc_setAssociatedObject(win, &PopupDelegate.key, delegate, .OBJC_ASSOCIATION_RETAIN)
         win.delegate = delegate
@@ -146,15 +170,7 @@ enum PopupWindows {
         // window on its own (a background tab, a hidden panel) does not get to take the focus from what the user is doing.
         if bringForward { NSApp.activate(ignoringOtherApps: true) }
         win.makeKeyAndOrderFront(nil)
-    }
-}
-
-import WebKit
-
-struct WKWindowFeaturesBox {
-    var x: Double?, y: Double?, width: Double?, height: Double?
-    init(_ f: WKWindowFeatures) {
-        x = f.x?.doubleValue; y = f.y?.doubleValue; width = f.width?.doubleValue; height = f.height?.doubleValue
+        win.makeFirstResponder(runtime.view)
     }
 }
 
@@ -169,10 +185,10 @@ private final class PopupDelegate: NSObject, NSWindowDelegate {
     }
 
     private func observe() {
-        withObservationTracking { _ = runtime.title } onChange: { [weak self] in
+        withObservationTracking { _ = runtime.title; _ = runtime.url } onChange: { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
-                self.runtime.webView.window?.title = self.runtime.title.isEmpty ? (self.runtime.url?.host ?? "") : self.runtime.title
+                self.runtime.view.window?.title = PopupWindows.title(url: self.runtime.url, pageTitle: self.runtime.title)
                 self.observe()
             }
         }

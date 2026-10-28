@@ -1,8 +1,8 @@
 import AppKit
 import Foundation
 import Observation
-import WebKit
 import CosmosCore
+import CosmosEngine
 import CosmosImport
 
 /// An extension the user has added to Cosmos. The files live in `<data folder>/Extensions/<id>/`, a copy that no longer
@@ -22,7 +22,6 @@ struct InstalledExtension: Codable, Identifiable, Equatable {
 }
 
 enum ExtensionError: LocalizedError {
-    case unsupportedSystem
     case notAnExtension
     case invalid(String)
     case download(String)
@@ -30,7 +29,6 @@ enum ExtensionError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .unsupportedSystem: return "Extensions need macOS 15.4 or later."
         case .notAnExtension: return "That folder doesn't contain an extension (there is no manifest.json)."
         case .invalid(let why): return "Cosmos can't run this extension: \(why)"
         case .download(let why): return "The download failed: \(why)"
@@ -48,9 +46,9 @@ struct ExtensionActionDisplay: Identifiable {
     var isEnabled: Bool
 }
 
-/// Everything about browser extensions that works on any macOS version: the list of what is installed, adding and
-/// removing, finding extensions in other browsers and the Web Store. Running them is `ExtensionEngine`'s job, which
-/// only exists on macOS 15.4+ where WebKit supports web extensions.
+/// The browser extensions the user added: the list, adding and removing, finding extensions in other browsers and the
+/// Web Store. The engine runs them, in every profile, with its own `chrome.*` APIs; what a browser would draw for them
+/// (the toolbar button, its popup, menu items, shortcuts) Cosmos draws from here.
 @MainActor
 @Observable
 final class ExtensionCenter {
@@ -66,22 +64,18 @@ final class ExtensionCenter {
     @ObservationIgnored weak var store: BrowserStore?
     @ObservationIgnored let directory: URL
     @ObservationIgnored private let file: JSONFileStore<Library>
-    @ObservationIgnored private(set) var engine: AnyObject?
-    @ObservationIgnored let persistentStorage: Bool
+    /// The engine's id of each loaded extension. It comes from the extension's folder, so it is the same in every profile.
+    @ObservationIgnored private var engineIDs: [UUID: String] = [:]
+    @ObservationIgnored private var environments: [WeakEnvironment] = []
+    @ObservationIgnored private var popup: ExtensionPopup?
+    @ObservationIgnored private var keyMonitor: Any?
 
     private struct Library: Codable { var items: [InstalledExtension] = [] }
+    private struct WeakEnvironment { weak var value: ProfileEnvironment? }
 
-    nonisolated static var isSupported: Bool {
-        if #available(macOS 15.4, *) { return true }
-        return false
-    }
-
-    /// - Parameter persistentStorage: whether extensions keep their own data (storage, caches) between launches.
-    ///   Demos and tests pass `false` so they leave nothing behind.
-    init(store: BrowserStore, directory: URL, persistentStorage: Bool = true) {
+    init(store: BrowserStore, directory: URL) {
         self.store = store
         self.directory = directory
-        self.persistentStorage = persistentStorage
         file = JSONFileStore<Library>(url: directory.appendingPathComponent("extensions.json"))
         items = ((try? file.load()) ?? nil)?.items ?? []
     }
@@ -93,41 +87,57 @@ final class ExtensionCenter {
         do { try file.save(Library(items: items)) } catch { message = "Couldn't save the extension list." }
     }
 
-    @available(macOS 15.4, *)
-    var running: ExtensionEngine? { engine as? ExtensionEngine }
-
-    /// The `WKWebExtensionController` new web views must be configured with, once it exists.
-    var controllerObject: AnyObject? {
-        if #available(macOS 15.4, *) { return running?.controller }
-        return nil
-    }
-
     // MARK: Starting
 
-    /// Creates the engine and loads every enabled extension. Called once at launch, before windows open, so the
-    /// controller is there for the first web view (loading finishes a moment later).
+    /// Loads every enabled extension into each profile as the profile opens, and listens for their shortcuts.
     func start() {
         guard !started else { return }
         started = true
-        guard #available(macOS 15.4, *), let store else { return }
-        let engine = ExtensionEngine(center: self, store: store, persistent: persistentStorage)
-        self.engine = engine
-        for window in store.windows { engine.windowOpened(window) }
-        Task { [weak self] in
-            guard let self else { return }
-            for item in self.items where item.enabled { await self.load(item) }
+        for env in store?.environments.values.map({ $0 }) ?? [] { environmentCreated(env) }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            self?.handleShortcut(event) == true ? nil : event
         }
     }
 
-    @available(macOS 15.4, *)
-    private func load(_ item: InstalledExtension) async {
-        guard let engine = running else { return }
+    /// A profile opened: its engine gets every enabled extension.
+    func environmentCreated(_ env: ProfileEnvironment) {
+        guard started, let engine = env.engineProfile.extensions else { return }
+        environments.removeAll { $0.value == nil }
+        environments.append(WeakEnvironment(value: env))
+        engine.onChange = { [weak self] in self?.actionRevision += 1 }
+        let enabled = items.filter(\.enabled)
+        Task { for item in enabled { await load(item, into: env) } }
+    }
+
+    private var liveEnvironments: [ProfileEnvironment] { environments.compactMap(\.value) }
+
+    @discardableResult
+    private func load(_ item: InstalledExtension, into env: ProfileEnvironment) async -> Bool {
+        guard let engine = env.engineProfile.extensions else { return false }
+        defer { actionRevision += 1 }
         do {
-            try await engine.load(item, from: folder(for: item))
+            engineIDs[item.id] = try await engine.load(folder: folder(for: item))
             loadErrors[item.id] = nil
+            return true
         } catch {
-            loadErrors[item.id] = error.localizedDescription
+            loadErrors[item.id] = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+            return false
         }
+    }
+
+    /// Into every open profile; at least the one the user is in, so a broken extension is found out now.
+    private func loadEverywhere(_ item: InstalledExtension) async -> Bool {
+        if liveEnvironments.isEmpty, let store, let window = store.activeWindow ?? store.windows.first {
+            _ = store.environment(forProfile: store.workspace.space(window.focusedSpaceID)?.profileID ?? store.workspace.profiles[0].id)
+        }
+        var ok = true
+        for env in liveEnvironments where !(await load(item, into: env)) { ok = false }
+        return ok
+    }
+
+    private func unloadEverywhere(_ id: UUID) async {
+        guard let engineID = engineIDs.removeValue(forKey: id) else { return }
+        for env in liveEnvironments { await env.engineProfile.extensions?.unload(id: engineID) }
         actionRevision += 1
     }
 
@@ -138,13 +148,12 @@ final class ExtensionCenter {
     @discardableResult
     func install(from source: URL, origin: String, webStoreID: String? = nil,
                  confirm: (ExtensionRequestSummary) async -> Bool) async throws -> InstalledExtension {
-        guard #available(macOS 15.4, *), let engine = running else { throw ExtensionError.unsupportedSystem }
         guard let manifest = ChromiumExtensionScanner.readManifest(source) else { throw ExtensionError.notAnExtension }
         busy = true
         defer { busy = false }
 
-        let probe = try await engine.inspect(source)
-        let name = ChromiumExtensionScanner.displayName(manifest: manifest, directory: source) ?? probe.name
+        let name = ChromiumExtensionScanner.displayName(manifest: manifest, directory: source) ?? manifest["name"] as? String ?? "Extension"
+        let probe = ExtensionRequestSummary.read(manifest)
         let summary = ExtensionRequestSummary(name: name, version: probe.version, origin: origin,
                                               permissions: probe.permissions, hostPatterns: probe.hostPatterns, problems: probe.problems)
         guard await confirm(summary) else { throw ExtensionError.declined }
@@ -155,15 +164,17 @@ final class ExtensionCenter {
         let fm = FileManager.default
         try fm.createDirectory(at: extensionsFolder, withIntermediateDirectories: true)
         try fm.copyItem(at: source, to: destination)
-        items.removeAll { $0.webStoreID != nil && $0.webStoreID == webStoreID }
+        // The same Web Store extension again replaces the copy that was there.
+        let replaced = items.filter { $0.webStoreID != nil && $0.webStoreID == webStoreID }
         items.append(item)
         save()
-        await load(item)
-        if let problem = loadErrors[item.id] {
+        guard await loadEverywhere(item) else {
             // Not loadable after all: don't leave a dead entry behind.
+            let problem = loadErrors[item.id] ?? "it would not load."
             remove(item.id)
             throw ExtensionError.invalid(problem)
         }
+        for old in replaced { remove(old.id) }
         message = "Added “\(name)”."
         return item
     }
@@ -224,49 +235,181 @@ final class ExtensionCenter {
         guard let i = items.firstIndex(where: { $0.id == id }), items[i].enabled != on else { return }
         items[i].enabled = on
         save()
-        guard #available(macOS 15.4, *) else { return }
+        let item = items[i]
         if on {
-            let item = items[i]
-            Task { await load(item) }
+            Task { _ = await loadEverywhere(item) }
         } else {
-            running?.unload(id)
             loadErrors[id] = nil
-            actionRevision += 1
+            Task { await unloadEverywhere(id) }
         }
     }
 
     func remove(_ id: UUID) {
         guard let item = items.first(where: { $0.id == id }) else { return }
-        if #available(macOS 15.4, *) { running?.remove(id) }
         items.removeAll { $0.id == id }
         loadErrors[id] = nil
-        try? FileManager.default.removeItem(at: folder(for: item))
         save()
+        Task {
+            await unloadEverywhere(id)
+            try? FileManager.default.removeItem(at: folder(for: item))
+        }
         actionRevision += 1
     }
 
-    // MARK: Toolbar buttons and events
+    // MARK: Toolbar buttons
 
-    func noteActionChanged() { actionRevision += 1 }
+    private func engine(for runtime: TabRuntime) -> EngineExtensions? {
+        liveEnvironments.first { $0.profileID == runtime.profileID }?.engineProfile.extensions
+    }
+
+    private func item(forEngineID engineID: String) -> InstalledExtension? {
+        guard let id = engineIDs.first(where: { $0.value == engineID })?.key else { return nil }
+        return items.first { $0.id == id && $0.enabled }
+    }
 
     func actions(for runtime: TabRuntime?) -> [ExtensionActionDisplay] {
         _ = actionRevision
-        guard #available(macOS 15.4, *), let engine = running else { return [] }
-        return items.filter(\.enabled).compactMap { engine.actionDisplay(for: $0.id, runtime: runtime) }
+        guard let runtime, let engine = engine(for: runtime) else { return [] }
+        return engine.actions(for: runtime.page).compactMap { action in
+            guard let item = item(forEngineID: action.extensionID) else { return nil }
+            return ExtensionActionDisplay(id: item.id, label: action.title.isEmpty ? item.name : action.title,
+                                          icon: action.icon.flatMap(NSImage.init(data:)), badge: action.badgeText, isEnabled: action.isEnabled)
+        }
     }
 
     func performAction(_ id: UUID, runtime: TabRuntime?, anchor: NSView?) {
-        guard #available(macOS 15.4, *) else { return }
-        running?.performAction(id, runtime: runtime, anchor: anchor)
+        guard let runtime, let engineID = engineIDs[id], let engine = engine(for: runtime) else { return }
+        Task {
+            guard let page = await engine.performAction(engineID, on: runtime.page) else { actionRevision += 1; return }
+            showPopup(page, anchor: anchor ?? runtime.view)
+        }
     }
 
-    func tabOpened(_ runtime: TabRuntime) { if #available(macOS 15.4, *) { running?.tabOpened(runtime) } }
-    func tabClosed(_ runtime: TabRuntime) { if #available(macOS 15.4, *) { running?.tabClosed(runtime) } }
-    func tabActivated(_ runtime: TabRuntime?, previous: TabRuntime?) { if #available(macOS 15.4, *) { running?.tabActivated(runtime, previous: previous) } }
-    func tabChanged(_ runtime: TabRuntime, loading: Bool = false) { if #available(macOS 15.4, *) { running?.tabChanged(runtime, loading: loading) } }
-    func windowOpened(_ window: WindowState) { if #available(macOS 15.4, *) { running?.windowOpened(window) } }
-    func windowClosed(_ window: WindowState) { if #available(macOS 15.4, *) { running?.windowClosed(window) } }
-    func windowFocused(_ window: WindowState?) { if #available(macOS 15.4, *) { running?.windowFocused(window) } }
+    private func showPopup(_ page: EnginePage, anchor: NSView) {
+        popup?.close()
+        let popup = ExtensionPopup(page: page)
+        popup.onClose = { [weak self, weak popup] in if self?.popup === popup { self?.popup = nil } }
+        self.popup = popup
+        popup.show(from: anchor)
+    }
+
+    // MARK: Menus and shortcuts
+
+    /// Items for the right-click menu: the ones that run something (a parent only opens its children) and whose contexts
+    /// match what the click was on.
+    func menuItems(for runtime: TabRuntime, contexts: Set<String>) -> [ExtensionMenuItem] {
+        guard let engine = engine(for: runtime) else { return [] }
+        let all = engine.menuItems(for: runtime.page).filter { item(forEngineID: $0.extensionID) != nil }
+        let parents = Set(all.compactMap { item in item.parentID.map { "\(item.extensionID)/\($0)" } })
+        return all.filter { !parents.contains($0.id) && !contexts.isDisjoint(with: $0.contexts) }
+    }
+
+    func performMenuItem(_ item: ExtensionMenuItem, context: ExtensionClickContext, on runtime: TabRuntime) {
+        guard let engine = engine(for: runtime) else { return }
+        Task { await engine.performMenuItem(item, context: context, on: runtime.page) }
+    }
+
+    /// A key press that is one of an extension's shortcuts runs it, over the tab in the key window.
+    private func handleShortcut(_ event: NSEvent) -> Bool {
+        guard let store, let window = store.activeWindow, let runtime = store.currentRuntime(in: window),
+              let engine = engine(for: runtime) else { return false }
+        for command in engine.commands where item(forEngineID: command.extensionID) != nil {
+            guard let shortcut = ExtensionShortcut(command.shortcut), shortcut.matches(event) else { continue }
+            Task { await engine.performCommand(command, on: runtime.page) }
+            return true
+        }
+        return false
+    }
+}
+
+/// A shortcut as a manifest writes it (`Ctrl+Shift+Y`; on a Mac `Ctrl` is ⌘ and `MacCtrl` is ⌃).
+struct ExtensionShortcut: Equatable {
+    var modifiers: NSEvent.ModifierFlags
+    var key: String
+
+    init?(_ text: String) {
+        var mods: NSEvent.ModifierFlags = []
+        var key: String?
+        for part in text.split(separator: "+").map({ $0.trimmingCharacters(in: .whitespaces).lowercased() }) {
+            switch part {
+            case "ctrl", "command": mods.insert(.command)
+            case "macctrl": mods.insert(.control)
+            case "alt", "option": mods.insert(.option)
+            case "shift": mods.insert(.shift)
+            default: key = Self.keys[part] ?? (part.count == 1 ? part : nil)
+            }
+        }
+        guard let key, !mods.subtracting(.shift).isEmpty else { return nil }
+        modifiers = mods
+        self.key = key
+    }
+
+    private static let keys: [String: String] = ["comma": ",", "period": ".", "space": " ", "up": "\u{F700}", "down": "\u{F701}",
+                                                 "left": "\u{F702}", "right": "\u{F703}", "home": "\u{F729}", "end": "\u{F72B}",
+                                                 "pageup": "\u{F72C}", "pagedown": "\u{F72D}", "insert": "\u{F727}", "delete": "\u{F728}"]
+
+    func matches(_ event: NSEvent) -> Bool {
+        let held = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        // The key itself, as if nothing were held: ⇧ makes a digit type its symbol, and the shortcut is still the digit.
+        let pressed = event.characters(byApplyingModifiers: []) ?? event.charactersIgnoringModifiers ?? ""
+        return held == modifiers && pressed.lowercased() == key
+    }
+}
+
+/// An extension's popup: its page in a popover under the button, sized to what the page lays out.
+@MainActor
+final class ExtensionPopup: NSObject, EnginePageDelegate, NSPopoverDelegate {
+    let page: EnginePage
+    private let popover = NSPopover()
+    var onClose: (() -> Void)?
+
+    init(page: EnginePage) {
+        self.page = page
+        super.init()
+        page.delegate = self
+        let controller = NSViewController()
+        controller.view = page.view
+        popover.contentViewController = controller
+        popover.contentSize = NSSize(width: 360, height: 420)
+        popover.behavior = .transient
+        popover.delegate = self
+    }
+
+    func show(from anchor: NSView) {
+        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
+        page.view.window?.makeFirstResponder(page.view)
+        fit()
+    }
+
+    func close() { popover.close() }
+
+    /// Chromium sizes a popup to its page; here the page is asked how big it laid itself out, within Chrome's limits.
+    private func fit() {
+        Task {
+            let size = await page.evaluate("[document.documentElement.scrollWidth, document.documentElement.scrollHeight]", in: .page) as? [Double]
+            guard let size, size.count == 2, size[0] > 0, size[1] > 0 else { return }
+            popover.contentSize = NSSize(width: min(800, max(25, size[0])), height: min(600, max(25, size[1])))
+        }
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        page.delegate = nil
+        page.close()
+        onClose?()
+    }
+
+    func pageStateDidChange(_ page: EnginePage) {}
+    func pageDidStartNavigation(_ page: EnginePage) {}
+    func pageDidCommitNavigation(_ page: EnginePage) {}
+    func pageDidFinishLoading(_ page: EnginePage) { fit() }
+    func page(_ page: EnginePage, didFailLoading url: URL, error: PageLoadError) {}
+    func page(_ page: EnginePage, agentMessage: [String: Any], fromMainFrame: Bool) {}
+    func page(_ page: EnginePage, runDialog dialog: PageDialog) async -> PageDialog.Answer { PageDialog.Answer(accepted: false) }
+    func page(_ page: EnginePage, chooseFiles chooser: FileChooser) async -> [URL]? { nil }
+    func page(_ page: EnginePage, wantsPermission request: PermissionRequest) async -> Bool { false }
+    func pageDidForceClick(_ page: EnginePage) {}
+    func pageRequestsClose(_ page: EnginePage) { popover.close() }
+    func pageRendererDidTerminate(_ page: EnginePage) { popover.close() }
 }
 
 /// What an extension asks for, in a form the "Add extension?" prompt can show.
@@ -276,8 +419,26 @@ struct ExtensionRequestSummary {
     var origin: String
     var permissions: [String]
     var hostPatterns: [String]
-    /// Manifest problems and features WebKit can't run, in plain words.
+    /// Manifest problems and features Cosmos can't show yet, in plain words.
     var problems: [String]
+
+    /// What a manifest asks for.
+    static func read(_ manifest: [String: Any]) -> (version: String, permissions: [String], hostPatterns: [String], problems: [String]) {
+        let version = manifest["version"] as? String ?? "?"
+        let declared = (manifest["permissions"] as? [String] ?? []) + (manifest["optional_permissions"] as? [String] ?? [])
+        // Manifest V2 lists sites among its permissions; V3 has a list of its own.
+        let isPattern: (String) -> Bool = { $0 == "<all_urls>" || $0.contains("://") }
+        var hosts = declared.filter(isPattern) + (manifest["host_permissions"] as? [String] ?? [])
+        for script in manifest["content_scripts"] as? [[String: Any]] ?? [] { hosts += script["matches"] as? [String] ?? [] }
+        var unique: [String] = []
+        for h in hosts where !unique.contains(h) { unique.append(h) }
+        let permissions = declared.filter { !isPattern($0) }
+        var problems: [String] = []
+        if (manifest["manifest_version"] as? Int) == 2 { problems.append("It is built for Manifest V2, which Chromium no longer runs.") }
+        let missing = permissions.filter(unsupported.contains)
+        if !missing.isEmpty { problems.append("Cosmos can't show its \(missing.map { unsupportedWords[$0] ?? $0 }.joined(separator: ", ")) yet.") }
+        return (version, permissions, unique, problems)
+    }
 
     /// Plain-language lines for each permission and for site access.
     var lines: [String] {
@@ -289,8 +450,11 @@ struct ExtensionRequestSummary {
             for pattern in hostPatterns {
                 if let host = Self.host(of: pattern), !unique.contains(host) { unique.append(host) }
             }
-            out.append("Read and change your data on \(unique.prefix(4).joined(separator: ", "))" + (unique.count > 4 ? " and \(unique.count - 4) more sites" : ""))
+            if !unique.isEmpty {
+                out.append("Read and change your data on \(unique.prefix(4).joined(separator: ", "))" + (unique.count > 4 ? " and \(unique.count - 4) more sites" : ""))
+            }
         }
+        if hostPatterns.contains(where: { $0.lowercased().hasPrefix("file://") }) { out.append("Read files on your Mac that you open in Cosmos") }
         for permission in permissions {
             if let text = Self.words[permission] { out.append(text) }
         }
@@ -326,8 +490,7 @@ struct ExtensionRequestSummary {
         "alarms": "Run tasks on a schedule",
     ]
 
-    /// Permissions Chrome has that WebKit's extension engine doesn't provide.
-    static let unsupported: Set<String> = ["history", "bookmarks", "downloads", "identity", "management", "notifications", "offscreen", "sidePanel",
-                                           "topSites", "proxy", "privacy", "browsingData", "sessions", "tabGroups", "webAuthenticationProxy",
-                                           "contentSettings", "debugger", "desktopCapture", "pageCapture", "tabCapture", "system.cpu", "system.memory", "system.storage"]
+    /// Permissions Chromium runs but whose result a browser shows in its own interface, which Cosmos does not draw yet.
+    static let unsupported: Set<String> = ["sidePanel", "notifications", "identity"]
+    private static let unsupportedWords = ["sidePanel": "side panel", "notifications": "notifications", "identity": "Google sign-in"]
 }

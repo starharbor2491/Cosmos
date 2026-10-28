@@ -1,5 +1,5 @@
 import AppKit
-import WebKit
+import PDFKit
 import CosmosCore
 
 /// Everything you can do from the Command Bar by name ("Type Travel") and, for most, from the menus.
@@ -229,7 +229,7 @@ extension BrowserStore {
         case .resetZoom: rt?.resetZoom()
         case .muteTab: if let id = curID { toggleMute(id, in: window) }
         case .pictureInPicture: rt?.enterPictureInPicture()
-        case .viewSource: if let url = currentURL(in: window) { openViewSource(of: url, rt: rt, in: window) }
+        case .viewSource: if let url = currentURL(in: window) { openViewSource(of: url, in: window) }
         case .showLibrary: show(.library, in: window)
         case .showResources: openLibrary(.resources, in: window)
         case .showArchive: openLibrary(.history, timeline: .archived, in: window)
@@ -250,7 +250,7 @@ extension BrowserStore {
         case .resetTab: if let id = curID { resetTab(id, in: window) }
         case .setDefaultBrowser: DefaultBrowser.request { ok in window.showToast(ok ? "Cosmos is now your default browser" : "Choose Cosmos in the system prompt", symbol: ok ? "checkmark.seal.fill" : "info.circle") }
         case .toggleDeveloperTools:
-            rt?.showInspector()
+            if let rt, !rt.page.showInspector() { window.showToast("Developer tools aren't available in Cosmos yet", symbol: "chevron.left.forwardslash.chevron.right") }
         case .openInDefaultBrowser:
             if let url = currentURL(in: window) { openInOtherBrowser(url) }
         }
@@ -261,22 +261,19 @@ extension BrowserStore {
         NSPasteboard.general.setString(string, forType: .string)
     }
 
+    /// The engine lays the page out for paper; macOS's print panel prints that.
     func printPage(_ rt: TabRuntime) {
-        let op = rt.webView.printOperation(with: NSPrintInfo.shared)
-        op.view?.frame = rt.webView.bounds
-        if let window = rt.webView.window { op.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil) } else { op.run() }
+        Task {
+            guard let data = await rt.page.pdf(), let document = PDFDocument(data: data),
+                  let op = document.printOperation(for: NSPrintInfo.shared, scalingMode: .pageScaleDownToFit, autoRotate: true) else { return }
+            if let window = rt.view.window { op.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil) } else { op.run() }
+        }
     }
 
-    func openViewSource(of url: URL, rt: TabRuntime?, in window: WindowState) {
-        rt?.webView.evaluateJavaScript("document.documentElement.outerHTML") { [weak self] result, _ in
-            MainActor.assumeIsolated {
-                guard let self, let html = result as? String else { return }
-                let escaped = html.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
-                let page = "<!doctype html><meta charset=utf-8><title>Source of \(url.host ?? "page")</title><body style=\"margin:0;background:#14121f;color:#d7d3f0;font:12.5px/1.55 ui-monospace,Menlo,monospace\"><pre style=\"margin:0;padding:18px;white-space:pre-wrap;word-break:break-all\">\(escaped)</pre>"
-                guard let id = self.newTab(url: nil, in: window), let rt = self.runtime(forItem: id, in: window) else { return }
-                rt.webView.loadHTMLString(page, baseURL: nil)
-            }
-        }
+    /// The page's source, as the server sent it, in a new tab.
+    func openViewSource(of url: URL, in window: WindowState) {
+        guard ["http", "https", "file"].contains(url.scheme?.lowercased() ?? ""), let source = URL(string: "view-source:" + url.absoluteString) else { return }
+        newTab(url: source, in: window)
     }
 
     func openInOtherBrowser(_ url: URL) {
@@ -284,17 +281,6 @@ extension BrowserStore {
         let candidates = NSWorkspace.shared.urlsForApplications(toOpen: url).filter { Bundle(url: $0)?.bundleIdentifier != me }
         if let app = candidates.first {
             NSWorkspace.shared.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
-        }
-    }
-}
-
-extension TabRuntime {
-    /// Opens Web Inspector for this page (WKWebView exposes it through the context menu / a private selector).
-    func showInspector() {
-        let sel = NSSelectorFromString("_inspector")
-        if webView.responds(to: sel), let inspector = webView.perform(sel)?.takeUnretainedValue() as? NSObject {
-            let show = NSSelectorFromString("show")
-            if inspector.responds(to: show) { inspector.perform(show) }
         }
     }
 }

@@ -31,8 +31,8 @@ public enum RadialContext: String, Codable, CaseIterable, Sendable, Identifiable
     }
 }
 
-/// The actions the ring knows by name. WebKit's menu items are matched to them so a layout the user made keeps working
-/// when WebKit rewords an item; anything else on the menu (spelling, fonts, services) is still reachable under "More".
+/// The actions the ring knows by name. The page menu's items are matched to them so a layout the user made keeps working
+/// when an item is reworded; anything else on the menu (an extension's items) is still reachable under "More".
 public enum RadialAction: String, Codable, CaseIterable, Sendable, Identifiable {
     case openLink, openLinkInNewTab, openLinkInPeek, openLinkInSplit, downloadLinkedFile, copyLink
     case openImageInNewTab, downloadImage, copyImage, copySubject, lookUpImage
@@ -142,35 +142,16 @@ public enum RadialAction: String, Codable, CaseIterable, Sendable, Identifiable 
         }
     }
 
-    private static let webKitIdentifiers: [String: RadialAction] = [
-        "WKMenuItemIdentifierOpenLink": .openLink, "WKMenuItemIdentifierOpenLinkInNewWindow": .openLinkInNewTab,
-        "WKMenuItemIdentifierDownloadLinkedFile": .downloadLinkedFile, "WKMenuItemIdentifierCopyLink": .copyLink,
-        "WKMenuItemIdentifierOpenImageInNewWindow": .openImageInNewTab, "WKMenuItemIdentifierDownloadImage": .downloadImage,
-        "WKMenuItemIdentifierCopyImage": .copyImage, "WKMenuItemIdentifierCopySubject": .copySubject,
-        "WKMenuItemIdentifierRevealImage": .lookUpImage, "WKMenuItemIdentifierOpenFrameInNewWindow": .openFrameInNewTab,
-        "WKMenuItemIdentifierLookUp": .lookUp, "WKMenuItemIdentifierTranslate": .translate, "WKMenuItemIdentifierSearchWeb": .searchWeb,
-        "WKMenuItemIdentifierCopy": .copy, "WKMenuItemIdentifierCut": .cut, "WKMenuItemIdentifierPaste": .paste,
-        "WKMenuItemIdentifierSelectAll": .selectAll, "WKMenuItemIdentifierCopyLinkWithHighlight": .copyLinkWithHighlight,
-        "WKMenuItemIdentifierShareMenu": .share, "WKMenuItemIdentifierGoBack": .back, "WKMenuItemIdentifierGoForward": .forward,
-        "WKMenuItemIdentifierReload": .reload, "WKMenuItemIdentifierStop": .stop,
-        "WKMenuItemIdentifierDownloadMedia": .downloadMedia, "WKMenuItemIdentifierCopyMediaLink": .copyMediaLink,
-        "WKMenuItemIdentifierShowMediaControls": .toggleMediaControls, "WKMenuItemIdentifierHideMediaControls": .toggleMediaControls,
-        "WKMenuItemIdentifierToggleMediaLoop": .toggleLoop, "WKMenuItemIdentifierEnterFullScreen": .fullScreen,
-        "WKMenuItemIdentifierExitFullScreen": .fullScreen, "WKMenuItemIdentifierPictureInPicture": .pictureInPicture,
-        "WKMenuItemIdentifierInspectElement": .inspect,
-        // Items Cosmos adds itself.
-        "cosmos.openLinkInPeek": .openLinkInPeek, "cosmos.openLinkInSplit": .openLinkInSplit,
-    ]
-
     /// Items whose identifier is only the name of the method that handles them are recognised by their title.
     private static let titles: [String: RadialAction] = [
         "cut": .cut, "copy": .copy, "paste": .paste, "select all": .selectAll, "back": .back, "forward": .forward,
         "reload": .reload, "reload page": .reload, "stop": .stop, "inspect element": .inspect,
     ]
 
-    /// The action a WebKit menu item stands for, by its identifier and otherwise by its title.
+    /// The action a menu item stands for: Cosmos names it in the item's identifier (`cosmos.<action>`), and an item from
+    /// elsewhere is known by its title.
     public static func resolve(identifier: String?, title: String) -> RadialAction? {
-        if let identifier, let known = webKitIdentifiers[identifier] { return known }
+        if let identifier, identifier.hasPrefix("cosmos."), let known = RadialAction(rawValue: String(identifier.dropFirst(7))) { return known }
         return titles[title.trimmingCharacters(in: .whitespaces).lowercased()]
     }
 }
@@ -196,13 +177,12 @@ public enum RadialLayout {
     public static let maxSlices = 8
     public static let moreID = "radial.more"
 
-    /// The ring for a menu's entries (separators already removed, in WebKit's order).
+    /// The ring for a menu's entries (separators already removed, in the menu's order).
     ///
     /// With a layout the user made, the ring is exactly what they chose, in their order, and everything else the system
     /// menu offered waits under "More". Without one (or when none of their choices is on this menu) the context's
-    /// default comes first and WebKit's remaining items follow, up to what fits; the rest go under "More". Nothing the
-    /// system menu offered is ever lost. (That is everything WebKit puts on its menu; the extras the system adds when the
-    /// menu is drawn, such as Services, only exist in the system menu, which ⌥-click opens.)
+    /// default comes first and the menu's remaining items follow, up to what fits; the rest go under "More". Nothing the
+    /// menu offered is ever lost; ⌥-click shows it as a plain menu.
     public static func ring(entries: [RadialEntry], context: RadialContext, custom: [RadialAction]?) -> [RadialEntry] {
         if let custom, !custom.isEmpty {
             let (placed, rest) = place(entries, custom)

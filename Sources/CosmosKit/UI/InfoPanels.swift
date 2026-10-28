@@ -14,7 +14,7 @@ struct SiteControlsPanel: View {
         let rt = store.currentRuntime(in: window)
         let url = store.currentURL(in: window)
         let host = url?.host ?? ""
-        let blocked = store.settings.adBlockAllowlist.contains(host) == false && store.settings.adBlockingEnabled
+        let blocked = store.settings.adBlockingEnabled && !(url.map { ContentBlockerController.isAllowlisted($0, allowlist: store.settings.adBlockAllowlist) } ?? false)
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
                 FaviconView(store: store, url: url, size: 24)
@@ -36,8 +36,7 @@ struct SiteControlsPanel: View {
                 if !host.isEmpty {
                     ControlRow(symbol: "shield.lefthalf.filled", title: "Ad & tracker blocking", detail: store.settings.adBlockingEnabled ? (blocked ? "On for this site" : "Off for this site") : "Off everywhere") {
                         SwitchControl(isOn: Binding(get: { blocked }, set: { on in
-                            if on { store.settings.adBlockAllowlist.removeAll { $0 == host } }
-                            else if !store.settings.adBlockAllowlist.contains(host) { store.settings.adBlockAllowlist.append(host) }
+                            if let url { store.settings.adBlockAllowlist = ContentBlockerController.allowlist(store.settings.adBlockAllowlist, blocking: on, for: url) }
                             rt?.reload()
                         }), label: "Ad and tracker blocking on this site")
                         .opacity(store.settings.adBlockingEnabled ? 1 : 0.4)

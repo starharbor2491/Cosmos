@@ -2,8 +2,7 @@ import AppKit
 import CosmosCore
 
 /// One open radial menu: the ring (and the smaller rings it opens), where it sits in the window, which slice the pointer
-/// is over, and the system menu items it stands in for. It keeps the system menu alive because WebKit's items run their
-/// actions through it.
+/// is over, and the menu items it stands in for. It keeps the menu alive because the items run their actions through it.
 @MainActor
 @Observable
 public final class RadialSession: Identifiable {
@@ -169,8 +168,8 @@ public final class RadialSession: Identifiable {
     public func finish() { onFinish?() }
 }
 
-/// Turns a system menu into ring entries: submenus become groups, separators and hidden items go, and WebKit's items are
-/// matched to the actions the layout can name.
+/// Turns a menu into ring entries: submenus become groups, separators and hidden items go, and the items are matched to
+/// the actions the layout can name.
 enum RadialMenuBuilder {
     static func entries(from menu: NSMenu) -> (entries: [RadialEntry], items: [String: NSMenuItem]) {
         var items: [String: NSMenuItem] = [:]
@@ -201,7 +200,7 @@ enum RadialMenuBuilder {
         return (entries, items)
     }
 
-    /// An icon for a submenu: the ones WebKit adds to text fields are known by name, any other gets a plain arrow.
+    /// An icon for a submenu: the usual text ones are known by name, any other gets a plain arrow.
     private static func groupSymbol(_ item: NSMenuItem, title: String) -> String {
         let known = ["spelling": "textformat.abc", "substitutions": "arrow.left.arrow.right", "transformations": "textformat", "font": "textformat.size",
                      "speech": "speaker.wave.2", "paragraph direction": "text.alignleft", "selection direction": "text.alignright", "services": "gearshape"]

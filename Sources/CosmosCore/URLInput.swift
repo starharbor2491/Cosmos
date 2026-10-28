@@ -14,11 +14,27 @@ public final class PublicSuffixList: @unchecked Sendable {
               let text = try? String(contentsOf: url, encoding: .utf8) else { return }
         for line in text.split(whereSeparator: \.isNewline) {
             let rule = line.trimmingCharacters(in: .whitespaces)
-            if rule.hasPrefix("!") { exception.insert(String(rule.dropFirst())) }
-            else if rule.hasPrefix("*.") { wildcard.insert(String(rule.dropFirst(2))) }
-            else if !rule.isEmpty { exact.insert(rule) }
+            // The list writes international names in Unicode; addresses carry them in ASCII (`xn--…`). Both forms count.
+            for form in Self.forms(of: rule) {
+                if form.hasPrefix("!") { exception.insert(String(form.dropFirst())) }
+                else if form.hasPrefix("*.") { wildcard.insert(String(form.dropFirst(2))) }
+                else if !form.isEmpty { exact.insert(form) }
+            }
         }
     }
+
+    /// A rule as written, and in ASCII when it has international labels.
+    private static func forms(of rule: String) -> [String] {
+        guard !rule.unicodeScalars.allSatisfy(\.isASCII) else { return [rule] }
+        let prefix = rule.hasPrefix("!") ? "!" : rule.hasPrefix("*.") ? "*." : ""
+        var c = URLComponents()
+        c.host = String(rule.dropFirst(prefix.count))
+        guard let ascii = c.encodedHost?.lowercased(), ascii.unicodeScalars.allSatisfy(\.isASCII) else { return [rule] }
+        return [rule, prefix + ascii]
+    }
+
+    /// A top-level domain the list knows (`com`, `рф`, `xn--p1ai`).
+    public func isTopLevelDomain(_ label: String) -> Bool { exact.contains(label.lowercased()) }
 
     /// Number of labels in the public suffix of `labels` (at least 1: unknown TLDs count as a suffix).
     private func suffixLength(_ labels: [Substring]) -> Int {
@@ -124,7 +140,7 @@ public enum URLInput {
         let local = isLocalHost(bare) || hostPort.hasPrefix("[")
         let labels = bare.lowercased().split(separator: ".", omittingEmptySubsequences: false)
         let validLabels = !labels.isEmpty && labels.allSatisfy { !$0.isEmpty && $0.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" } }
-        let tldOK = labels.count >= 2 && tlds.contains(String(labels.last!))
+        let tldOK = labels.count >= 2 && (tlds.contains(String(labels.last!)) || PublicSuffixList.shared.isTopLevelDomain(String(labels.last!)))
         let isHost = local || (validLabels && tldOK)
 
         guard isHost else { return .search(text) }

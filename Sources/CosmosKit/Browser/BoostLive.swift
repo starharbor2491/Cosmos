@@ -1,5 +1,4 @@
 import AppKit
-import WebKit
 import CosmosCore
 
 /// Applying Boost edits to pages that are already open, and the Zap element picker.
@@ -85,8 +84,7 @@ extension TabRuntime {
           addEventListener('keydown', key, true);
         });
         """
-        webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .defaultClient) { result in
-            if case .success(let value) = result { completion(value as? String) } else { completion(nil) }
-        }
+        // In Cosmos's own world, so the page cannot see the picker or answer for it.
+        Task { completion(await page.evaluate("(async function(){\n\(script)\n})()", in: .agent) as? String) }
     }
 }

@@ -1,6 +1,7 @@
 import Foundation
 import Testing
-import WebKit
+import AppKit
+import CosmosEngine
 @testable import CosmosKit
 @testable import CosmosCore
 
@@ -29,103 +30,176 @@ import WebKit
         """.write(to: folder.appendingPathComponent("content.js"), atomically: true, encoding: .utf8)
     }
 
-    func attribute(_ name: String, in runtime: TabRuntime) async -> String? {
-        try? await runtime.webView.evaluateJavaScript("document.documentElement.getAttribute('\(name)')") as? String
+    /// A store with a tab on screen and an extension center started on it; the tab's profile is the fake engine's first.
+    private func started() throws -> (Rig, ExtensionCenter, TabRuntime, FakeExtensions) {
+        let rig = Rig()
+        let center = ExtensionCenter(store: rig.store, directory: rig.dir)
+        rig.store.extensionCenter = center
+        let id = try #require(rig.store.newTab(url: URL(string: "https://example.com/"), in: rig.window))
+        let runtime = try #require(rig.store.runtime(forItem: id, in: rig.window))
+        center.start()
+        let engine = try #require(rig.store.fakeEngine.profiles.first?.fakeExtensions)
+        return (rig, center, runtime, engine)
     }
 
-    @Test(.enabled(if: ExtensionCenter.isSupported))
-    func anInstalledExtensionRunsOnPagesAndTalksToItsBackgroundWorker() async throws {
-        let rig = Rig()
+    private func until(_ done: () -> Bool) async throws {
+        for _ in 0..<100 where !done() { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(done())
+    }
+
+    @Test func anInstalledExtensionIsCopiedLoadedAndGetsItsButton() async throws {
+        let (rig, center, runtime, engine) = try started()
         let source = rig.dir.appendingPathComponent("src-ext", isDirectory: true)
         try writeTestExtension(to: source)
-
-        let center = ExtensionCenter(store: rig.store, directory: rig.dir, persistentStorage: false)
-        rig.store.extensionCenter = center
-        center.start()
-        #expect(center.controllerObject != nil)
 
         // The prompt is shown with what the manifest asks for, in plain words.
         var summary: ExtensionRequestSummary?
         let installed = try await center.install(from: source, origin: "a test folder") { s in summary = s; return true }
         #expect(installed.name == "Cosmos Test Extension")
+        #expect(installed.version == "1.2.3")
         #expect(center.items.count == 1)
         #expect(center.loadErrors.isEmpty)
         #expect(summary?.lines.contains { $0.contains("localhost") } == true)
         #expect(summary?.lines.contains { $0.contains("titles and addresses") } == true)
-        #expect(FileManager.default.fileExists(atPath: center.folder(for: installed).appendingPathComponent("manifest.json").path))
+        #expect(summary?.problems.isEmpty == true)
+        let folder = center.folder(for: installed)
+        #expect(FileManager.default.fileExists(atPath: folder.appendingPathComponent("manifest.json").path))
+        // The engine runs the copy, not the folder it came from.
+        let engineID = FakeExtensions.id(for: folder)
+        #expect(engine.loaded[engineID]?.standardizedFileURL == folder.standardizedFileURL)
 
-        // A real tab, configured by its profile, gets the content script and a reply from the background worker.
-        let server = try await PageServer(html: "<html><head><title>page</title></head><body>hello</body></html>")
-        let pageURL = try #require(URL(string: "http://localhost:\(server.port)/"))
-        let id = try #require(rig.store.newTab(url: pageURL, in: rig.window))
-        let runtime = try #require(rig.store.runtime(forItem: id, in: rig.window))
-        for _ in 0..<100 where runtime.isLoading || runtime.url == nil { try await Task.sleep(for: .milliseconds(100)) }
-
-        var injected: String?
-        var reply: String?
-        for _ in 0..<100 where reply == nil {
-            try await Task.sleep(for: .milliseconds(100))
-            injected = await attribute("data-cosmos-ext", in: runtime)
-            reply = await attribute("data-cosmos-reply", in: runtime)
-        }
-        #expect(injected == "injected")
-        let json = try #require(reply)
-        #expect(json.contains("\"echo\":42"))
-        #expect(json.contains("localhost"))     // sender.tab.url: WebKit knows about Cosmos's tab
-
-        // The toolbar button exists for the tab.
+        // Its button shows over the tab, labelled by the engine, and a click goes to the engine.
+        engine.buttons = [ExtensionAction(extensionID: engineID, title: "Test action", badgeText: "3")]
         let actions = center.actions(for: runtime)
-        #expect(actions.count == 1)
-        #expect(actions.first?.label == "Test action")
+        #expect(actions.map(\.label) == ["Test action"])
+        #expect(actions.first?.badge == "3")
+        center.performAction(installed.id, runtime: runtime, anchor: nil)
+        try await until { engine.performed == [engineID] }
 
-        // Turning it off removes it again; removing deletes the files.
+        // Turning it off takes it out of the engine; removing deletes the files.
         center.setEnabled(installed.id, false)
         #expect(center.actions(for: runtime).isEmpty)
+        try await until { engine.unloaded == [engineID] }
         center.remove(installed.id)
         #expect(center.items.isEmpty)
-        #expect(!FileManager.default.fileExists(atPath: center.folder(for: installed).path))
+        try await until { !FileManager.default.fileExists(atPath: folder.path) }
     }
 
-    @Test(.enabled(if: ExtensionCenter.isSupported))
-    func installedExtensionsSurviveARestart() async throws {
-        let rig = Rig()
+    @Test func anExtensionTheEngineCannotLoadIsNotKept() async throws {
+        let (rig, center, _, engine) = try started()
         let source = rig.dir.appendingPathComponent("src-ext", isDirectory: true)
         try writeTestExtension(to: source)
-        let center = ExtensionCenter(store: rig.store, directory: rig.dir, persistentStorage: false)
-        rig.store.extensionCenter = center
-        center.start()
+        engine.refusal = "the manifest is broken"
+        // The engine's reason reaches the user, and no entry or files stay behind.
+        do {
+            try await center.install(from: source, origin: "x") { _ in true }
+            Issue.record("installed an extension the engine refused")
+        } catch {
+            #expect(error.localizedDescription.contains("the manifest is broken"))
+        }
+        #expect(center.items.isEmpty)
+        try await until { ((try? FileManager.default.contentsOfDirectory(atPath: center.extensionsFolder.path)) ?? []).isEmpty }
+    }
+
+    /// Adding a Web Store extension that is already there replaces the old copy, but only once the new one loaded.
+    @Test func aNewCopyFromTheWebStoreReplacesTheOldOneOnceItLoads() async throws {
+        let (rig, center, _, engine) = try started()
+        let source = rig.dir.appendingPathComponent("src-ext", isDirectory: true)
+        try writeTestExtension(to: source)
+        let first = try await center.install(from: source, origin: "Chrome Web Store", webStoreID: "abcdefghijklmnopabcdefghijklmnop") { _ in true }
+
+        engine.refusal = "it would not load"
+        await #expect(throws: ExtensionError.self) {
+            try await center.install(from: source, origin: "Chrome Web Store", webStoreID: "abcdefghijklmnopabcdefghijklmnop") { _ in true }
+        }
+        #expect(center.items.map(\.id) == [first.id], "a copy that would not load leaves the old one in place")
+        #expect(engine.loaded[FakeExtensions.id(for: center.folder(for: first))] != nil)
+        engine.refusal = nil
+
+        let second = try await center.install(from: source, origin: "Chrome Web Store", webStoreID: "abcdefghijklmnopabcdefghijklmnop") { _ in true }
+        #expect(center.items.map(\.id) == [second.id])
+        try await until { engine.unloaded.contains(FakeExtensions.id(for: center.folder(for: first))) }
+    }
+
+    /// Items an extension added to the right-click menu: only those that run something, for what was clicked.
+    @Test func menuItemsAreTheLeavesForWhatWasClicked() async throws {
+        let (rig, center, runtime, engine) = try started()
+        let source = rig.dir.appendingPathComponent("src-ext", isDirectory: true)
+        try writeTestExtension(to: source)
+        let installed = try await center.install(from: source, origin: "x") { _ in true }
+        let id = FakeExtensions.id(for: center.folder(for: installed))
+        engine.items = [
+            ExtensionMenuItem(extensionID: id, itemID: "parent", title: "Parent", contexts: ["all"]),
+            ExtensionMenuItem(extensionID: id, itemID: "child", title: "Child", contexts: ["link"], parentID: "parent"),
+            ExtensionMenuItem(extensionID: id, itemID: "page", title: "Page", contexts: ["page"]),
+            ExtensionMenuItem(extensionID: "someone-else", itemID: "x", title: "Not ours", contexts: ["page"]),
+        ]
+        #expect(center.menuItems(for: runtime, contexts: ["page", "all"]).map(\.itemID) == ["page"])
+        #expect(center.menuItems(for: runtime, contexts: ["link", "all"]).map(\.itemID) == ["child"])
+        let context = ExtensionClickContext(pageURL: URL(string: "https://example.com/"), linkURL: URL(string: "https://example.com/a"))
+        center.performMenuItem(engine.items[1], context: context, on: runtime)
+        try await until { engine.clicked.count == 1 }
+        #expect(engine.clicked.first?.1 == context)
+    }
+
+    @Test func aProfileOpenedLaterGetsTheEnabledExtensions() async throws {
+        let (rig, center, _, _) = try started()
+        let source = rig.dir.appendingPathComponent("src-ext", isDirectory: true)
+        try writeTestExtension(to: source)
+        let on = try await center.install(from: source, origin: "x") { _ in true }
+        let off = try await center.install(from: source, origin: "x") { _ in true }
+        center.setEnabled(off.id, false)
+
+        let profileID = rig.store.addProfile(named: "Work")
+        _ = rig.store.environment(forProfile: profileID)
+        let later = try #require(rig.store.fakeEngine.profiles.last?.fakeExtensions)
+        try await until { !later.loaded.isEmpty }
+        #expect(Set(later.loaded.keys) == [FakeExtensions.id(for: center.folder(for: on))])
+    }
+
+    @Test func installedExtensionsSurviveARestart() async throws {
+        let (rig, center, _, _) = try started()
+        let source = rig.dir.appendingPathComponent("src-ext", isDirectory: true)
+        try writeTestExtension(to: source)
         let installed = try await center.install(from: source, origin: "a test folder") { _ in true }
         center.setEnabled(installed.id, false)
 
-        let again = ExtensionCenter(store: rig.store, directory: rig.dir, persistentStorage: false)
+        let again = ExtensionCenter(store: rig.store, directory: rig.dir)
         #expect(again.items.map(\.name) == ["Cosmos Test Extension"])
         #expect(again.items.first?.enabled == false)
         #expect(again.items.first?.id == installed.id)
     }
 
-    @Test(.enabled(if: ExtensionCenter.isSupported))
-    func aFolderWithoutAManifestIsRejectedAndNothingIsLeftBehind() async throws {
-        let rig = Rig()
+    @Test func aFolderWithoutAManifestIsRejectedAndNothingIsLeftBehind() async throws {
+        let (rig, center, _, _) = try started()
         let empty = rig.dir.appendingPathComponent("not-an-extension", isDirectory: true)
         try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
-        let center = ExtensionCenter(store: rig.store, directory: rig.dir, persistentStorage: false)
-        rig.store.extensionCenter = center
-        center.start()
         await #expect(throws: ExtensionError.self) { try await center.install(from: empty, origin: "x") { _ in true } }
         #expect(center.items.isEmpty)
     }
 
-    @Test(.enabled(if: ExtensionCenter.isSupported))
-    func decliningThePromptInstallsNothing() async throws {
-        let rig = Rig()
+    @Test func decliningThePromptInstallsNothing() async throws {
+        let (rig, center, _, engine) = try started()
         let source = rig.dir.appendingPathComponent("src-ext", isDirectory: true)
         try writeTestExtension(to: source)
-        let center = ExtensionCenter(store: rig.store, directory: rig.dir, persistentStorage: false)
-        rig.store.extensionCenter = center
-        center.start()
         await #expect(throws: ExtensionError.self) { try await center.install(from: source, origin: "x") { _ in false } }
         #expect(center.items.isEmpty)
+        #expect(engine.loaded.isEmpty)
         #expect(!FileManager.default.fileExists(atPath: center.extensionsFolder.path))
+    }
+
+    /// What Chromium no longer runs, and what it runs but Cosmos has nowhere to show, is said before anything is added.
+    @Test func theManifestsProblemsAreSpelledOut() {
+        let v2 = ExtensionRequestSummary.read(["manifest_version": 2, "version": "1", "permissions": ["tabs", "https://a.com/*"]])
+        #expect(v2.problems.contains { $0.contains("Manifest V2") })
+        #expect(v2.permissions == ["tabs"])
+        #expect(v2.hostPatterns == ["https://a.com/*"])
+        let unsupported = ExtensionRequestSummary.read(["manifest_version": 3, "version": "2", "permissions": ["sidePanel", "storage", "identity"]])
+        #expect(unsupported.problems == ["Cosmos can't show its side panel, Google sign-in yet."])
+        let fine = ExtensionRequestSummary.read(["manifest_version": 3, "version": "3", "permissions": ["storage"],
+                                                 "content_scripts": [["matches": ["https://b.com/*", "https://b.com/*"]]]])
+        #expect(fine.problems.isEmpty)
+        #expect(fine.hostPatterns == ["https://b.com/*"])
     }
 
     @Test func permissionsAreExplainedInPlainWords() {
@@ -136,5 +210,40 @@ import WebKit
         #expect(some.lines == ["Read and change your data on example.com, news.site"])
         let none = ExtensionRequestSummary(name: "C", version: "1", origin: "x", permissions: [], hostPatterns: [], problems: [])
         #expect(none.lines.isEmpty)
+        // Files on the Mac are not a website, and are said separately.
+        let files = ExtensionRequestSummary(name: "D", version: "1", origin: "x", permissions: [], hostPatterns: ["file:///*", "https://a.com/*"], problems: [])
+        #expect(files.lines == ["Read and change your data on a.com", "Read files on your Mac that you open in Cosmos"])
+    }
+}
+
+@MainActor
+@Suite struct ExtensionShortcutTests {
+    private func key(_ characters: String, keyCode: UInt16, _ flags: NSEvent.ModifierFlags) -> NSEvent {
+        NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: 0, context: nil,
+                         characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: keyCode)!
+    }
+
+    /// On a Mac a manifest's `Ctrl` is ⌘ and `MacCtrl` is ⌃.
+    @Test func manifestShortcutsReadTheMacWay() {
+        #expect(ExtensionShortcut("Ctrl+Shift+Y")?.modifiers == [.command, .shift])
+        #expect(ExtensionShortcut("Ctrl+Shift+Y")?.key == "y")
+        #expect(ExtensionShortcut("MacCtrl+Comma")?.modifiers == [.control])
+        #expect(ExtensionShortcut("MacCtrl+Comma")?.key == ",")
+        #expect(ExtensionShortcut("Alt+Up")?.key == "\u{F700}")
+        #expect(ExtensionShortcut("Shift+Y") == nil, "a shortcut needs more than Shift")
+        #expect(ExtensionShortcut("Ctrl+") == nil)
+    }
+
+    @Test func aShortcutMatchesOnlyItsOwnKeys() {
+        let shortcut = ExtensionShortcut("Ctrl+Shift+Y")!
+        #expect(shortcut.matches(key("Y", keyCode: 16, [.command, .shift])))
+        #expect(!shortcut.matches(key("y", keyCode: 16, [.command])))
+        #expect(!shortcut.matches(key("Y", keyCode: 16, [.command, .shift, .option])))
+    }
+
+    /// With ⇧ held a digit types its symbol; the shortcut is still for the digit.
+    @Test func aShiftedDigitIsStillTheDigit() {
+        let shortcut = ExtensionShortcut("Ctrl+Shift+1")!
+        #expect(shortcut.matches(key("!", keyCode: 18, [.command, .shift])))
     }
 }

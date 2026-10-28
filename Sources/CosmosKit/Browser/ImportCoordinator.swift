@@ -21,6 +21,8 @@ struct ImportOutcome {
 @MainActor
 enum ImportCoordinator {
     static func sources(for store: BrowserStore) async -> [ImportSource] {
+        // A private window keeps nothing: what was imported into it would be gone when it closes.
+        guard !store.isIncognito else { return [] }
         var out: [ImportSource] = []
         let arcDir = ArcImporter.defaultDirectory
         let arcFound = ArcImporter.hasProfile(at: arcDir)
@@ -77,7 +79,7 @@ enum ImportCoordinator {
         }
         store.applyArcImport(result, replacing: replace, in: window)
         var summary = result.report.summary
-        if ExtensionCenter.isSupported, store.extensionCenter != nil {
+        if store.extensionCenter != nil {
             let extensions = await Task.detached(priority: .utility) { ChromiumExtensionScanner.scanAll(browsers: [.arc]).count }.value
             if extensions > 0 {
                 summary += "\n\nArc also has \(extensions) extension\(extensions == 1 ? "" : "s"). To bring them over, open Settings ▸ Extensions and choose Find in Arc and Other Browsers."

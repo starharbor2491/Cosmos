@@ -1,6 +1,6 @@
 import AppKit
-import WebKit
 import CosmosCore
+import CosmosEngine
 
 public enum LinkDisposition {
     case currentTab, newTabForeground, newTabBackground, peek, split, download
@@ -18,35 +18,44 @@ public protocol TabHost: AnyObject {
     func tabDidFinishLoading(_ tab: TabRuntime)
     func tabIsPinnedOrFavorite(_ tab: TabRuntime) -> Bool
     func tab(_ tab: TabRuntime, open url: URL, as disposition: LinkDisposition)
-    func tab(_ tab: TabRuntime, createChildWith configuration: WKWebViewConfiguration, features: WKWindowFeatures) -> WKWebView?
+    /// The page opened a page of its own (`window.open`, a link to a new window) that the engine has already made. Return
+    /// false to close it.
+    func tab(_ tab: TabRuntime, didOpen page: EnginePage, request: NewPageRequest) -> Bool
     func tabRequestsClose(_ tab: TabRuntime)
     func tabRequestsEscape(_ tab: TabRuntime)
     func tab(_ tab: TabRuntime, boostZoomFor host: String) -> Double?
     /// Remembers (or, with `nil`, forgets) what the user answered when a site asked for a permission. `key` is `host|kind`.
     func tab(_ tab: TabRuntime, remember allowed: Bool?, forPermission key: String)
-    /// Shows the radial menu for the system menu a page asked for; false leaves the system menu to be drawn.
+    /// Shows the radial menu for the context menu a page asked for; false leaves the menu to be drawn as a menu.
     func tab(_ tab: TabRuntime, showRadialMenu menu: NSMenu, context: RadialContext, center: CGPoint, windowSize: CGSize) -> Bool
     /// True where there is no room for another window or tab (the menu-bar panel): a link that asks for one loads in place.
     var opensNewWindowsInPlace: Bool { get }
     /// The page is about to be replaced (a load, a reload, a link followed): anything that was made from it is out of date.
     func tabWillNavigate(_ tab: TabRuntime)
+    /// The items extensions added to the right-click menu, for what the click was on.
+    func extensionMenuItems(for tab: TabRuntime, contexts: Set<String>) -> [ExtensionMenuItem]
+    func tab(_ tab: TabRuntime, performExtensionItem item: ExtensionMenuItem, context: ExtensionClickContext)
 }
 
 public extension TabHost {
     var opensNewWindowsInPlace: Bool { false }
     func tabWillNavigate(_ tab: TabRuntime) {}
+    func extensionMenuItems(for tab: TabRuntime, contexts: Set<String>) -> [ExtensionMenuItem] { [] }
+    func tab(_ tab: TabRuntime, performExtensionItem item: ExtensionMenuItem, context: ExtensionClickContext) {}
 }
 
-/// One live page: owns the `WKWebView`, mirrors its state into observable properties and implements the WebKit
-/// delegate duties (navigation policy, popups, dialogs, downloads hand-off, auth).
+/// One live page: owns the engine's page, mirrors its state into observable properties and answers what the page asks
+/// (new windows, dialogs, files, permissions, context menus).
 @MainActor
 @Observable
 public final class TabRuntime: NSObject {
     public private(set) var itemID: UUID
     /// The profile whose cookies this page uses; `nil` in incognito.
     public let profileID: UUID?
-    @ObservationIgnored public let webView: CosmosWebView
+    @ObservationIgnored public let page: EnginePage
     @ObservationIgnored weak var host: TabHost?
+    /// The view that shows the page.
+    public var view: NSView { page.view }
 
     public private(set) var title = ""
     public private(set) var url: URL?
@@ -65,104 +74,101 @@ public final class TabRuntime: NSObject {
     /// Set when this runtime is a throwaway (Peek, Probe, popup) rather than a sidebar tab.
     public var isEphemeral = false
 
-    @ObservationIgnored private var observers: [NSKeyValueObservation] = []
-    /// What was under the pointer at the last right click (the page agent reports it just before the menu is asked for).
+    /// What was under the pointer at the last right click (the page agent reports it with the click).
     @ObservationIgnored private(set) var context = PageContext()
 
     struct PageContext {
         var link: URL?
         var image: URL?
+        var media: URL?
         var selection = ""
         var editable = false
-        var media = false
+        var isMedia = false
         /// Where the click was, in the page's own pixels from its top-left; only known for the main frame.
         var point: CGPoint?
     }
     @ObservationIgnored private var pendingBoostZoom = true
     @ObservationIgnored private var mediaFrames: [String: Bool] = [:]
     @ObservationIgnored private var crashes = CrashLoopGuard()
+    @ObservationIgnored private var isTornDown = false
 
-    public init(itemID: UUID, profileID: UUID?, configuration: WKWebViewConfiguration, host: TabHost?) {
+    public init(itemID: UUID, profileID: UUID?, page: EnginePage, host: TabHost?) {
         self.itemID = itemID
         self.profileID = profileID
+        self.page = page
         self.host = host
-        webView = CosmosWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
         super.init()
-        webView.runtime = self
-        webView.navigationDelegate = self
-        webView.uiDelegate = self
-        webView.allowsBackForwardNavigationGestures = true
-        webView.allowsMagnification = true
-        webView.isInspectable = true
-        observe()
+        page.delegate = self
+        Self.owners[ObjectIdentifier(page)] = Owner(runtime: self)
+        mirror()
     }
+
+    convenience init(itemID: UUID, profileID: UUID?, environment: ProfileEnvironment, host: TabHost?) {
+        self.init(itemID: itemID, profileID: profileID, page: environment.makePage(), host: host)
+    }
+
+    private struct Owner { weak var runtime: TabRuntime? }
+    private static var owners: [ObjectIdentifier: Owner] = [:]
+
+    /// The tab that shows `page`.
+    static func owning(_ page: EnginePage) -> TabRuntime? { owners[ObjectIdentifier(page)]?.runtime }
 
     // MARK: State mirroring
 
-    private func observe() {
-        func watch<V>(_ kp: KeyPath<WKWebView, V>, _ apply: @escaping (TabRuntime) -> Void) {
-            observers.append((webView as WKWebView).observe(kp, options: [.initial, .new]) { [weak self] _, _ in
-                MainActor.assumeIsolated { if let self { apply(self); self.host?.tabDidChange(self) } }
-            })
-        }
-        watch(\.title) { $0.title = $0.webView.title ?? "" }
-        watch(\.url) { $0.url = $0.webView.url }
-        watch(\.isLoading) { $0.isLoading = $0.webView.isLoading }
-        watch(\.estimatedProgress) { $0.progress = $0.webView.estimatedProgress }
-        watch(\.canGoBack) { $0.canGoBack = $0.webView.canGoBack }
-        watch(\.canGoForward) { $0.canGoForward = $0.webView.canGoForward }
-        watch(\.cameraCaptureState) { $0.isCapturing = $0.webView.cameraCaptureState == .active || $0.webView.microphoneCaptureState == .active }
-        watch(\.microphoneCaptureState) { $0.isCapturing = $0.webView.cameraCaptureState == .active || $0.webView.microphoneCaptureState == .active }
+    private func mirror() {
+        let s = page.state
+        title = s.title
+        url = s.url
+        isLoading = s.isLoading
+        progress = s.progress
+        canGoBack = s.canGoBack
+        canGoForward = s.canGoForward
+        isCapturing = s.isCapturing
     }
 
     // MARK: Commands
 
     public func load(_ url: URL) {
         loadFailed = false
-        if url.isFileURL {
-            webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
-        } else {
-            webView.load(URLRequest(url: url))
-        }
+        page.load(url)
     }
 
     public func reload(fromOrigin: Bool = false) {
         loadFailed = false
-        if fromOrigin { webView.reloadFromOrigin() } else { webView.reload() }
+        page.reload(fromOrigin: fromOrigin)
     }
-    public func stop() { webView.stopLoading() }
-    public func goBack() { webView.goBack() }
-    public func goForward() { webView.goForward() }
+    public func stop() { page.stop() }
+    public func goBack() { page.goBack() }
+    public func goForward() { page.goForward() }
     /// The range ⌘+ and ⌘- keep to; a zoom read from a Boost file is held to it too.
     static func clampedZoom(_ z: Double) -> Double { z.isFinite ? min(5, max(0.25, z)) : 1 }
 
-    public func zoomIn() { webView.pageZoom = min(5, webView.pageZoom + 0.1) }
-    public func zoomOut() { webView.pageZoom = max(0.25, webView.pageZoom - 0.1) }
-    public func resetZoom() { webView.pageZoom = 1 }
-    public var zoom: Double { webView.pageZoom }
+    public func zoomIn() { page.zoom = Self.clampedZoom(page.zoom + 0.1) }
+    public func zoomOut() { page.zoom = Self.clampedZoom(page.zoom - 0.1) }
+    public func resetZoom() { page.zoom = 1 }
+    public var zoom: Double { page.zoom }
 
-    public func evaluate(_ js: String, in world: WKContentWorld? = nil) {
-        webView.evaluateJavaScript(js, in: nil, in: world ?? .page) { _ in }
+    /// Runs `js` in the page; `world` `.agent` is Cosmos's own, out of the page's reach.
+    public func evaluate(_ js: String, in world: ScriptWorld = .page) {
+        Task { _ = await page.evaluate(js, in: world) }
+    }
+
+    public func evaluate(returning js: String, in world: ScriptWorld = .page) async -> Any? {
+        await page.evaluate(js, in: world)
     }
 
     public func find(_ text: String, backwards: Bool = false, completion: @escaping (Bool) -> Void) {
         guard !text.isEmpty else { completion(false); return }
-        let cfg = WKFindConfiguration()
-        cfg.backwards = backwards
-        cfg.wraps = true
-        cfg.caseSensitive = false
-        webView.find(text, configuration: cfg) { completion($0.matchFound) }
+        let js = "window.find(\(BoostInjector.jsString(text)), false, \(backwards), true, false, true, false)"
+        Task { completion(await page.evaluate(js, in: .agent) as? Bool ?? false) }
     }
 
     public func clearFind() {
-        evaluate("window.getSelection().removeAllRanges()")
-        // WebKit keeps the yellow find indicator until told to hide it.
-        let hide = NSSelectorFromString("_hideFindUI")
-        if webView.responds(to: hide) { _ = webView.perform(hide) }
+        evaluate("window.getSelection().removeAllRanges()", in: .agent)
     }
 
     private func applyMute() {
-        evaluate("window.__cosmosMute && window.__cosmosMute(\(isMuted))", in: .defaultClient)
+        evaluate("window.__cosmosMute && window.__cosmosMute(\(isMuted))", in: .agent)
     }
 
     /// Moves the playing video into Picture-in-Picture (used when the user leaves the tab).
@@ -173,69 +179,130 @@ public final class TabRuntime: NSObject {
           vids.sort((a, b) => b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight);
           const v = vids[0];
           if (!v || document.pictureInPictureElement === v) return;
-          try { await v.requestPictureInPicture(); }
-          catch (e) { if (v.webkitSetPresentationMode) v.webkitSetPresentationMode('picture-in-picture'); }
+          try { await v.requestPictureInPicture(); } catch (e) {}
         })();
         """
-        evaluate(js)
+        evaluate(js, in: .agent)
     }
 
     public func exitPictureInPicture() {
-        evaluate("if (document.pictureInPictureElement) document.exitPictureInPicture().catch(()=>{}); document.querySelectorAll('video').forEach(v => { if (v.webkitPresentationMode === 'picture-in-picture') v.webkitSetPresentationMode('inline'); });")
+        evaluate("if (document.pictureInPictureElement) document.exitPictureInPicture().catch(()=>{});", in: .agent)
     }
 
     public func takeSnapshot(width: CGFloat = 320, completion: @escaping (NSImage?) -> Void) {
-        let cfg = WKSnapshotConfiguration()
-        cfg.snapshotWidth = NSNumber(value: Double(width))
-        webView.takeSnapshot(with: cfg) { image, _ in completion(image) }
+        Task { completion(await page.snapshot(width: width)) }
     }
 
     /// Turns a throwaway page (Peek) into the page of a sidebar tab.
     func adopt(itemID: UUID) { self.itemID = itemID }
 
-    /// Detaches delegates and stops the page so the runtime can be released.
+    /// Closes the page so the runtime can be released.
     public func tearDown() {
-        observers.removeAll()
-        webView.stopLoading()
-        webView.navigationDelegate = nil
-        webView.uiDelegate = nil
-        webView.runtime = nil
-        webView.removeFromSuperview()
+        guard !isTornDown else { return }
+        isTornDown = true
+        Self.owners[ObjectIdentifier(page)] = nil
+        page.delegate = nil
+        page.close()
+    }
+
+    // MARK: New windows
+
+    /// A page this one opened, already made by the engine.
+    func opened(_ child: EnginePage, request: NewPageRequest) -> Bool {
+        guard let host else { return false }
+        if Self.loadsNewWindowInPlace(hostOpensInPlace: host.opensNewWindowsInPlace, request: request) {
+            if let url = request.url, Self.isWebLink(url) { load(url) }
+            return false
+        }
+        return host.tab(self, didOpen: child, request: request)
+    }
+
+    /// A page that asks for a script-sized window (an OAuth sign-in, a payment sheet) needs its opener, so it must get a
+    /// real window; every other new-window request loads where it is when the host has no room for another window.
+    static func loadsNewWindowInPlace(hostOpensInPlace: Bool, request: NewPageRequest) -> Bool {
+        hostOpensInPlace && !request.isScriptSizedPopup
     }
 
     // MARK: Agent messages
 
     func handleAgentMessage(_ body: [String: Any], fromMainFrame: Bool) {
         switch body["type"] as? String {
+        case "ready":
+            if fromMainFrame { sendConfig() }
         case "meta":
-            guard fromMainFrame, let pageURL = webView.url, let host = pageURL.host else { return }
+            guard fromMainFrame, let pageURL = url, let host = pageURL.host else { return }
             let icons = (body["icons"] as? [[String: Any]] ?? []).compactMap { d -> (URL, String, String)? in
                 guard let href = (d["href"] as? String).flatMap(URL.init(string:)), href.scheme == "https" || href.scheme == "http" || href.scheme == "data" else { return nil }
                 return (href, d["sizes"] as? String ?? "", d["rel"] as? String ?? "")
             }
             self.host?.favicons.update(host: host, candidates: icons.map { FaviconStore.Candidate(href: $0.0, sizes: $0.1, rel: $0.2) }, pageURL: pageURL)
             themeColor = (body["themeColor"] as? String).flatMap(Self.parseCSSColor)
-        case "peekLink":
-            guard let href = (body["href"] as? String).flatMap(URL.init(string:)), ["http", "https"].contains(href.scheme?.lowercased() ?? "") else { break }
-            host?.tab(self, open: href, as: .peek)
+        case "link":
+            guard let href = (body["href"] as? String).flatMap(URL.init(string:)), Self.isWebLink(href) else { break }
+            followLink(href, meta: body["meta"] as? Bool ?? false, shift: body["shift"] as? Bool ?? false, alt: body["alt"] as? Bool ?? false)
+        case "external":
+            guard let href = (body["href"] as? String).flatMap(URL.init(string:)), let scheme = href.scheme?.lowercased(),
+                  !Self.webSchemes.contains(scheme) else { break }
+            openElsewhere(href)
         case "media":
-            let key = (body["frame"] as? String) == "top" ? "top" : "sub-\(fromMainFrame)"
+            // Each frame reports its own media; the tab is audible while any of them plays.
+            let key = (body["frame"] as? String).map { "\($0)" } ?? (fromMainFrame ? "top" : "sub")
             mediaFrames[key] = (body["playing"] as? Bool) ?? false
             isAudible = mediaFrames.values.contains(true)
             hasPlayingVideo = (body["video"] as? Bool) ?? false
             if !isAudible && !(body["video"] as? Bool ?? false) { hasPlayingVideo = false }
             host?.tabDidChange(self)
         case "context":
-            var next = PageContext(link: (body["link"] as? String).flatMap(URL.init(string:)), image: (body["image"] as? String).flatMap(URL.init(string:)),
-                                   selection: body["selection"] as? String ?? "", editable: body["editable"] as? Bool ?? false, media: body["media"] as? Bool ?? false)
+            var next = PageContext(link: Self.address(body["link"]), image: Self.address(body["image"]), media: Self.address(body["mediaSrc"]),
+                                   selection: body["selection"] as? String ?? "", editable: body["editable"] as? Bool ?? false,
+                                   isMedia: body["media"] as? Bool ?? false)
             if fromMainFrame, let x = body["x"] as? Double, let y = body["y"] as? Double, x.isFinite, y.isFinite { next.point = CGPoint(x: x, y: y) }
             context = next
+            // A site that draws a right-click menu of its own said so; Cosmos then shows none.
+            if !(body["handled"] as? Bool ?? false) { showContextMenu() }
         case "hover":
             hoverURL = (body["href"] as? String).flatMap(URL.init(string:))
         case "escape":
             host?.tabRequestsEscape(self)
         default: break
         }
+    }
+
+    private static func address(_ value: Any?) -> URL? { (value as? String).flatMap { $0.isEmpty ? nil : URL(string: $0) } }
+
+    /// What the agent needs to know about this tab: whether a link to another site opens in Peek.
+    private func sendConfig() {
+        let peek = host.map { $0.settings.peekFromPinned && $0.tabIsPinnedOrFavorite(self) } ?? false
+        evaluate("window.__cosmosConfig && window.__cosmosConfig({ peekCrossSite: \(peek) })", in: .agent)
+    }
+
+    /// A click on a link the agent held back: ⌘-click opens a background tab, ⇧⌘-click a foreground one, ⇧-click Peek,
+    /// ⌥-click downloads, and a plain click in a pinned tab or Favorite that leaves the site opens Peek.
+    private func followLink(_ href: URL, meta: Bool, shift: Bool, alt: Bool) {
+        if meta { host?.tab(self, open: href, as: shift ? .newTabForeground : .newTabBackground); return }
+        if alt { host?.tab(self, open: href, as: .download); return }
+        if shift { host?.tab(self, open: href, as: .peek); return }
+        if let host, host.settings.peekFromPinned, host.tabIsPinnedOrFavorite(self),
+           let current = url, !PublicSuffixList.shared.isSameSite(current, href) {
+            host.tab(self, open: href, as: .peek)
+        } else {
+            load(href)
+        }
+    }
+
+    static let webSchemes: Set<String> = ["http", "https", "about", "data", "blob", "file", "view-source", "javascript", "chrome-extension"]
+
+    /// A link that belongs to another app (`zoommtg:`, `slack:`): the user clicked it, and is asked before it leaves.
+    private func openElsewhere(_ url: URL) {
+        guard let app = NSWorkspace.shared.urlForApplication(toOpen: url) else { return }
+        if url.scheme?.lowercased() == "mailto" { NSWorkspace.shared.open(url); return }
+        let name = FileManager.default.displayName(atPath: app.path).replacingOccurrences(of: ".app", with: "")
+        let alert = NSAlert()
+        alert.messageText = "Open “\(name)”?"
+        alert.informativeText = "\(url.host.map { "“\($0)”" } ?? "This page") wants to open a link in \(name)."
+        alert.addButton(withTitle: "Open \(name)")
+        alert.addButton(withTitle: "Cancel")
+        present(alert) { if $0 == .alertFirstButtonReturn { NSWorkspace.shared.open(url) } }
     }
 
     static func parseCSSColor(_ s: String) -> RGBA? {
@@ -247,308 +314,162 @@ public final class TabRuntime: NSObject {
         return RGBA(hex: v)
     }
 
-    // MARK: Context menu
-
-    func customiseContextMenu(_ menu: NSMenu) {
-        var insertAfter: Int?
-        for (i, item) in menu.items.enumerated() {
-            switch item.webKitIdentifier {
-            case "WKMenuItemIdentifierOpenLinkInNewWindow": item.title = "Open Link in New Tab"; insertAfter = i
-            case "WKMenuItemIdentifierOpenImageInNewWindow": item.title = "Open Image in New Tab"
-            case "WKMenuItemIdentifierOpenFrameInNewWindow": item.title = "Open Frame in New Tab"
-            default: break
-            }
-        }
-        if let link = context.link, Self.isWebLink(link), let at = insertAfter {
-            // The link is carried on the item, not read from the page context when the item runs: the ring can be open
-            // while the page moves on.
-            let peek = NSMenuItem(title: "Open Link in Peek", action: #selector(menuOpenInPeek(_:)), keyEquivalent: "")
-            peek.target = self
-            peek.representedObject = link
-            peek.identifier = NSUserInterfaceItemIdentifier("cosmos.openLinkInPeek")
-            peek.image = NSImage(systemSymbolName: "eye", accessibilityDescription: nil)
-            let split = NSMenuItem(title: "Open Link in Split View", action: #selector(menuOpenInSplit(_:)), keyEquivalent: "")
-            split.target = self
-            split.representedObject = link
-            split.identifier = NSUserInterfaceItemIdentifier("cosmos.openLinkInSplit")
-            split.image = NSImage(systemSymbolName: "rectangle.split.2x1", accessibilityDescription: nil)
-            menu.insertItem(split, at: at + 1)
-            menu.insertItem(peek, at: at + 1)
-        }
-    }
-
-    /// Puts the radial menu up in place of the system menu, if the settings, the site and the window allow it. Returns
-    /// whether it did, in which case the caller cancels the system menu. Holding ⌥ on the click asks for the system menu.
-    func presentRadialMenu(_ menu: NSMenu) -> Bool {
-        let click = webView.recentClick()
-        let modifiers = click?.modifiers ?? NSEvent.modifierFlags
-        // In element fullscreen (a video taking the screen) the page lives in a window of WebKit's own and the ring would be
-        // drawn in the browser window behind it, so the system menu stays.
-        guard let host, let window = webView.window, webView.fullscreenState == .notInFullscreen,
-              !modifiers.contains(.option), !NSWorkspace.shared.isVoiceOverEnabled else { return false }
-        let kind = RadialContext.detect(link: context.link != nil, image: context.image != nil, selection: !context.selection.isEmpty,
-                                        editable: context.editable, media: context.media)
-        // Where the pointer is, in the window's space with y down. The click says so itself; for a menu that came from
-        // the keyboard it is the page's report of where it was (only trustworthy when the view is not pinched), and
-        // failing that wherever the mouse is.
-        var windowPoint = window.mouseLocationOutsideOfEventStream
-        if let click {
-            windowPoint = click.location
-        } else if let p = context.point, webView.magnification == 1 {
-            let zoom = webView.pageZoom
-            windowPoint = webView.convert(NSPoint(x: p.x * zoom, y: webView.isFlipped ? p.y * zoom : webView.bounds.height - p.y * zoom), to: nil)
-        }
-        let size = window.contentView?.bounds.size ?? window.frame.size
-        return host.tab(self, showRadialMenu: menu, context: kind, center: CGPoint(x: windowPoint.x, y: size.height - windowPoint.y), windowSize: size)
-    }
-
     /// Peek and Split load a page beside this one: only a web address (a page can link to a file or a script too).
     static func isWebLink(_ url: URL) -> Bool { ["http", "https"].contains(url.scheme?.lowercased() ?? "") }
 
-    @objc private func menuOpenInPeek(_ sender: NSMenuItem) { if let l = sender.representedObject as? URL, Self.isWebLink(l) { host?.tab(self, open: l, as: .peek) } }
-    @objc private func menuOpenInSplit(_ sender: NSMenuItem) { if let l = sender.representedObject as? URL, Self.isWebLink(l) { host?.tab(self, open: l, as: .split) } }
+    // MARK: Errors
+
+    private func presentError(_ error: PageLoadError, url failing: URL) {
+        loadFailed = true
+        page.loadHTML(ErrorPage.html(for: error, url: failing), showing: failing)
+        host?.tabDidChange(self)
+    }
+
+    // MARK: Sheets
+
+    func present(_ alert: NSAlert, _ done: @escaping (NSApplication.ModalResponse) -> Void) {
+        if let window = view.window { alert.beginSheetModal(for: window, completionHandler: done) } else { done(alert.runModal()) }
+    }
+
+    /// Waits until the page is on screen: a tab in the background does not get to put up a dialog over whatever the user is
+    /// looking at. False if the tab went away first.
+    private func waitUntilShown() async -> Bool {
+        while view.window == nil {
+            if isTornDown { return false }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+        return !isTornDown
+    }
+
+    private func sheet(_ alert: NSAlert) async -> NSApplication.ModalResponse {
+        await withCheckedContinuation { c in present(alert) { c.resume(returning: $0) } }
+    }
 }
 
-// MARK: - Navigation
+// MARK: - Engine page delegate
 
-extension TabRuntime: WKNavigationDelegate {
-    private static let webSchemes: Set<String> = ["http", "https", "about", "data", "blob", "file", "cosmos", "view-source", "javascript", "webkit-extension"]
-
-    public func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, preferences: WKWebpagePreferences,
-                        decisionHandler: @escaping @MainActor (WKNavigationActionPolicy, WKWebpagePreferences) -> Void) {
-        guard let url = navigationAction.request.url else { decisionHandler(.allow, preferences); return }
-        let scheme = url.scheme?.lowercased() ?? ""
-        let flags = navigationAction.modifierFlags
-
-        // Links that belong to other apps (mailto:, tel:, zoommtg:, slack: ...).
-        if !Self.webSchemes.contains(scheme) {
-            if navigationAction.navigationType == .linkActivated || navigationAction.sourceFrame.isMainFrame {
-                NSWorkspace.shared.open(url)
-            }
-            decisionHandler(.cancel, preferences)
-            return
-        }
-        if navigationAction.shouldPerformDownload { decisionHandler(.download, preferences); return }
-
-        if navigationAction.navigationType == .linkActivated, scheme == "http" || scheme == "https" {
-            // ⌘-click: background tab, ⇧⌘-click: foreground tab, ⇧-click: Peek, ⌥-click: download.
-            if flags.contains(.command) {
-                host?.tab(self, open: url, as: flags.contains(.shift) ? .newTabForeground : .newTabBackground)
-                decisionHandler(.cancel, preferences); return
-            }
-            if flags.contains(.shift) { host?.tab(self, open: url, as: .peek); decisionHandler(.cancel, preferences); return }
-            if flags.contains(.option) { host?.tab(self, open: url, as: .download); decisionHandler(.cancel, preferences); return }
-            // Pinned tabs and Favorites keep their place: a link to another site opens in Peek.
-            if navigationAction.targetFrame?.isMainFrame ?? false, let host,
-               host.settings.peekFromPinned, host.tabIsPinnedOrFavorite(self),
-               let current = webView.url, !PublicSuffixList.shared.isSameSite(current, url) {
-                host.tab(self, open: url, as: .peek)
-                decisionHandler(.cancel, preferences); return
-            }
-        }
-        if navigationAction.targetFrame?.isMainFrame ?? true, let host {
-            ContentBlockerController.configure(preferences, for: url, settings: host.settings)
-        }
-        decisionHandler(.allow, preferences)
+extension TabRuntime: EnginePageDelegate {
+    public func pageStateDidChange(_ page: EnginePage) {
+        mirror()
+        host?.tabDidChange(self)
     }
 
-    public func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
-                        decisionHandler: @escaping @MainActor (WKNavigationResponsePolicy) -> Void) {
-        if let http = navigationResponse.response as? HTTPURLResponse,
-           let disposition = http.value(forHTTPHeaderField: "Content-Disposition")?.lowercased(), disposition.hasPrefix("attachment") {
-            decisionHandler(.download); return
-        }
-        decisionHandler(navigationResponse.canShowMIMEType ? .allow : .download)
-    }
-
-    public func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
-        if let host { download.delegate = host.downloads; host.downloads.began(download, from: webView) }
-    }
-
-    public func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
-        if let host { download.delegate = host.downloads; host.downloads.began(download, from: webView) }
-    }
-
-    public func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+    public func pageDidStartNavigation(_ page: EnginePage) {
         loadFailed = false
         mediaFrames.removeAll()
         isAudible = false
         hoverURL = nil
         pendingBoostZoom = true
-        // What was under the pointer on the last page says nothing about this one (a PDF or an error page has no agent
-        // to report its own).
+        // What was under the pointer on the last page says nothing about this one.
         context = PageContext()
         host?.tabWillNavigate(self)
     }
 
-    public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+    public func pageDidCommitNavigation(_ page: EnginePage) {
         lastActivity = Date()
-        if pendingBoostZoom, let h = webView.url?.host, let z = host?.tab(self, boostZoomFor: h) {
-            webView.pageZoom = Self.clampedZoom(z)
+        mirror()
+        if pendingBoostZoom, let h = url?.host, let z = host?.tab(self, boostZoomFor: h) {
+            page.zoom = Self.clampedZoom(z)
         }
         pendingBoostZoom = false
         if isMuted { applyMute() }
         host?.tabDidChange(self)
     }
 
-    public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    public func pageDidFinishLoading(_ page: EnginePage) {
+        mirror()
         host?.tabDidFinishLoading(self)
     }
 
-    public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        presentError(error)
+    public func page(_ page: EnginePage, didFailLoading url: URL, error: PageLoadError) {
+        presentError(error, url: url)
     }
 
-    public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        presentError(error)
+    public func page(_ page: EnginePage, agentMessage: [String: Any], fromMainFrame: Bool) {
+        handleAgentMessage(agentMessage, fromMainFrame: fromMainFrame)
     }
 
-    public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        // The renderer crashed or was killed under memory pressure: bring the page back, unless it keeps happening.
-        switch crashes.decide(at: Date()) {
-        case .reload:
-            webView.reload()
-        case .showError:
-            let failing = webView.url ?? URL(string: "about:blank")!
-            let error = NSError(domain: ErrorPage.crashDomain, code: 1, userInfo: [NSURLErrorFailingURLErrorKey: failing])
-            loadFailed = true
-            webView.loadHTMLString(ErrorPage.html(for: error, url: failing), baseURL: failing)
-        case .ignore:
-            break
-        }
-    }
-
-    public func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge,
-                        completionHandler: @escaping @MainActor (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        let method = challenge.protectionSpace.authenticationMethod
-        guard method == NSURLAuthenticationMethodHTTPBasic || method == NSURLAuthenticationMethodHTTPDigest || method == NSURLAuthenticationMethodNTLM else {
-            completionHandler(.performDefaultHandling, nil); return
-        }
+    public func page(_ page: EnginePage, runDialog dialog: PageDialog) async -> PageDialog.Answer {
+        guard await waitUntilShown() else { return PageDialog.Answer(accepted: false) }
         let alert = NSAlert()
-        alert.messageText = "Sign in to \(challenge.protectionSpace.host)"
-        alert.informativeText = challenge.protectionSpace.realm.map { "The site says: “\($0)”" } ?? "This site requires a username and password."
-        alert.addButton(withTitle: "Sign In")
-        alert.addButton(withTitle: "Cancel")
-        let stack = NSStackView(frame: NSRect(x: 0, y: 0, width: 260, height: 56))
-        stack.orientation = .vertical
-        stack.spacing = 6
-        let user = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24)); user.placeholderString = "Username"
-        let pass = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24)); pass.placeholderString = "Password"
-        stack.addArrangedSubview(user); stack.addArrangedSubview(pass)
-        alert.accessoryView = stack
-        let respond: (NSApplication.ModalResponse) -> Void = { r in
-            if r == .alertFirstButtonReturn {
-                completionHandler(.useCredential, URLCredential(user: user.stringValue, password: pass.stringValue, persistence: .forSession))
-            } else {
-                completionHandler(.cancelAuthenticationChallenge, nil)
-            }
+        alert.messageText = dialog.origin.isEmpty ? "This page says" : dialog.origin
+        alert.informativeText = dialog.message
+        var field: NSTextField?
+        switch dialog.kind {
+        case .alert:
+            alert.addButton(withTitle: "OK")
+        case .confirm:
+            alert.addButton(withTitle: "OK"); alert.addButton(withTitle: "Cancel")
+        case .prompt(let text):
+            alert.addButton(withTitle: "OK"); alert.addButton(withTitle: "Cancel")
+            let f = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+            f.stringValue = text
+            alert.accessoryView = f
+            field = f
+        case .beforeUnload:
+            alert.messageText = "Leave this page?"
+            alert.informativeText = "Changes you made may not be saved."
+            alert.addButton(withTitle: "Leave"); alert.addButton(withTitle: "Stay")
         }
-        if let window = webView.window { alert.beginSheetModal(for: window, completionHandler: respond) } else { respond(alert.runModal()) }
+        let response = await sheet(alert)
+        let accepted = response == .alertFirstButtonReturn
+        return PageDialog.Answer(accepted: accepted, text: accepted ? field?.stringValue : nil)
     }
 
-    private func presentError(_ error: Error) {
-        let ns = error as NSError
-        if ns.domain == NSURLErrorDomain, ns.code == NSURLErrorCancelled { return }
-        if ns.domain == "WebKitErrorDomain", ns.code == 102 || ns.code == 101 { return }   // frame load interrupted by a download / policy change
-        guard let failing = (ns.userInfo[NSURLErrorFailingURLErrorKey] as? URL) ?? webView.url else { return }
-        loadFailed = true
-        webView.loadHTMLString(ErrorPage.html(for: ns, url: failing), baseURL: failing)
-    }
-}
-
-// MARK: - UI delegate
-
-extension TabRuntime: WKUIDelegate {
-    public func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
-                        for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        guard let host else { return nil }
-        if Self.loadsNewWindowInPlace(hostOpensInPlace: host.opensNewWindowsInPlace, features: windowFeatures) {
-            if let url = navigationAction.request.url, ["http", "https"].contains(url.scheme?.lowercased() ?? "") { load(url) }
-            return nil
-        }
-        // Popups from script (OAuth, payment flows) need the opener relationship, so they must use WebKit's configuration.
-        return host.tab(self, createChildWith: configuration, features: windowFeatures)
-    }
-
-    /// A page that asks for a script-sized window (an OAuth sign-in, a payment sheet) needs its opener, so it must get a
-    /// real window; every other new-window request loads where it is when the host has no room for another window.
-    static func isScriptSizedPopup(_ features: WKWindowFeatures) -> Bool { features.width != nil || features.height != nil }
-
-    static func loadsNewWindowInPlace(hostOpensInPlace: Bool, features: WKWindowFeatures) -> Bool {
-        hostOpensInPlace && !isScriptSizedPopup(features)
-    }
-
-    public func webViewDidClose(_ webView: WKWebView) { host?.tabRequestsClose(self) }
-
-    public func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo,
-                        completionHandler: @escaping @MainActor () -> Void) {
-        let alert = dialog(message: message, frame: frame, buttons: ["OK"])
-        present(alert) { _ in completionHandler() }
-    }
-
-    public func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo,
-                        completionHandler: @escaping @MainActor (Bool) -> Void) {
-        let alert = dialog(message: message, frame: frame, buttons: ["OK", "Cancel"])
-        present(alert) { completionHandler($0 == .alertFirstButtonReturn) }
-    }
-
-    public func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?,
-                        initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor (String?) -> Void) {
-        let alert = dialog(message: prompt, frame: frame, buttons: ["OK", "Cancel"])
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
-        field.stringValue = defaultText ?? ""
-        alert.accessoryView = field
-        present(alert) { completionHandler($0 == .alertFirstButtonReturn ? field.stringValue : nil) }
-    }
-
-    public func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo,
-                        completionHandler: @escaping @MainActor ([URL]?) -> Void) {
+    public func page(_ page: EnginePage, chooseFiles chooser: FileChooser) async -> [URL]? {
+        guard await waitUntilShown() else { return nil }
         let panel = NSOpenPanel()
-        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
-        panel.canChooseDirectories = parameters.allowsDirectories
+        panel.allowsMultipleSelection = chooser.allowsMultiple
+        panel.canChooseDirectories = chooser.allowsDirectories
         panel.canChooseFiles = true
-        let finish: (NSApplication.ModalResponse) -> Void = { completionHandler($0 == .OK ? panel.urls : nil) }
-        if let window = webView.window { panel.beginSheetModal(for: window, completionHandler: finish) } else { finish(panel.runModal()) }
+        let response: NSApplication.ModalResponse = await withCheckedContinuation { c in
+            if let window = view.window { panel.beginSheetModal(for: window) { c.resume(returning: $0) } } else { c.resume(returning: panel.runModal()) }
+        }
+        return response == .OK ? panel.urls : nil
     }
 
-    public func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo,
-                        type: WKMediaCaptureType, decisionHandler: @escaping @MainActor (WKPermissionDecision) -> Void) {
-        let (kind, noun): (String, String) = {
-            switch type {
-            case .camera: return ("camera", "camera")
-            case .microphone: return ("microphone", "microphone")
-            case .cameraAndMicrophone: return ("cameraAndMicrophone", "camera and microphone")
-            @unknown default: return ("media", "camera or microphone")
-            }
-        }()
-        let site = origin.host
-        let key = "\(site)|\(kind)"
-        if !site.isEmpty, let known = host?.settings.permissionDecisions[key] {
-            decisionHandler(known ? .grant : .deny)
-            return
+    public func page(_ page: EnginePage, wantsPermission request: PermissionRequest) async -> Bool {
+        let noun: String = switch request.kind {
+        case .camera: "camera"
+        case .microphone: "microphone"
+        case .cameraAndMicrophone: "camera and microphone"
+        case .location: "location"
+        case .notifications: "notifications"
         }
+        let site = request.host
+        let key = "\(site)|\(request.kind.rawValue)"
+        if !site.isEmpty, let known = host?.settings.permissionDecisions[key] { return known }
+        guard await waitUntilShown() else { return false }
         let alert = NSAlert()
         alert.messageText = site.isEmpty ? "This page wants to use your \(noun)" : "“\(site)” wants to use your \(noun)"
         alert.informativeText = site.isEmpty ? "" : "Cosmos remembers your answer for this site. You can change it from the Site Controls panel."
         alert.addButton(withTitle: "Allow")
         alert.addButton(withTitle: "Don't Allow")
-        present(alert) { [weak self] response in
-            let allowed = response == .alertFirstButtonReturn
-            if !site.isEmpty, let self { self.host?.tab(self, remember: allowed, forPermission: key) }
-            decisionHandler(allowed ? .grant : .deny)
+        let allowed = await sheet(alert) == .alertFirstButtonReturn
+        if !site.isEmpty { host?.tab(self, remember: allowed, forPermission: key) }
+        return allowed
+    }
+
+    /// Pressing hard on a link opens it in Peek, like ⇧-click. The press ends in a click, which the agent then keeps from
+    /// also following the link.
+    public func pageDidForceClick(_ page: EnginePage) {
+        guard let href = hoverURL, Self.isWebLink(href) else { return }
+        evaluate("window.__cosmosHoldClick && window.__cosmosHoldClick()", in: .agent)
+        host?.tab(self, open: href, as: .peek)
+    }
+
+    public func pageRequestsClose(_ page: EnginePage) { host?.tabRequestsClose(self) }
+
+    public func pageRendererDidTerminate(_ page: EnginePage) {
+        // The renderer crashed or was killed under memory pressure: bring the page back, unless it keeps happening.
+        switch crashes.decide(at: Date()) {
+        case .reload:
+            page.reload(fromOrigin: false)
+        case .showError:
+            presentError(PageLoadError(kind: .crashed, detail: "The page's process stopped."), url: url ?? URL(string: "about:blank")!)
+        case .ignore:
+            break
         }
-    }
-
-    private func dialog(message: String, frame: WKFrameInfo, buttons: [String]) -> NSAlert {
-        let alert = NSAlert()
-        alert.messageText = frame.request.url?.host ?? "This page says"
-        alert.informativeText = message
-        buttons.forEach { alert.addButton(withTitle: $0) }
-        return alert
-    }
-
-    private func present(_ alert: NSAlert, _ done: @escaping (NSApplication.ModalResponse) -> Void) {
-        if let window = webView.window { alert.beginSheetModal(for: window, completionHandler: done) } else { done(alert.runModal()) }
     }
 }
 
@@ -579,28 +500,23 @@ struct CrashLoopGuard {
 }
 
 enum ErrorPage {
-    /// The domain of the error shown when a page's renderer keeps dying.
-    static let crashDomain = "CosmosPageCrash"
-
-    static func html(for error: NSError, url: URL) -> String {
+    static func html(for error: PageLoadError, url: URL) -> String {
         let (headline, detail): (String, String) = {
-            switch (error.domain, error.code) {
-            case (NSURLErrorDomain, NSURLErrorNotConnectedToInternet), (NSURLErrorDomain, NSURLErrorDataNotAllowed):
+            switch error.kind {
+            case .offline:
                 return ("You're out of range", "Cosmos can't reach the internet. Check your connection and try again.")
-            case (NSURLErrorDomain, NSURLErrorCannotFindHost), (NSURLErrorDomain, NSURLErrorDNSLookupFailed):
+            case .hostNotFound:
                 return ("Lost in space", "We couldn't find a server at “\(url.host ?? url.absoluteString)”. Check the address for typos.")
-            case (NSURLErrorDomain, NSURLErrorTimedOut):
+            case .timedOut:
                 return ("Signal lost", "The server took too long to answer.")
-            case (crashDomain, _):
+            case .crashed:
                 return ("This page keeps crashing", "It stopped responding several times in a row, so Cosmos stopped reloading it. Try again in a moment.")
-            case (NSURLErrorDomain, NSURLErrorCannotConnectToHost), (NSURLErrorDomain, NSURLErrorNetworkConnectionLost):
+            case .connectionFailed:
                 return ("Connection lost", "The server isn't accepting connections right now.")
-            case (NSURLErrorDomain, NSURLErrorServerCertificateUntrusted), (NSURLErrorDomain, NSURLErrorServerCertificateHasBadDate),
-                 (NSURLErrorDomain, NSURLErrorServerCertificateHasUnknownRoot), (NSURLErrorDomain, NSURLErrorSecureConnectionFailed),
-                 (NSURLErrorDomain, NSURLErrorServerCertificateNotYetValid), (NSURLErrorDomain, NSURLErrorClientCertificateRejected):
+            case .insecure:
                 return ("This connection isn't private", "Cosmos couldn't verify the identity of “\(url.host ?? "this site")”. Someone may be trying to intercept your connection.")
-            default:
-                return ("This page can't be reached", error.localizedDescription)
+            case .other:
+                return ("This page can't be reached", "Something went wrong loading this page.")
             }
         }()
         func esc(_ s: String) -> String {
@@ -618,15 +534,13 @@ enum ErrorPage {
         h1 { font-size: 26px; margin: 8px 0 8px; font-weight: 650; letter-spacing: -0.01em; }
         p { opacity: 0.78; margin: 0 0 20px; }
         code { opacity: 0.55; font-size: 12px; display: block; margin-top: 22px; word-break: break-all; }
-        a.button { display: inline-block; padding: 9px 20px; border-radius: 999px; background: #8b6cff; color: white; text-decoration: none; font-weight: 600; }
-        a.button:hover { background: #a08aff; }
         @media (prefers-color-scheme: light) { body { color: #1d1b33; background: radial-gradient(1200px 700px at 70% 10%, #e6defc 0%, #f4f1fb 60%, #fff 100%); } }
         </style></head><body><main>
         <svg viewBox="0 0 120 120" fill="none"><circle cx="60" cy="60" r="26" fill="#8b6cff"/><ellipse cx="60" cy="60" rx="52" ry="14" transform="rotate(-20 60 60)" stroke="#c9bdff" stroke-width="3" opacity=".8"/>
         <circle cx="96" cy="34" r="4" fill="#fff"/><circle cx="22" cy="86" r="2.5" fill="#fff" opacity=".7"/><circle cx="104" cy="88" r="2" fill="#fff" opacity=".5"/></svg>
         <h1>\(esc(headline))</h1><p>\(esc(detail))</p>
-        <a class="button" href="javascript:location.reload()">Try Again</a>
-        <code>\(esc(url.absoluteString))<br>\(esc(error.domain)) \(error.code)</code></main></body></html>
+        <p>Press ⌘R to try again.</p>
+        <code>\(esc(url.absoluteString))<br>\(esc(error.detail))</code></main></body></html>
         """
     }
 }

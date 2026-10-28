@@ -59,7 +59,7 @@ import Testing
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         try contents.write(to: dir.appendingPathComponent(file))
-        return BrowserStore(directory: dir)
+        return BrowserStore(directory: dir, engine: FakeEngine())
     }
 
     /// Everything a window needs on its first frame.
@@ -86,20 +86,53 @@ import Testing
         }
     }
 
+    /// A file that is there but cannot be read (cut short by a full disk, or written by a newer Cosmos) must not be replaced
+    /// by an empty one at the next save: its last good copy comes back, and failing that it is put aside, not overwritten.
+    @Test func anUnreadableArchiveComesBackFromItsCopyOrIsKept() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-corrupt-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let first = BrowserStore(directory: dir, engine: FakeEngine())
+        let item = SidebarItem(title: "Kept", content: .tab(TabData(url: URL(string: "https://kept.example"))))
+        first.archive.add(ArchivedItem(reason: .closed, spaceID: nil, items: [item]))
+        first.boosts = BoostLibrary(boosts: [Boost(name: "Mine", hostPatterns: ["a.com"], css: "p{}")])
+        first.markDirty(.archive); first.markDirty(.boosts)
+        first.saveNow()
+        // A later save makes the dated copy of what was there.
+        first.markDirty(.archive); first.markDirty(.boosts)
+        first.saveNow()
+
+        let broken = Data("{\"entries\": [".utf8)
+        try broken.write(to: dir.appendingPathComponent("archive.json"))
+        try broken.write(to: dir.appendingPathComponent("boosts.json"))
+        let backups = dir.appendingPathComponent("Backups")
+        for name in try FileManager.default.contentsOfDirectory(atPath: backups.path) where name.hasPrefix("boosts.") {
+            try FileManager.default.removeItem(at: backups.appendingPathComponent(name))
+        }
+
+        let reopened = BrowserStore(directory: dir, engine: FakeEngine())
+        #expect(reopened.archive.entries.first?.items.first?.title == "Kept", "the last good copy came back")
+        #expect(reopened.boosts.boosts.isEmpty)
+        reopened.boosts = BoostLibrary()
+        reopened.saveNow()
+        let kept = try FileManager.default.contentsOfDirectory(atPath: dir.path).filter { $0.hasPrefix("boosts.") && $0 != "boosts.json" }
+        #expect(kept.count == 1, "the file that could not be read is still there to recover")
+        #expect(try kept.first.map { try Data(contentsOf: dir.appendingPathComponent($0)) } == broken)
+    }
+
     /// A sidebar wider than the window cannot be dragged back: its handle is off screen.
     @Test(arguments: [1e9, -50, 0, 3]) func anAbsurdSidebarWidthInTheSessionFileIsBroughtBackIntoRange(_ width: Double) throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-corrupt-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: dir) }
-        let first = BrowserStore(directory: dir)
+        let first = BrowserStore(directory: dir, engine: FakeEngine())
         let session = ["windows": [["focusedSpaceID": first.workspace.spaces[0].id.uuidString, "selection": [String](),
                                     "sidebarVisible": true, "sidebarWidth": width]]]
         try Self.json(session).write(to: dir.appendingPathComponent("session.json"))
-        let reopened = BrowserStore(directory: dir)
+        let reopened = BrowserStore(directory: dir, engine: FakeEngine())
         #expect(WindowState.sidebarWidthRange.contains(reopened.makeWindowState(restoring: 0).sidebarWidth))
     }
 
     @Test func aNonNumberSidebarWidthInSettingsIsBroughtBackIntoRange() {
-        let store = BrowserStore(directory: nil)
+        let store = BrowserStore(directory: nil, engine: FakeEngine())
         store.settings.sidebarWidth = .nan
         #expect(WindowState.sidebarWidthRange.contains(store.makeWindowState().sidebarWidth))
     }

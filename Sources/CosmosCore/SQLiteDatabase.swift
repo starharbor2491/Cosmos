@@ -33,7 +33,7 @@ public final class SQLiteDatabase {
         case null, int(Int64), double(Double), text(String), blob(Data)
         public var string: String? { if case .text(let s) = self { return s }; return nil }
         public var int64: Int64? {
-            switch self { case .int(let i): return i; case .double(let d): return Int64(d); default: return nil }
+            switch self { case .int(let i): return i; case .double(let d): return Int64(exactly: d.rounded(.towardZero)); default: return nil }
         }
         public var double: Double? {
             switch self { case .double(let d): return d; case .int(let i): return Double(i); default: return nil }

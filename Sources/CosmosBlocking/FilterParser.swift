@@ -30,8 +30,9 @@ public enum FilterParser {
         case skipped(SkipReason)
     }
 
-    /// Names that are `true` in `!#if` conditions. Cosmos is a desktop WebKit browser.
-    public static let preprocessorEnvironment: Set<String> = ["env_safari", "true"]
+    /// Names that are `true` in `!#if` conditions. Cosmos is a desktop Chromium browser that blocks with
+    /// `declarativeNetRequest`, as uBlock Origin Lite does.
+    public static let preprocessorEnvironment: Set<String> = ["env_chromium", "env_mv3", "cap_user_stylesheet", "true"]
 
     // MARK: Whole lists
 
@@ -111,6 +112,8 @@ public enum FilterParser {
         }
         flush()
         var pos = 0
+        // A real condition nests a few levels; one nested thousands deep would run the recursion out of stack.
+        var depth = 0, tooDeep = false
         func parseOr() -> Bool {
             var v = parseAnd()
             while pos < tokens.count, tokens[pos] == "||" { pos += 1; let r = parseAnd(); v = v || r }
@@ -122,7 +125,10 @@ public enum FilterParser {
             return v
         }
         func parseNot() -> Bool {
-            guard pos < tokens.count else { return false }
+            guard pos < tokens.count, !tooDeep else { return false }
+            depth += 1
+            defer { depth -= 1 }
+            if depth > 64 { tooDeep = true; return false }
             if tokens[pos] == "!" { pos += 1; return !parseNot() }
             if tokens[pos] == "(" {
                 pos += 1
@@ -133,7 +139,8 @@ public enum FilterParser {
             let name = tokens[pos]; pos += 1
             return preprocessorEnvironment.contains(name)
         }
-        return parseOr()
+        let value = parseOr()
+        return value && !tooDeep
     }
 
     // MARK: Single lines
@@ -233,7 +240,7 @@ public enum FilterParser {
 
     // MARK: Domains
 
-    /// Splits `a.com|~b.com` (or `a.com,~b.com`). Entries WebKit cannot match (`site.*`, `/regex/`, non-ASCII) are
+    /// Splits `a.com|~b.com` (or `a.com,~b.com`). Entries Chromium cannot match (`site.*`, `/regex/`, non-ASCII) are
     /// dropped from the include list; an unusable exclusion, or an include list that ends up empty, fails the filter.
     static func parseDomainList(_ b: UnsafeBufferPointer<UInt8>, separator: UInt8) -> (list: DomainList, failure: SkipReason?) {
         var list = DomainList()
@@ -265,7 +272,7 @@ public enum FilterParser {
                 lowered.append(c)
             }
             if ok {
-                // WebKit wants hostnames: a letter or digit at both ends.
+                // Chromium wants hostnames: a letter or digit at both ends.
                 func alnum(_ c: UInt8?) -> Bool { c.map { ($0 >= 0x61 && $0 <= 0x7A) || ($0 >= 0x30 && $0 <= 0x39) } ?? false }
                 if !alnum(lowered.first) || !alnum(lowered.last) { ok = false; reason = .malformed }
             }
@@ -400,7 +407,7 @@ public enum FilterParser {
         "elemhide": .hide(.all), "ehide": .hide(.all),
     ]
 
-    /// Request types WebKit has no equivalent for: excluding them (`$~object`) changes nothing.
+    /// Request types Cosmos does not tell apart: excluding them (`$~object`) changes nothing.
     private static let ignorableNegatedTypes: Set<String> = ["object", "object-subrequest", "xbl", "dtd", "webrtc", "inline-script", "inline-font"]
 
     private static func applyOptions(_ options: String, to f: inout NetworkFilter) -> SkipReason? {

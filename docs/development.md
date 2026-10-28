@@ -18,20 +18,28 @@ The icon artwork lives in `cosmos icon/`: `logos/app-icon/` (the galaxy, square)
 ## Test
 
 ```bash
-scripts/test.sh                              # everything, over 550 tests
+scripts/test.sh                              # everything, over 780 tests
 scripts/test.sh --filter ContentBlockerTests # a suite
+scripts/test.sh --skip MenuBarPanelTests     # everything but the tests that put a real panel on screen
 ```
 
-Use the script rather than `swift test`: with only the command line tools, `swift test` sometimes reports "plugin for module 'TestingMacros' not found". The script retries and clears `.build` when that happens.
+Use the script rather than `swift test`: with only the command line tools, `swift test` sometimes reports "plugin for module 'TestingMacros' not found". The script hands the compiler the testing macros itself, which avoids it; if it still happens, the script retries and clears `.build`.
 
 | Target | What it covers |
 |---|---|
-| CosmosCoreTests | workspace tree and merge, archive, ranking and the Command Bar composer, history and frecency, calculator, URL input, public suffixes, JSON store |
+| CosmosCoreTests | workspace tree and merge, archive, ranking and the Command Bar composer, history and frecency, calculator, URL input, public suffixes, JSON store, SQLite values |
 | CosmosImportTests | the Arc importer on a generated fixture, Chromium, Firefox and Safari importers, bookmark import, extension discovery, `.crx` unwrapping, Boost note |
-| CosmosBlockingTests | filter parser, rule compiler, validator, list manager (no network), fuzzing, and a corpus test that downloads the real EasyList and EasyPrivacy (skipped when offline). Set `COSMOS_VERIFY_WEBKIT=1` to also compile and run rules in real web views |
-| CosmosKitTests | the store (tabs, archive, spaces, persistence, incognito, permissions), the Command Bar model, Boost injection, content blocking against real pages, extensions against real pages. Tests that load pages serve them from a throwaway server on 127.0.0.1 |
+| CosmosBlockingTests | filter parser, `declarativeNetRequest` compiler, list manager (no network), fuzzing, and a corpus test that downloads the real EasyList and EasyPrivacy (skipped when offline) |
+| CosmosChromiumTests | the pipe's message framing, the command line and environment Chromium starts with, the update rules, settings written into Chromium's files, the blocker extension, the extension host's toolbar and menu mirror, key mapping |
+| CosmosKitTests | the store (tabs, archive, spaces, persistence, incognito, permissions), the Command Bar model, Boost injection, content blocking, extensions, the radial menu, haptics. Most run on `FakeEngine` (in `TestSupport.swift`), which records what the store asked of the engine; `PageAgentTests` run the same code on real Chromium |
 
-Tests that touch WebKit are `@MainActor`; WebKit cannot be set up on a background thread.
+**Live Chromium tests.** `PageAgentTests` start a real Chromium, headless (no window, no Dock icon, nothing takes the keyboard), load pages from a throwaway server on 127.0.0.1, and stop it at the end. They use the Chromium in `COSMOS_TEST_CHROMIUM` (the path of a `Chromium.app`) or, without it, the one Cosmos downloaded for itself; with neither they are skipped.
+
+```bash
+COSMOS_TEST_CHROMIUM=/path/to/Chromium.app scripts/test.sh --skip MenuBarPanelTests
+```
+
+Tests that touch AppKit views are `@MainActor`.
 
 ## Crash testing
 
@@ -41,7 +49,7 @@ Beyond the unit tests, seeded random testing hammers everything that reads outsi
 |---|---|
 | `WorkspaceFuzzTests` | 400 random structural operations per seed (add, move, pin, favorite, split, restore, remove spaces…): the tree stays healthy, an operation that says no changes nothing, split weights and focus agree with the panes, a saved copy reloads. Also random damage to a saved workspace, which `repair()` must always turn into something the app can open |
 | `CorruptDataTests` | every file in the data folder (workspace, archive, boosts, settings, session, history…) empty, garbage, truncated, 8 MB, nested 200 000 deep, or decodable but impossible (no spaces, no profiles, cycles); the store must still open and be usable |
-| `StoreFuzzTests` | 250 random store operations across two windows (open, close, reopen, pin, drag, split, switch and delete spaces, Peek…): the tree stays healthy and no window selects a tab or space that is gone. It yields to the run loop now and then; without that, web views pile up faster than WebKit can release them |
+| `StoreFuzzTests` | 250 random store operations across two windows (open, close, reopen, pin, drag, split, switch and delete spaces, Peek…): the tree stays healthy and no window selects a tab or space that is gone |
 | `InputFuzzTests`, `FaviconTests` | random text through URL input, calculator, title tidying, ranking, link rules; deeply nested arithmetic; page titles and pages built to make a regex backtrack; a PNG that is a few hundred KB and a gigapixel when decoded |
 | `ImporterFuzzTests`, `BrowserImporterFuzzTests` | the Arc profile with random JSON edits and random byte damage; Chromium, Firefox and Safari history and bookmarks, and extension manifests, damaged the same way: an error or a healthy result, never a crash |
 
@@ -61,10 +69,11 @@ swift test --sanitize=address --scratch-path /tmp/cosmos-asan   # all tests unde
 ```bash
 .build/debug/Cosmos --demo                    # three themed spaces with sample tabs, in a temporary folder
 .build/debug/Cosmos --data-dir /tmp/cosmos    # use a separate data folder
-.build/debug/Cosmos --offline                 # never download filter lists
+.build/debug/Cosmos --offline                 # never download filter lists or Chromium updates
+.build/debug/Cosmos --chromium /path/to/Chromium.app   # run this Chromium instead of the downloaded one
 ```
 
-`COSMOS_DATA_DIR`, `COSMOS_DEMO=1` and `COSMOS_OFFLINE=1` do the same through the environment. `--demo` implies no downloads and a temporary folder.
+`COSMOS_DATA_DIR`, `COSMOS_DEMO=1`, `COSMOS_OFFLINE=1` and `COSMOS_CHROMIUM` do the same through the environment. `--demo` implies no filter-list downloads and a temporary folder. The downloaded Chromium is kept in `~/Library/Application Support/Cosmos/Chromium/` whatever the data folder, so a demo does not download it again.
 
 ## The terminal tool
 
@@ -83,7 +92,7 @@ Granting a tool permission to record the screen is a lot to ask for a build scri
 .build/debug/Cosmos --demo --automation script.json
 ```
 
-The script is a JSON array of steps; the log goes to `script.json.log`. A snapshot swaps each web view for an image of itself, then renders the window's own views to a PNG. That makes overlays and the sidebar visible exactly as drawn. (It does not show the window frame or the traffic lights.)
+The script is a JSON array of steps; the log goes to `script.json.log`. A snapshot renders the window's own views to a PNG. Pages are pictures Chromium sends, which the page views draw themselves, so they are in it as shown, with overlays and the sidebar exactly as drawn. (It does not show the window frame or the traffic lights.)
 
 ```json
 [
@@ -109,8 +118,9 @@ The script is a JSON array of steps; the log goes to `script.json.log`. A snapsh
 | `dropdown` `scrollSettings` | open the nth dropdown in Settings (`index`, top to bottom; -1 closes it); scroll the Settings pane `y` points, so a snapshot can show the part below the fold |
 | `setTheme` | give the current space one of the preset themes by name, to check a screen on light and dark skies |
 | `menuBar` | drive the menu-bar browser: `action` is `enable`, `disable`, `configure` (`home`, `layout`, `remember`), `open`, `close`, `pin`, `go` (`text`), `resize` (`edge`: left, right, top, bottom, topLeft, topRight, bottomLeft or bottomRight, and `dx`, `dy` points right and down) or `state` (with the panel's size and position); snapshot it with `"window": "menubar"`. Wait a moment after `enable`: the icon is placed by the menu bar a moment later, and a panel opened before that has no height |
-| `click` | a left click at `x`,`y` from the window's top-left, sent through the application the way a real click arrives (event monitors and SwiftUI's gestures see it); `double` makes it a double click |
-| `rightClick` `radial` | right-click the page at `x`,`y` as a real person would (with `flags`, `hold`); then `dump`, `hover`, `choose` or `back` on the radial menu that opened |
+| `click` | a left click at `x`,`y` from the window's top-left, sent through the application the way a real click arrives (event monitors and SwiftUI's gestures see it); `double` makes it a double click, `flags` adds modifier keys (the raw `NSEvent.ModifierFlags` value, e.g. 1048576 for ⌘) |
+| `rightClick` `radial` | right-click the page at `x`,`y` from its top-left (with `flags`, `hold`; `"left": true` sends a left click there instead); then `dump`, `hover`, `choose` or `back` on the radial menu that opened |
+| `typePage` | type `text` into whatever has the keyboard (the page), one key press per character, as a keyboard would |
 | `extensions` `extensionAction` | add every extension found on this Mac, or click the nth extension button |
 | `eval` | run JavaScript in the current page and log the result |
 | `state` | log the space, overlay, tab, window and blocker state |

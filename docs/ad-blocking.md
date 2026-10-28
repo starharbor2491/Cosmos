@@ -1,9 +1,10 @@
 # Ad, tracker and cookie-banner blocking
 
-Cosmos blocks ads, trackers and cookie banners with **WebKit content rule lists**, the same mechanism Safari content
-blockers use. WebKit evaluates them inside the networking and rendering stack, so no page script is involved and pages
-cannot detect or bypass them. The module is `CosmosBlocking`; it is pure Foundation and never imports WebKit. The
-browser target owns the one call that needs WebKit (`WKContentRuleListStore`).
+Cosmos blocks ads, trackers and cookie banners with Chromium's own **`declarativeNetRequest`** rules, the mechanism
+Manifest V3 ad blockers use. Chromium matches every request against them in its network process, so no page script is
+involved and pages cannot detect or bypass them. The compiler is `CosmosBlocking`, pure Foundation with no engine code;
+`CosmosChromium/BlockerExtension.swift` packages its output as a small extension ("Cosmos Blocker") that Cosmos writes
+into each profile and loads over the debugging pipe.
 
 Arc ships EasyList, EasyPrivacy, AdGuard, uBlock and cookie-banner lists inside Chromium (see
 `arc-teardown/web-behaviors-and-boosts.md`). Cosmos offers the same coverage by compiling the same public lists.
@@ -14,115 +15,95 @@ Arc ships EasyList, EasyPrivacy, AdGuard, uBlock and cookie-banner lists inside 
         ▼
    FilterParser ──► [Filter]  (network / cosmetic AST, skipped lines counted by reason)
         ▼
-   ContentRuleCompiler ──► ordered, de-duplicated WebKit rules, split into lists ≤ 40,000 rules
+   DNRCompiler ──► declarativeNetRequest rules in rulesets of ≤ 10,000, and element-hiding data per site
         ▼
-   [CompiledRuleList]  name, json, ruleCount, kind, digest, storeIdentifier        + CompileReport
+   [CompiledRuleList]  name, json, ruleCount, kind, digest                         + CompileReport
         ▼
-   app: WKContentRuleListStore.compileContentRuleList → WKUserContentController.add
+   BlockerExtension: rules-N.json rulesets, allow.json (sites switched off), hiding style sheets as content scripts
+        ▼
+   Chromium: Extensions.loadUnpacked into the profile
 ```
 
 ## What is blocked, and how
 
 | Filter | Becomes | Notes |
 | --- | --- | --- |
-| Network filter (`||ads.example.com^`, `/banner/*.gif`, `\|http://…\|`) | `block` rule with a `url-filter` regex | `\|\|` → `^[^:]+://+([^:/]+\.)?host`, `^` → `[^a-zA-Z0-9_.%-]`, `*` → `.*`, `\|` → `^` / `$` |
-| Type options (`$script,image,xhr,subdocument,…`) | `resource-type` | `xhr` is `raw` + `fetch`; `subdocument` is `document` + `load-context: child-frame` |
-| `$third-party` / `$~third-party` | `load-type: third-party` / `first-party` | |
-| `$domain=a.com\|~b.com` | `if-domain: ["*a.com"]` or `unless-domain` | `*` makes WebKit match subdomains too. A mix of both becomes a block plus an `ignore-previous-rules` rule for the excluded hosts |
-| `$match-case` | `url-filter-is-case-sensitive` | everything else is case-insensitive, as in ABP |
-| `@@` exception | `ignore-previous-rules` | same trigger as the block it cancels |
-| `$important` | `block` ordered after exceptions | beats normal exceptions, as in uBlock Origin |
-| `@@\|\|site^$document` | `ignore-previous-rules` with `if-domain: ["*site"]` | switches the site off entirely |
-| `$popup` | `resource-type: popup` | |
-| `##.selector`, `site.com##.selector` | `css-display-none` | selectors are batched (250 per rule); domain rules sharing the same selectors share one rule |
-| `~site.com##.sel`, `site.com#@#.sel` | `css-display-none` with `unless-domain` | exceptions are applied per selector, never as a blanket `ignore-previous-rules` |
-| `@@\|\|site^$generichide` / `$elemhide` / `$specifichide` | adds the site to the `unless-domain` list of generic rules / removes it from site-specific rules | |
+| Network filter (`\|\|ads.example.com^`, `/banner/*.gif`, `\|http://…\|`) | `block` rule with that `urlFilter` | Adblock Plus patterns are already `declarativeNetRequest` URL filters, so they carry over unchanged |
+| `/regex/` filter | `regexFilter` | only expressions RE2 accepts (see below); at most 300 per list |
+| Type options (`$script,image,xhr,subdocument,…`) | `resourceTypes` | `subdocument` is `sub_frame`, `document` is `main_frame` |
+| `$third-party` / `$~third-party` | `domainType: thirdParty` / `firstParty` | |
+| `$domain=a.com\|~b.com` | `initiatorDomains` / `excludedInitiatorDomains` | both can be given on one rule; subdomains match too |
+| `$match-case` | `isUrlFilterCaseSensitive` | everything else is case-insensitive, as in ABP |
+| `@@` exception | `allow` rule, priority 2 | beats a normal block (priority 1) |
+| `$important` | `block`, priority 3 | beats normal exceptions, as in uBlock Origin |
+| `@@\|\|site^$document` | `allowAllRequests` on `main_frame` / `sub_frame`, priority 4 | switches the site off entirely |
+| Site Controls' per-site switch | `allowAllRequests`, priority 100, in its own `allow.json` ruleset | wins over every list rule |
+| `##.selector`, `site.com##.selector` | a style sheet with `display: none !important` | generic selectors in one content-script style sheet for all sites; site selectors in a script that applies those of the site and its parent domains |
+| `~site.com##.sel`, `site.com#@#.sel` | the site's exceptions | exceptions to generic selectors undo the hiding on that site; the others keep a site rule from applying |
+| `@@\|\|site^$generichide` / `$elemhide` | the site is left out of the generic style sheet / out of all hiding | |
 | `0.0.0.0 ads.example.com` (hosts file) | same as `\|\|ads.example.com^` | so hosts-format lists work as custom lists |
 
-Network rules and cosmetic rules go to **separate WebKit lists** (`<id>.network.N`, `<id>.cosmetic.N`), so an
-`ignore-previous-rules` rule in a network list can never switch off element hiding, and the other way round.
+Top-level navigations are not special-cased: a filter without type options applies to every request type except
+`main_frame`, because that is what `declarativeNetRequest` does when `resourceTypes` is left out. Clicking an
+ad-network redirect, or opening an address that merely contains `/ads/`, therefore still loads, as in Adblock Plus.
 
-### Ordering and the guard rules
-
-WebKit applies every matching rule of a list in order, and `ignore-previous-rules` only cancels *earlier* rules **of the
-same list**. Each network list is therefore laid out as
-
-1. normal blocks
-2. two **guard rules** (`ignore-previous-rules` for top-level `document` loads and for `popup` loads)
-3. explicit `$popup` / `$document` blocks
-4. exceptions (`@@`)
-5. `$important` blocks
-6. `$document` whole-site exceptions
-
-Why the guards: in Adblock Plus a filter without type options never applies to the page itself, but a bare WebKit
-`block` rule would block *navigation*: clicking an ad-network redirect, or opening a URL that merely contains `/ads/`,
-would show an error page. The guards restore the ABP meaning. Verified in a live web view
-(`WebKitBehaviorTests`): without them `/ads/landing` blocks the main document, with them it loads while the page's
-`/ads/` images are still blocked.
-
-When a list is split at 40,000 rules every part repeats the guards and all exceptions, so each part is self-contained.
+All rulesets of the blocker are matched together by priority, so an exception in one list cancels a block from
+another (an EasyList `@@` rule reaches EasyPrivacy's blocks). `$badfilter` and
+`$generichide` still apply within the list that contains them, because the compiler resolves them per list.
 
 ## Syntax support
 
 | Syntax | Status |
 | --- | --- |
 | `\|\|host^`, `\|` start and end anchors, `*`, `^`, plain substrings | supported |
-| Options `third-party` (`3p`), `first-party` (`1p`), `script`, `image`, `stylesheet` (`css`), `font`, `media`, `xmlhttprequest` (`xhr`), `subdocument` (`frame`), `document` (`doc`), `ping`, `websocket`, `other`, `popup`, `all`, `domain=` (`from=`), `match-case`, `important`, `badfilter` | supported |
+| Options `third-party` (`3p`), `first-party` (`1p`), `script`, `image`, `stylesheet` (`css`), `font`, `media`, `xmlhttprequest` (`xhr`), `subdocument` (`frame`), `document` (`doc`), `ping` (`beacon`), `websocket`, `other`, `all`, `domain=` (`from=`), `match-case`, `important`, `badfilter` | supported |
 | `~type` negations (`$~script`) | supported (default types minus the negated ones); `~object` and similar are ignored |
 | `@@` exceptions, `@@…$document`, `@@…$generichide`, `$elemhide`, `$specifichide` | supported |
-| `/regex/` filters | supported when they only use literals, `.` `*` `+` `?`, `[...]`, `(...)`, `^`, `$`, `\d`, `\w` and escaped punctuation; otherwise skipped (`regex-not-representable`) |
-| `##selector`, `domain##selector`, `~domain##selector`, `#@#` | supported for standard CSS: type/class/id/attribute selectors, combinators, `:not` `:is` `:where` `:has` (not nested), `:nth-*`, `:first-child`… |
-| `!#if env_safari && !ext_ublock` … `!#else` / `!#endif` | evaluated (`env_safari` is true; `ext_ublock`, `env_chromium`, `env_mobile`… are false) |
+| `/regex/` filters | supported when RE2 can compile them: no look-around, back-references, atomic groups or possessive repeats (otherwise `regex-not-representable`) |
+| `##selector`, `domain##selector`, `~domain##selector`, `#@#` | supported for standard CSS; `CSSSelectorValidator` drops selectors a browser would reject (unknown pseudo-classes, nested `:has`, ids starting with a digit…) |
+| `!#if env_chromium && !ext_ublock` … `!#else` / `!#endif` | evaluated (`env_chromium`, `env_mv3` and `cap_user_stylesheet` are true; `ext_ublock`, `env_safari`, `env_mobile`… are false); nesting is limited, deeper lines are rejected |
 | hosts-file lines | supported |
-| `$redirect`, `$redirect-rule`, `$rewrite` | skipped: WebKit cannot substitute a neutral resource, and blocking instead would break pages |
-| `$csp`, `$replace`, `$removeparam`, `$queryprune`, `$urlskip`, `$uritransform`, `$header`, `$permissions`, `$cname` | skipped: no WebKit rule can rewrite requests or responses |
-| `$denyallow`, `$to`, `$method`, `$ipaddress`, `$strict1p`, `$strict3p` | skipped: no equivalent trigger |
+| `$popup` | skipped (`option:popup`): `declarativeNetRequest` has no popup type, and blocking the opener's request instead would be wrong |
+| `$redirect`, `$redirect-rule`, `$rewrite` | skipped: a neutral stub needs `redirect` rules with bundled resources, which Cosmos does not ship, and blocking instead would break pages |
+| `$csp`, `$replace`, `$removeparam`, `$queryprune`, `$urlskip`, `$uritransform`, `$header`, `$permissions`, `$cname` | skipped |
+| `$denyallow`, `$to`, `$method`, `$ipaddress`, `$strict1p`, `$strict3p` | skipped |
 | `#?#`, `:has-text()`, `:contains()`, `:xpath()`, `:matches-css()`, `:-abp-*`, `:upward()`, `:nth-ancestor()`, `:style()`, `:remove()` | skipped (`extended-selector`): needs a script engine |
 | `##+js(…)` scriptlets, `#%#`, `#$#`, `##^` HTML filtering, `$$` | skipped |
 | `selector {property: value}` style injection | skipped (`css-injection`) |
 | `site.*` entity domains | dropped from include lists; the filter is skipped when nothing is left or an exclusion cannot be honoured |
 | Non-ASCII patterns, filters that would match (almost) everything | skipped (`non-ascii`, `too-broad`) |
-| `@@…$document` for a pattern that is not a whole site | skipped (`document-exception`) |
 
-Everything skipped is counted by reason in `CompileReport.skipped`, so nothing is silently mis-compiled. On the real
-lists (release build, Apple silicon):
+Everything skipped is counted by reason in `CompileReport.skipped`, so nothing is silently mis-compiled. Each filter is
+counted once, as compiled when any part of it took effect. The corpus test on the current EasyList and EasyPrivacy
+(debug build, Apple silicon, October 2026):
 
-| List | Lines | Network filters compiled | Cosmetic filters compiled | Rules (lists) | Parse | Parse + compile |
-| --- | --- | --- | --- | --- | --- | --- |
-| EasyList | 86,191 | 61,159 / 61,209 (99.9 %) | 24,133 / 24,706 | 67,334 (3) | 0.03 s | 0.73 s |
-| EasyPrivacy | 57,179 | 56,325 / 56,369 (99.9 %) | 2 / 37 | 57,218 (3) | 0.01 s | 0.12 s |
-| Cookie banners (Fanboy) | 26,146 | 2,109 / 2,110 | 23,122 / 23,198 | 9,119 (2) | 0.01 s | 0.05 s |
-| Fanboy Annoyances | 56,395 | 4,156 / 4,157 | 46,062 / 49,922 | 17,907 (2) | 0.01 s | 0.14 s |
-| AdGuard Base + EasyList | 155,542 | 82,060 / 83,203 (98.6 %) | 47,889 / 56,383 | 103,065 (4) | 0.04 s | 2.4 s |
-| uBlock filters | 10,835 | 1,297 / 1,739 (74.6 %) | 1,282 / 4,264 | 1,566 (2) | < 0.01 s | 0.01 s |
-| uBlock privacy | 3,383 | 917 / 1,433 (64.0 %) | 6 / 313 | 919 (2) | < 0.01 s | < 0.01 s |
-| uBlock badware | 7,189 | 4,541 / 4,855 (93.5 %) | 101 / 139 | 4,581 (2) | < 0.01 s | 0.01 s |
+| | |
+| --- | --- |
+| Network filters compiled | 103,934 of 106,958 (97.2 %) |
+| Cosmetic filters compiled | 24,144 of 24,751 |
+| Rules | 103,770 in 11 network rulesets plus one hiding list per source |
+| Skipped, largest reasons | `option:popup` 2,962, `extended-selector` 298, `entity-domain` 236, `css-injection` 40, `scriptlet` 30, `option:redirect` 29 |
+| Time | EasyList parse 0.2 s; both lists compile in 1.1 s |
 
-The uBlock lists lean on `$redirect`, `$removeparam`, scriptlets and `$to`, which WebKit rules cannot express, hence
-the lower ratios. In a debug build parsing EasyList takes about 0.2 s.
+Almost all of the gap is `$popup`. The uBlock lists lean on `$redirect`, `$removeparam` and scriptlets, so fewer of
+their filters compile; for those, add uBlock Origin Lite as an extension.
 
-## WebKit constraints the compiler works around
+## Chromium limits the compiler works around
 
-Checked against the real `WKContentRuleListStore` (see "Verification"):
-
-- **Hard limit of 150,000 rules per list.** Output is split into lists of at most 40,000 rules (`Options.maxRulesPerList`),
-  which also compile faster and fail independently. An empty rule list is *invalid*, so empty lists are never emitted.
-- **`url-filter` is a small regex dialect.** Supported: literals, `.`, `[...]`, `(...)`, `*` `+` `?`, `^` first, `$`
-  last. Rejected: alternation `|`, `{n,m}`, `\d \w \s \b`, lookaround, `^`/`$` in the middle, non-ASCII, empty
-  strings. `RuleListValidator` enforces exactly this.
-- **A trailing `^` also matches the end of the URL.** WebKit has no alternation, so `/path^` becomes
-  `/path([^a-zA-Z0-9_.%-].*)?$`. A host-only `||host^` needs no such tail because a URL always has a `/` after the host.
-- **Selectors are validated by WebKit, silently.** One invalid selector in a comma-joined list makes WebKit drop the
-  *whole rule* without an error (the list only fails when nothing valid remains). `CSSSelectorValidator` mirrors WebKit's
-  parser: all 68,681 selectors it accepted from the eight lists above compiled in WebKit, and all 378 it rejected were
-  also rejected by WebKit. Typical rejections: nested `:has`, unknown pseudo-classes, ids starting with a digit.
-- **`if-domain` and `unless-domain` cannot be combined**, and domains must be lowercase ASCII (punycode for IDNs).
-  Apple documents a 250-entry cap; WebKit accepted 5,000 in testing, but `if-domain` arrays are still split at 250.
-- **Exceptions only reach rules in their own list**, so an EasyList exception does not cancel an EasyPrivacy block.
-  `$badfilter` and `$generichide` likewise apply within the list that contains them.
-- WebKit is the reference, but it targets one OS version: development used the WebKit shipped with the macOS 27 SDK,
-  the deployment floor is macOS 14. If a list ever fails to compile on an older system, the first suspects are the
-  `fetch` / `ping` / `websocket` / `other` resource types and `load-context`.
+- **The rule budget.** Chromium promises each extension 30,000 static rules and lends more from a pool of 300,000 that
+  all extensions share; a ruleset that does not fit is switched off as a whole. Output is cut into rulesets of at most
+  10,000 rules (`Options.maxRulesPerList`), so an overflow costs only the last rulesets. Checked live
+  (`PageAgentTests.everyRulesetOfListsAsLargeAsTheRealOnesIsOn`): 110,000 rules in 11 rulesets all take effect, and
+  the same test fails at 340,000, past the cap. Other extensions that use the pool (uBlock Origin Lite, for example)
+  leave less for Cosmos.
+- **1,000 regular-expression rules per extension**, shared by every list. Each list may use 300; further regex
+  filters are skipped.
+- **RE2, not JavaScript regexes.** Chromium drops a rule whose expression RE2 cannot compile. The compiler checks every
+  `/regex/` filter (with ICU standing in for RE2) and skips look-around, back-references, atomic groups and possessive
+  repeats.
+- **Selectors.** One invalid selector in a comma-joined group makes the browser drop the whole group, so selectors go
+  into small groups and `CSSSelectorValidator` drops the ones that would be rejected.
+- **Domains** must be lowercase ASCII (punycode for IDNs).
 
 ## Lists, updates and offline behaviour
 
@@ -143,13 +124,13 @@ All URLs were checked with `curl` when the catalog was written. `FilterListManag
   (`force: true` overrides). Older lists are revalidated with `If-None-Match` / `If-Modified-Since`; a `304` renews the
   timestamp and costs no recompile.
 - Downloads are validated (non-empty, not an HTML error page, ≤ 64 MB) and written atomically.
-- Compiled JSON is cached under a key of **SHA-256(list text + `ContentBlocker.compilerVersion`)**: an unchanged list is
-  never recompiled, and changing the compiler (bump the version) invalidates every cache.
+- Compiled output is cached under a key of **SHA-256(list text + `ContentBlocker.compilerVersion`)**: an unchanged
+  list is never recompiled, and changing the compiler (bump the version) invalidates every cache.
 - **Offline**: a failed download falls back to the cached copy. With no copy at all, the bundled
   `Resources/fallback-rules.txt` (~90 dedicated third-party ad/tracker endpoints and a few generic ad-container
   selectors, nothing that touches first-party logins or checkouts) stands in, so the first launch is protected too.
-- `cachedRuleLists()` never touches the network: use it at launch for instant protection, then call `refresh()` and every
-  ~24 hours. (If the compiled cache is missing it compiles from the cached text, about 1 s for EasyList in a release build.)
+- `cachedRuleLists()` never touches the network: it is used at launch for instant protection, then `refresh()` runs
+  in the background and about every 24 hours.
 
 Files, under `CosmosPaths.dataDirectory` (`~/Library/Application Support/Cosmos`, or `COSMOS_DATA_DIR`):
 
@@ -157,40 +138,18 @@ Files, under `CosmosPaths.dataDirectory` (`~/Library/Application Support/Cosmos`
 blocking.json                      enabled list ids and custom lists
 FilterLists/<id>.txt               downloaded list text
 FilterLists/<id>.meta.json         URL, ETag, Last-Modified, last check
-FilterLists/compiled/<id>.manifest.json, <name>.<key>.json   compiled cache
+FilterLists/compiled/…             compiled cache
+Engine Profiles/<profile>/Cosmos Blocker/   the extension Chromium loads (rewritten when lists or the per-site switches change)
 ```
 
-### Using it from the browser
+### How the browser uses it
 
-```swift
-let blocking = FilterListManager()
-
-@MainActor func installBlockLists(_ lists: [CompiledRuleList], into store: WKContentRuleListStore) async -> [WKContentRuleList] {
-    var installed: [WKContentRuleList] = []
-    for list in lists {
-        // The digest is part of the identifier: a hit means the stored rules are current, so nothing is recompiled.
-        if let existing = try? await store.contentRuleList(forIdentifier: list.storeIdentifier) {
-            installed.append(existing)
-        } else if let compiled = try? await store.compileContentRuleList(forIdentifier: list.storeIdentifier, encodedContentRuleList: list.json) {
-            installed.append(compiled)
-        }
-    }
-    let wanted = Set(lists.map(\.storeIdentifier))
-    for id in await store.availableIdentifiers() ?? [] where id.hasPrefix("cosmos.") && !wanted.contains(id) {
-        try? await store.removeContentRuleList(forIdentifier: id)
-    }
-    return installed
-}
-// configuration.userContentController.add(list) for every returned list, on every WKWebViewConfiguration.
-
-let cached = await blocking.cachedRuleLists()      // launch: instant
-// … install, then in the background:
-let fresh = await blocking.refresh()               // and again about every 24 h
-```
-
-Per-site "blocking off" is an app concern: leave the lists out of that site's configuration, or add an
-`@@||site.com^$document` rule through a custom list. Enabling or disabling a list: `try await blocking.setEnabled("fanboy-annoyance", true)`, then `refresh()`.
-`status()` returns per-list check times, rule counts and the `CompileReport` for a settings screen.
+`ContentBlockerController` (CosmosKit) asks the manager for the cached lists at launch and fresh ones afterwards, and
+hands them to every profile with `EngineProfile.setContentBlocking(_:allowlist:)`. The Chromium profile writes the
+blocker extension and reloads it; the same lists and switches a second time leave it as it is. The per-site switch in
+Site Controls is the `allowlist`, so turning blocking off for a site takes effect on its next load without
+recompiling anything. Enabling or disabling a list: `try await blocking.setEnabled("fanboy-annoyance", true)`, then
+`refresh()`. `status()` returns per-list check times, rule counts and the `CompileReport` for the settings screen.
 
 ## Adding a custom list
 
@@ -202,14 +161,14 @@ let info = try await blocking.addCustomList(name: "My list", url: URL(string: "h
 try await blocking.removeCustomList(id: info.id)
 ```
 
-For a one-off list, put the rules in a file and use its `file://` URL. To compile text directly (for example the
-user's own rules from a settings field), call `ContentBlocker.compile(lists: [("my-rules", text)])`; the result carries
-the rule lists and a `CompileReport` that tells the user which lines were not understood.
+For a one-off list, put the rules in a file and use its `file://` URL. To compile text directly, call
+`ContentBlocker.compile(lists: [("my-rules", text)])`; the result carries the rulesets and a `CompileReport` that tells
+the user which lines were not understood.
 
 ## Licensing and attribution
 
 Cosmos does **not** bundle or redistribute third-party lists. They are downloaded to the user's machine at run time
-from their official locations, and the compiled JSON is a local cache. The settings screen should show each list's name
+from their official locations, and the compiled output is a local cache. The settings screen shows each list's name
 and licence (`FilterListInfo.license`) with a link to its homepage.
 
 - **EasyList and EasyPrivacy**: dual-licensed GPLv3+ and CC BY-SA 3.0 (<https://easylist.to/pages/licence.html>).
@@ -223,26 +182,27 @@ Test runs download EasyList and EasyPrivacy into memory only; nothing downloaded
 ## Verification
 
 ```
-scripts/test.sh --filter CosmosBlockingTests                          # unit, manager (injected fetcher) and corpus tests
-COSMOS_VERIFY_WEBKIT=1 scripts/test.sh --filter CosmosBlockingTests   # + real WKContentRuleListStore and WKWebView checks
+scripts/test.sh --filter CosmosBlockingTests                       # parser, compiler, manager and corpus tests
+COSMOS_TEST_CHROMIUM=/path/to/Chromium.app scripts/test.sh --filter PageAgentTests   # + live headless Chromium
 ```
 
-- **Parser tables**, **exact JSON for ~35 filters**, **semantic match tables** (generated expressions evaluated with ICU
-  regexes against URLs), validator accept/reject tables and chunking/ordering tests.
-- **Corpus test**: real EasyList and EasyPrivacy are downloaded (the test is cancelled when offline), compiled, and must
-  compile ≥ 90 % of network filters, pass `RuleListValidator` with zero problems, and stay at ≤ 40,000 rules per list.
-- **`WebKitCompileTests`** (opt-in): every output list, including the full real lists, is compiled by the real
-  `WKContentRuleListStore`. This works headless, from `swift test`, with no window server.
-- **`WebKitBehaviorTests`** (opt-in): 50 scenarios load real pages in a `WKWebView` from an in-process HTTP server and
-  check which requests are blocked and which elements are hidden: host anchors, separators, types, third-party,
-  `*domain` subdomain matching, exceptions, `$important`, popups, top-level navigation, cosmetic exceptions and
-  `$generichide`.
+- **`DNRCompilerTests`**: the exact rules for each kind of filter, priorities, ruleset cutting, the regex budget, RE2
+  checks, cosmetic data and its exceptions.
+- **`CorpusTests`**: real EasyList and EasyPrivacy are downloaded (cancelled when offline), compiled, and must compile
+  ≥ 90 % of network filters, pass the `declarativeNetRequest` format checks in the test support with no problems, and
+  keep every ruleset within its size.
+- **`FuzzTests`**: mutated filter lines, random bytes and deeply nested `!#if` lines never crash the parser, and what
+  compiles is valid.
+- **`BlockerExtensionTests`** (CosmosChromium): the extension's manifest, numbered rulesets, the allowlist ruleset and
+  the hiding scripts.
+- **Live** (`PageAgentTests`, headless Chromium, no window): a page's script is blocked and an element hidden, and both
+  come back on a site that was switched off; and the rule-budget check above.
 
 ## Known limits
 
-- No redirects/neutered stubs, request rewriting, scriptlets or procedural cosmetics (see the table). Pages that rely on
-  a stub (`$redirect=noop.js`) keep working only because those filters are skipped rather than turned into plain blocks.
-- Exceptions, `$badfilter` and hide exemptions work within one list, not across lists.
+- No redirects or neutered stubs, request rewriting, scriptlets or procedural cosmetics (see the table). Pages that
+  rely on a stub (`$redirect=noop.js`) keep working only because those filters are skipped rather than turned into
+  plain blocks.
+- `$popup` filters are skipped.
+- `$badfilter` and hide exemptions work within one list, not across lists.
 - `site.*` filters are not expanded to every TLD; they are dropped.
-- Generic `:has()` selectors are accepted because WebKit supports them, but they cost style-recalculation time on large
-  pages; a future option could drop them.

@@ -62,6 +62,13 @@ import Testing
         let tab = try #require(rig.today.first)
         rig.store.toggleFavorite(tab.id, in: rig.window)
         #expect(rec.played == [.levelChange])
+
+        let tabs = rig.today.filter(\.isTab)
+        try #require(tabs.count >= 2)
+        rig.store.splitWith(tabs[0].id, dragged: tabs[1].id, in: rig.window)
+        #expect(rec.played == [.levelChange, .levelChange])
+        rig.store.splitWith(tabs[0].id, dragged: tabs[0].id, in: rig.window)
+        #expect(rec.played == [.levelChange, .levelChange], "a split that is refused is not an event")
     }
 
     @Test func turningHapticsOffSilencesEverything() throws {
@@ -171,7 +178,7 @@ import Testing
     }
 }
 
-/// Pressing hard on a link in a page opens it in Peek, like ⇧-click.
+/// Pressing hard on a link in a page (Force Click) opens it in Peek, like ⇧-click.
 @MainActor
 @Suite struct ForceClickTests {
     private func openRuntime(_ rig: Rig) throws -> TabRuntime {
@@ -179,20 +186,27 @@ import Testing
         return try #require(rig.store.runtime(forItem: id, in: rig.window))
     }
 
-    @Test func aForceClickedLinkOpensPeek() throws {
+    @Test func aForceClickedLinkOpensPeek() async throws {
         let rig = Rig()
         let rt = try openRuntime(rig)
-        rt.handleAgentMessage(["type": "peekLink", "href": "http://127.0.0.1:9/page"], fromMainFrame: true)
-        #expect(rig.window.peek != nil)
+        rt.handleAgentMessage(["type": "hover", "href": "http://127.0.0.1:9/page"], fromMainFrame: true)
+        rt.pageDidForceClick(rt.page)
+        #expect(rig.window.peek?.runtime.fake.loads == [URL(string: "http://127.0.0.1:9/page")!])
+        for _ in 0..<100 where rt.fake.evaluated.isEmpty { await Task.yield() }
+        #expect(rt.fake.evaluated.last?.script.contains("__cosmosHoldClick") == true, "the click that ends the press does not follow the link too")
     }
 
-    @Test func onlyWebAddressesOpenInPeek() throws {
+    @Test func onlyWebAddressesOpenInPeek() async throws {
         let rig = Rig()
         let rt = try openRuntime(rig)
+        rt.pageDidForceClick(rt.page)
         for href in ["javascript:alert(1)", "file:///etc/hosts", "data:text/html,hi", "not a url", ""] {
-            rt.handleAgentMessage(["type": "peekLink", "href": href], fromMainFrame: true)
+            rt.handleAgentMessage(["type": "hover", "href": href], fromMainFrame: true)
+            rt.pageDidForceClick(rt.page)
         }
         #expect(rig.window.peek == nil)
+        for _ in 0..<100 { await Task.yield() }
+        #expect(rt.fake.evaluated.allSatisfy { !$0.script.contains("__cosmosHoldClick") }, "a press that opened nothing is an ordinary click")
     }
 
     @Test func openingPeekIsALevelChange() throws {
@@ -200,7 +214,8 @@ import Testing
         var played: [Haptics.Pattern] = []
         rig.store.haptics.output = { played.append($0) }
         let rt = try openRuntime(rig)
-        rt.handleAgentMessage(["type": "peekLink", "href": "http://127.0.0.1:9/"], fromMainFrame: true)
+        rt.handleAgentMessage(["type": "hover", "href": "http://127.0.0.1:9/"], fromMainFrame: true)
+        rt.pageDidForceClick(rt.page)
         #expect(played == [.levelChange])
     }
 }

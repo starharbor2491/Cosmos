@@ -62,19 +62,33 @@ import Testing
         // Each line alone, to prove the parser never traps.
         for line in lines { _ = FilterParser.parseLine(line) }
 
-        var options = ContentRuleCompiler.Options()
+        var options = DNRCompiler.Options()
         options.maxRulesPerList = 25
         let text = lines.joined(separator: "\n")
         let result = ContentBlocker.compile(lists: [("fuzz", text)], options: options)
         #expect(!result.lists.isEmpty)
-        for list in result.lists {
+        for list in result.lists where list.kind == .network {
             #expect(list.ruleCount <= 25)
-            let problems = RuleListValidator.validate(json: list.json)
+            let problems = dnrProblems(list.json)
             #expect(problems.isEmpty, "\(list.name): \(problems.prefix(5))")
         }
         let r = result.report
         #expect(r.parsed == r.compiled + r.skippedTotal, "every recognised filter line must be compiled or counted as skipped")
         #expect(r.lines == lines.count)
+    }
+
+    /// Lists are downloaded and parsed at every launch: a line nested deep enough to run a recursive parser out of stack
+    /// would crash Cosmos each time it starts.
+    @Test func deeplyNestedLinesAreRejectedNotRecursedInto() {
+        let depth = 100_000
+        #expect(!FilterParser.evaluateCondition(String(repeating: "!", count: depth) + "unknown"))
+        #expect(!FilterParser.evaluateCondition(String(repeating: "(", count: depth) + "env_chromium"))
+        #expect(CSSSelectorValidator.rejection(for: String(repeating: ":not(", count: depth) + "a" + String(repeating: ")", count: depth)) != nil)
+        #expect(CSSSelectorValidator.rejection(for: String(repeating: ":is(", count: depth)) != nil)
+        // Ordinary nesting still works.
+        #expect(FilterParser.evaluateCondition("!!env_chromium"))
+        #expect(FilterParser.evaluateCondition("((env_chromium))"))
+        #expect(CSSSelectorValidator.isValid("div:not(:is(.a, :not(.b)))"))
     }
 
     @Test func randomBytesNeverCrashTheParser() {

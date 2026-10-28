@@ -25,6 +25,16 @@ import Testing
         #expect(log.ends == 1)
     }
 
+    /// While a panel is open over the window (the Boosts, the Command Bar), the sidebar under it does not slide away.
+    @Test func noSwipeIsTakenWhileTheSidebarIsCovered() {
+        let log = Log(), v = view(log)
+        v.isEnabled = false
+        v.handle(.init(phase: .began))
+        #expect(v.handle(.init(phase: .changed, deltaX: -30)) == false)
+        v.handle(.init(phase: .ended))
+        #expect(log.moves.isEmpty && log.ends == 0)
+    }
+
     @Test func aScrollDownTheListIsLeftAlone() {
         let log = Log(), v = view(log)
         v.handle(.init(phase: .began))

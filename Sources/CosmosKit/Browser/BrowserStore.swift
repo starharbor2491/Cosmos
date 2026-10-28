@@ -1,6 +1,6 @@
 import AppKit
-import WebKit
 import CosmosCore
+import CosmosEngine
 
 /// The browser's model and controller: owns the workspace (spaces, tabs, folders), the archive, Boosts and settings,
 /// persists them, and manages the live pages (`TabRuntime`s) behind sidebar items.
@@ -28,6 +28,10 @@ public final class BrowserStore: TabHost {
     public let catalog = SearchCatalog.bundled
     public let isIncognito: Bool
     public let dataDirectory: URL?
+    /// What draws the pages. The store only knows it through `BrowserEngine`.
+    @ObservationIgnored let engine: BrowserEngine
+    /// Where the engine is (downloading, ready, failed), for the page area to show while there is no page.
+    public internal(set) var engineStatus: EngineStatus = .ready(version: "")
 
     // MARK: Runtime state
 
@@ -45,7 +49,7 @@ public final class BrowserStore: TabHost {
     /// Ids restorable with ⇧⌘T, newest first.
     var recentlyClosed: [UUID] = []
     @ObservationIgnored var blocker: ContentBlockerController?
-    /// Browser extensions (macOS 15.4+ runs them); `nil` in incognito windows, which never load extensions.
+    /// Browser extensions; `nil` in incognito windows, which never load extensions.
     @ObservationIgnored var extensionCenter: ExtensionCenter?
     @ObservationIgnored var onOpenProbe: ((URL) -> Void)?
     @ObservationIgnored var onNewWindow: (() -> Void)?
@@ -54,6 +58,8 @@ public final class BrowserStore: TabHost {
     @ObservationIgnored var onShowSettingsTab: ((SettingsTab) -> Void)?
     /// Shows an overlay in a browser window and brings that window forward.
     @ObservationIgnored var onPresent: ((Overlay) -> Void)?
+    /// Closes a browser window that has nothing left to show. Tests replace it to see that one was asked for.
+    @ObservationIgnored var onCloseWindowRequest: ((WindowState) -> Void)?
     /// Where a download starts. Tests replace it to see that one was asked for.
     @ObservationIgnored var downloadStarter: ((URL, TabRuntime) -> Void)?
     /// The choices a private window inherits (the ring, haptics) changed: the app passes them on to the open ones.
@@ -62,7 +68,11 @@ public final class BrowserStore: TabHost {
     @ObservationIgnored var onHistoryCleared: (() -> Void)?
     /// The menu-bar browser's settings changed: the app shows, hides or rebuilds it.
     @ObservationIgnored var onMenuBarChange: (() -> Void)?
-    @ObservationIgnored var onPopupWindow: ((TabRuntime, WKWindowFeatures, _ bringForward: Bool) -> Void)?
+    /// The engine's own settings changed: the app hands them to the engine (they apply as each profile's engine restarts).
+    @ObservationIgnored var onEngineSettingsChanged: (() -> Void)?
+    /// "Try Again" after the engine could not be fetched.
+    @ObservationIgnored var onRetryEngine: (() -> Void)?
+    @ObservationIgnored var onPopupWindow: ((TabRuntime, NewPageRequest, _ bringForward: Bool) -> Void)?
 
     // MARK: Persistence plumbing
 
@@ -83,9 +93,10 @@ public final class BrowserStore: TabHost {
     @ObservationIgnored var isTerminating = false
 
     /// Opens (or creates) the browser's data in `directory`; pass `nil` for a throwaway in-memory (incognito) store.
-    public init(directory: URL?, incognito: Bool = false) {
+    public init(directory: URL?, incognito: Bool = false, engine: BrowserEngine) {
         isIncognito = incognito
         dataDirectory = directory
+        self.engine = engine
         if let directory {
             try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let ws = JSONFileStore<Workspace>(url: directory.appendingPathComponent("workspace.json"))
@@ -107,10 +118,10 @@ public final class BrowserStore: TabHost {
                 workspace = Workspace.fresh()
                 isFirstLaunch = true
             }
-            archive = ((try? ar.load()) ?? nil) ?? ArchiveData()
-            boosts = ((try? bo.load()) ?? nil) ?? BoostLibrary()
-            linkRouting = ((try? ro.load()) ?? nil) ?? LinkRouting()
-            settings = ((try? se.load()) ?? nil) ?? Settings()
+            archive = Self.loadOrRecover(ar) ?? ArchiveData()
+            boosts = Self.loadOrRecover(bo) ?? BoostLibrary()
+            linkRouting = Self.loadOrRecover(ro) ?? LinkRouting()
+            settings = Self.loadOrRecover(se) ?? Settings()
             var loadedLearning = ((try? le.load()) ?? nil) ?? LearnedSelections()
             // Dated copies an earlier version made, and the typed things it kept, go on the first launch.
             le.deleteBackups()
@@ -131,6 +142,19 @@ public final class BrowserStore: TabHost {
         }
         haptics.isEnabled = settings.trackpadHaptics
         startTimers()
+    }
+
+    /// What a file holds (nil when there is none yet). One that is there but cannot be read (cut short by a full disk, or
+    /// written by a newer Cosmos) is not replaced by an empty value the next save would write over it: its last good copy
+    /// comes back, and failing that it is put aside under another name.
+    private static func loadOrRecover<V>(_ file: JSONFileStore<V>) -> V? {
+        do {
+            return try file.load()
+        } catch {
+            if let restored = try? file.restoreLatestBackup() { return restored }
+            file.setAside()
+            return nil
+        }
     }
 
     // MARK: Saving
@@ -261,6 +285,8 @@ public final class BrowserStore: TabHost {
             for (space, sel) in w.selection where workspace.item(sel) == nil {
                 w.selection[space] = panes[sel]?.first { workspace.item($0) != nil }
             }
+            // A window whose space went (replaced by an import) moves to one that is there.
+            if workspace.space(w.focusedSpaceID) == nil, let first = workspace.spaces.first { w.focusedSpaceID = first.id }
         }
         markDirty(.workspace)
         return result
@@ -271,12 +297,10 @@ public final class BrowserStore: TabHost {
     func register(_ window: WindowState) {
         windows.append(window)
         if activeWindow == nil { activeWindow = window }
-        extensionCenter?.windowOpened(window)
     }
 
     func unregister(_ window: WindowState) {
         windows.removeAll { $0 === window }
-        extensionCenter?.windowClosed(window)
         if activeWindow === window { activeWindow = windows.last }
         if !isTerminating { saveSession() }
     }
@@ -313,8 +337,7 @@ public final class BrowserStore: TabHost {
     func environment(forProfile id: UUID?) -> ProfileEnvironment {
         if isIncognito || id == nil {
             if let e = incognitoEnvironment { return e }
-            let e = ProfileEnvironment(profile: nil, isDefault: false)
-            e.installBoosts(BoostLibrary())
+            let e = ProfileEnvironment(profileID: nil, engineProfile: engine.makeProfile(id: nil, directory: nil), store: self)
             blocker?.attach(to: e)
             incognitoEnvironment = e
             return e
@@ -322,12 +345,52 @@ public final class BrowserStore: TabHost {
         let pid = id!
         if let e = environments[pid] { return e }
         let profile = workspace.profile(pid) ?? workspace.profiles[0]
-        let e = ProfileEnvironment(profile: profile, isDefault: profile.isDefault)
+        let folder = dataDirectory?.appendingPathComponent("Engine Profiles", isDirectory: true).appendingPathComponent(profile.id.uuidString, isDirectory: true)
+        let e = ProfileEnvironment(profileID: profile.id, engineProfile: engine.makeProfile(id: profile.id, directory: folder), store: self)
         e.installBoosts(boosts)
-        e.extensionController = extensionCenter?.controllerObject
         if let blocker { blocker.attach(to: e) }
         environments[pid] = e
+        extensionCenter?.environmentCreated(e)
         return e
+    }
+
+    /// The engine's side of every profile this store has opened.
+    var engineProfiles: [EngineProfile] {
+        environments.values.map(\.engineProfile) + (incognitoEnvironment.map { [$0.engineProfile] } ?? [])
+    }
+
+    /// Ends the engine's side of every profile (the store's windows are gone, or the app is quitting).
+    func closeEnvironments() {
+        for rt in runtimes.values { rt.tearDown() }
+        runtimes.removeAll()
+        for e in environments.values { e.engineProfile.close() }
+        environments.removeAll()
+        incognitoEnvironment?.engineProfile.close()
+        incognitoEnvironment = nil
+    }
+
+    /// Starts every profile's engine again, so changed engine settings apply. Open tabs reload.
+    func restartEngine() {
+        for profile in engineProfiles { profile.restart() }
+    }
+
+    /// The engine has a Chromium now, after a time without one: every page asked for meanwhile is made again.
+    func engineBecameReady() {
+        for pid in Set(runtimes.keys.map(\.profile)) { engineRestarted(profileID: pid) }
+    }
+
+    /// The engine lost a profile's pages (it stopped, or it only now became ready): every tab of that profile gets a new
+    /// page, and the ones on screen load again.
+    func engineRestarted(profileID: UUID?) {
+        for (key, rt) in runtimes where key.profile == profileID {
+            rt.tearDown()
+            runtimes[key] = nil
+        }
+        for w in windows {
+            if let peek = w.peek, peek.runtime.profileID == profileID { closePeek(in: w) }
+            for sel in w.selection.values { for t in workspace.tabs(under: sel) { ensureRuntime(forItem: t.id, in: w) } }
+        }
+        runtimeRevision += 1
     }
 
     func profileID(forItem id: UUID, in window: WindowState?) -> UUID? {
@@ -348,6 +411,7 @@ public final class BrowserStore: TabHost {
             blocker?.settingsDidChange()
         }
         if old.appearance != settings.appearance { NSApp?.appearance = settings.appearance.nsAppearance }
+        if old.engine != settings.engine { onEngineSettingsChanged?() }
         // Not remembering the page forgets the one that was: the copies the file made while it was there go too.
         if old.menuBar.rememberPage && !settings.menuBar.rememberPage { try? settingsFile?.rewriteDiscardingBackups(settings) }
         haptics.isEnabled = settings.trackpadHaptics

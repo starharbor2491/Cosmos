@@ -139,22 +139,23 @@ public enum CommandRanker {
     /// Subsequence match ("nspc" in "new space", "ghb" in "github"). Only dense matches count: the matched letters
     /// must cover at least half the span they sit in, so long titles don't match everything.
     static func fuzzy(_ needle: String, in hay: String) -> Double {
-        guard needle.count >= 3, hay.count >= needle.count else { return 0 }
-        var hi = hay.startIndex
-        var matched = 0, firstHit: String.Index?, lastHit = hay.startIndex
-        for ch in needle {
-            guard let found = hay[hi...].firstIndex(of: ch) else { return 0 }
-            if firstHit == nil {
-                // An abbreviation starts at the start of a word ("nspc" -> "new space"), never mid-word.
-                if found != hay.startIndex, hay[hay.index(before: found)].isLetter || hay[hay.index(before: found)].isNumber { return 0 }
-                firstHit = found
+        guard needle.count >= 3, hay.count >= needle.count, let first = needle.first else { return 0 }
+        var best = 0.0
+        // An abbreviation starts at the start of a word ("nspc" -> "new space"), never mid-word: each word that starts
+        // with its first letter is tried.
+        for start in hay.indices where hay[start] == first {
+            if start != hay.startIndex, hay[hay.index(before: start)].isLetter || hay[hay.index(before: start)].isNumber { continue }
+            var hi = hay.index(after: start), lastHit = start, matched = 1, complete = true
+            for ch in needle.dropFirst() {
+                guard let found = hay[hi...].firstIndex(of: ch) else { complete = false; break }
+                lastHit = found; matched += 1
+                hi = hay.index(after: found)
             }
-            lastHit = found; matched += 1
-            hi = hay.index(after: found)
+            guard complete else { break }
+            let span = hay.distance(from: start, to: lastHit) + 1
+            best = max(best, Double(matched) / Double(max(span, matched)))
         }
-        let span = hay.distance(from: firstHit ?? hay.startIndex, to: lastHit) + 1
-        let density = Double(matched) / Double(max(span, matched))
-        return density >= 0.5 ? 0.25 + 0.2 * density : 0
+        return best >= 0.5 ? 0.25 + 0.2 * best : 0
     }
 
     /// 0 (no match) ... 1 (exact). Every query token has to match somewhere.
@@ -293,7 +294,6 @@ public enum CommandComposer {
             }
         }
 
-        if let siteRow { rows.append(siteRow) }
         if let primary { rows.append(primary) }
         var rest = ranked.map(\.candidate)
         if primary == nil {
@@ -306,6 +306,9 @@ public enum CommandComposer {
                 rows.append(web)
             }
         }
+        // A site's short name at the start ("yt lofi") offers that site's search right under the query; it does not take
+        // the query over ("so what is love" is not a search of Stack Overflow). Tab asks for the site outright.
+        if let siteRow { rows.insert(siteRow, at: min(rows.count, rows.firstIndex { $0.kind == .webSearch || $0.kind == .typedURL }.map { $0 + 1 } ?? rows.count)) }
         rows.append(contentsOf: rest.filter { c in !rows.contains(where: { $0.id == c.id }) })
         for s in suggestions.prefix(5) where s.lowercased() != q.lowercased() {
             rows.append(CommandCandidate(id: "sug:\(s)", kind: .suggestion, title: s, subtitle: nil, url: engine.searchURL(for: s), symbol: "magnifyingglass"))

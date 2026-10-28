@@ -5,58 +5,8 @@ import UniformTypeIdentifiers
 @testable import CosmosKit
 @testable import CosmosCore
 
-/// Just enough of a drag for a drop target to look at.
-private final class StubDrag: NSObject, NSDraggingInfo {
-    let draggingPasteboard: NSPasteboard
-    init(pasteboard: NSPasteboard) { draggingPasteboard = pasteboard }
-    var draggingDestinationWindow: NSWindow? { nil }
-    var draggingSourceOperationMask: NSDragOperation { .every }
-    var draggingLocation: NSPoint { .zero }
-    var draggedImageLocation: NSPoint { .zero }
-    var draggedImage: NSImage? { nil }
-    var draggingSource: Any? { nil }
-    var draggingSequenceNumber: Int { 1 }
-    var draggingFormation: NSDraggingFormation = .default
-    var animatesToDestination = false
-    var numberOfValidItemsForDrop = 1
-    var springLoadingHighlight: NSSpringLoadingHighlight { .none }
-    func slideDraggedImage(to screenPoint: NSPoint) {}
-    func enumerateDraggingItems(options enumOpts: NSDraggingItemEnumerationOptions, for view: NSView?, classes classArray: [AnyClass],
-                                searchOptions: [NSPasteboard.ReadingOptionKey: Any], using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void) {}
-    func resetSpringLoading() {}
-}
-
 @MainActor
 @Suite struct SidebarDragTests {
-    /// A tab carries its address as a link so other apps accept it. Over the page that would navigate the tab to it.
-    @Test func aSidebarTabDroppedOnThePageIsRefused() throws {
-        let rig = Rig()
-        let id = try #require(rig.store.newTab(url: URL(string: "https://example.com/page"), in: rig.window))
-        let runtime = try #require(rig.store.currentRuntime(in: rig.window))
-        let board = NSPasteboard(name: NSPasteboard.Name("cosmos.test.\(UUID().uuidString)"))
-        board.clearContents()
-        board.setString("https://example.com/page", forType: .URL)
-        let drag = StubDrag(pasteboard: board)
-
-        _ = rig.store.beginDrag(id)
-        #expect(runtime.webView.draggingEntered(drag) == [])
-        #expect(runtime.webView.draggingUpdated(drag) == [])
-        #expect(runtime.webView.prepareForDragOperation(drag) == false)
-        #expect(runtime.webView.performDragOperation(drag) == false)
-        rig.store.endDrag()
-    }
-
-    @Test func aDragCarryingThePrivateTypeIsRefusedEvenAfterTheStoreForgetsIt() throws {
-        let rig = Rig()
-        let runtime = try #require(rig.store.newTab(url: URL(string: "https://example.com/"), in: rig.window).flatMap { _ in rig.store.currentRuntime(in: rig.window) })
-        let board = NSPasteboard(name: NSPasteboard.Name("cosmos.test.\(UUID().uuidString)"))
-        board.clearContents()
-        board.declareTypes([NSPasteboard.PasteboardType(SidebarDrop.itemType.identifier), .URL], owner: nil)
-        let drag = StubDrag(pasteboard: board)
-        #expect(runtime.webView.draggingEntered(drag) == [])
-        #expect(runtime.webView.performDragOperation(drag) == false)
-    }
-
     private func data(_ provider: NSItemProvider, _ type: String) async -> Data? {
         await withCheckedContinuation { c in
             provider.loadDataRepresentation(forTypeIdentifier: type) { d, _ in c.resume(returning: d) }

@@ -47,7 +47,7 @@ struct FindBar: View {
         window.overlay = nil
         window.findQuery = ""
         window.findHadMatch = true
-        if let rt = store.currentRuntime(in: window) { rt.webView.window?.makeFirstResponder(rt.webView) }
+        if let rt = store.currentRuntime(in: window) { rt.view.window?.makeFirstResponder(rt.view) }
     }
 }
 

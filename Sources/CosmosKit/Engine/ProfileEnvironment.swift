@@ -1,105 +1,64 @@
 import AppKit
-import WebKit
 import CosmosCore
+import CosmosEngine
 
-/// Everything WebKit-side that belongs to one browsing profile: its cookie jar / site data, the user scripts shared
-/// by its tabs (the page agent and Boosts) and its content-blocking rules.
-///
-/// One `WKUserContentController` per profile (not per tab) keeps tab creation cheap and makes `window.open`
-/// popups, which WebKit configures from the opener, behave: the shared agent routes messages to the right tab by
-/// `message.webView`.
+/// Everything engine-side that belongs to one browsing profile: its cookie jar and site data, the scripts its pages get
+/// (the page agent and Boosts) and its content blocking. A page a site or an extension opens on its own comes here first
+/// and goes to the tab that opened it, or to the store.
 @MainActor
-final class ProfileEnvironment {
-    /// `nil` for the ephemeral incognito environment.
+final class ProfileEnvironment: EngineProfileDelegate {
+    /// `nil` for the incognito environment.
     let profileID: UUID?
-    let dataStore: WKWebsiteDataStore
-    let contentController = WKUserContentController()
-    private let router = AgentMessageRouter()
-    private(set) var ruleLists: [WKContentRuleList] = []
-    /// The `WKWebExtensionController` (macOS 15.4+) web views of this profile are configured with, when extensions are on.
-    var extensionController: AnyObject?
+    let engineProfile: EngineProfile
+    weak var store: BrowserStore?
 
-    init(profile: Profile?, isDefault: Bool) {
-        profileID = profile?.id
-        if let profile {
-            dataStore = isDefault ? .default() : WKWebsiteDataStore(forIdentifier: profile.id)
-        } else {
-            dataStore = .nonPersistent()
-        }
-        contentController.add(router, contentWorld: .defaultClient, name: "cosmos")
-        installAgent()
+    init(profileID: UUID?, engineProfile: EngineProfile, store: BrowserStore?) {
+        self.profileID = profileID
+        self.engineProfile = engineProfile
+        self.store = store
+        engineProfile.delegate = self
+        installBoosts(BoostLibrary())
     }
 
-    static let userAgentSuffix: String = {
-        let major = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
-        return "Version/\(min(major, 26)).0 Safari/605.1.15"
-    }()
-
-    func makeConfiguration() -> WKWebViewConfiguration {
-        let c = WKWebViewConfiguration()
-        c.websiteDataStore = dataStore
-        c.userContentController = contentController
-        c.applicationNameForUserAgent = Self.userAgentSuffix
-        c.preferences.isElementFullscreenEnabled = true
-        c.preferences.isTextInteractionEnabled = true
-        c.upgradeKnownHostsToHTTPS = true
-        c.allowsAirPlayForMediaPlayback = true
-        c.defaultWebpagePreferences.allowsContentJavaScript = true
-        if #available(macOS 15.4, *), let controller = extensionController as? WKWebExtensionController {
-            c.webExtensionController = controller
-        }
-        return c
-    }
+    func makePage() -> EnginePage { engineProfile.makePage() }
 
     // MARK: Scripts
 
-    private static let agentSource: String = {
+    static let agentSource: String = {
         guard let url = Bundle.module.url(forResource: "agent", withExtension: "js"),
               let text = try? String(contentsOf: url, encoding: .utf8) else { return "" }
         return text
     }()
 
-    private var boostScripts: [WKUserScript] = []
-
-    private func installAgent() {
-        contentController.addUserScript(WKUserScript(source: Self.agentSource, injectionTime: .atDocumentStart,
-                                                     forMainFrameOnly: false, in: .defaultClient))
-    }
-
     /// Replaces the Boost scripts. Applies to pages loaded from now on; the caller refreshes open tabs.
     func installBoosts(_ library: BoostLibrary) {
-        contentController.removeAllUserScripts()
-        installAgent()
+        var scripts = [PageScript(source: Self.agentSource, world: .agent, time: .documentStart)]
         for boost in library.boosts where boost.isEnabled && (boost.profileID == nil || boost.profileID == profileID) {
-            for script in BoostInjector.scripts(for: boost) { contentController.addUserScript(script) }
+            scripts += BoostInjector.scripts(for: boost)
         }
+        engineProfile.setPageScripts(scripts)
     }
 
-    // MARK: Content blocking
+    // MARK: EngineProfileDelegate
 
-    func setRuleLists(_ lists: [WKContentRuleList]) {
-        for old in ruleLists { contentController.remove(old) }
-        ruleLists = lists
-        for l in lists { contentController.add(l) }
+    func profile(_ profile: EngineProfile, didOpen page: EnginePage, opener: EnginePage?, request: NewPageRequest) -> Bool {
+        if let opener, let tab = TabRuntime.owning(opener) { return tab.opened(page, request: request) }
+        return store?.openedByExtension(page, request: request, profileID: profileID) ?? false
+    }
+
+    func profile(_ profile: EngineProfile, didStartDownload download: EngineDownload) {
+        store?.downloads.began(download)
+    }
+
+    func profileDidRestart(_ profile: EngineProfile) {
+        store?.engineRestarted(profileID: profileID)
     }
 }
 
-/// Receives `window.webkit.messageHandlers.cosmos.postMessage(...)` from the page agent and hands the message to
-/// the tab that owns the web view.
-final class AgentMessageRouter: NSObject, WKScriptMessageHandler {
-    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard let web = message.webView as? CosmosWebView, let body = message.body as? [String: Any] else { return }
-        let isMainFrame = message.frameInfo.isMainFrame
-        MainActor.assumeIsolated {
-            web.runtime?.handleAgentMessage(body, fromMainFrame: isMainFrame)
-        }
-    }
-}
-
-/// Turns a Boost into user scripts: one guarded style injection and one guarded script.
+/// Turns a Boost into page scripts: one guarded style injection and one guarded script.
 enum BoostInjector {
-    static func scripts(for boost: Boost) -> [WKUserScript] {
-        var out: [WKUserScript] = []
+    static func scripts(for boost: Boost) -> [PageScript] {
+        var out: [PageScript] = []
         let patterns = (try? String(data: JSONEncoder().encode(boost.hostPatterns), encoding: .utf8)) ?? "[]"
         let guardJS = """
         var __h = location.hostname.toLowerCase(), __ps = \(patterns);
@@ -111,16 +70,20 @@ enum BoostInjector {
         if !css.isEmpty {
             let cssLiteral = jsString(css)
             let id = jsString("cosmos-boost-\(boost.id.uuidString)")
+            // At document start there may be no root element yet to put the style in: it goes in as soon as there is.
             let src = """
             (function(){ \(guardJS)
               var s = document.getElementById(\(id)); if (!s) { s = document.createElement('style'); s.id = \(id); }
-              s.textContent = \(cssLiteral); (document.head || document.documentElement).appendChild(s); })();
+              s.textContent = \(cssLiteral);
+              var add = function () { (document.head || document.documentElement).appendChild(s); };
+              if (document.documentElement) { add(); return; }
+              new MutationObserver(function (_, o) { if (document.documentElement) { o.disconnect(); add(); } }).observe(document, { childList: true }); })();
             """
-            out.append(WKUserScript(source: src, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: .page))
+            out.append(PageScript(source: src, world: .page, time: .documentStart))
         }
         if !boost.js.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let src = "(function(){ \(guardJS) try { \n\(boost.js)\n } catch (e) { console.error(\(jsString("[Cosmos Boost \(boost.name)]")), e); } })();"
-            out.append(WKUserScript(source: src, injectionTime: .atDocumentEnd, forMainFrameOnly: false, in: .page))
+            out.append(PageScript(source: src, world: .page, time: .documentEnd))
         }
         return out
     }

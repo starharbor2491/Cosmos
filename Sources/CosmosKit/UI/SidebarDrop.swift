@@ -145,7 +145,6 @@ struct RowDropDelegate: DropDelegate {
         if let dragged = store.draggingItemID {
             if z == .into, target.isTab, ws.item(dragged)?.isTab == true {
                 store.splitWith(targetID, dragged: dragged, in: window)
-                store.haptics.levelChange()
                 return true
             }
             guard let dest = destination(z) else { return false }

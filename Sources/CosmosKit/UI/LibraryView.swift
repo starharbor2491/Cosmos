@@ -180,9 +180,6 @@ enum DownloadFilter: CaseIterable, Hashable {
         }
     }
 
-    /// Whether finished downloads are among what the list shows (so "Clear", which removes them, takes nothing unseen).
-    var showsFinished: Bool { self != .inProgress }
-
     func matches(_ state: DownloadItem.State) -> Bool {
         switch (self, state) {
         case (.all, _), (.inProgress, .running), (.finished, .finished), (.stopped, .failed), (.stopped, .cancelled): return true

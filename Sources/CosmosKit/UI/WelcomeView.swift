@@ -44,7 +44,8 @@ struct WelcomeView: View {
                     if !loaded {
                         ProgressView().controlSize(.small).padding(.vertical, 14)
                     } else if sources.isEmpty {
-                        Text("No other browsers found on this Mac. You can import later from the Cosmos menu.")
+                        Text(store.isIncognito ? "A private window keeps nothing, so importing is done in a regular window."
+                                               : "No other browsers found on this Mac. You can import later from the Cosmos menu.")
                             .font(.system(size: 12.5)).foregroundStyle(palette.tertiary).padding(.vertical, 14)
                     }
                     ForEach(sources) { source in

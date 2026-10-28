@@ -22,7 +22,7 @@ If you used Arc every day, this is the page to keep open for the first week. **�
 | Site Control Center | Site Controls | Click the lock in the address pill: blocking for this site, zoom, Boosts, sound, permissions. |
 | Ad blocking (uBlock Origin built in) | Blocking | Settings ▸ Blocking. Per-site switch in Site Controls. |
 | Chrome extensions | Extensions | Cosmos ▸ Extensions…. See [extensions.md](extensions.md). |
-| Auto Picture in Picture | Auto Picture in Picture | Settings ▸ General. |
+| Auto Picture in Picture | Auto Picture in Picture | Settings ▸ General. Does nothing yet on Chromium, which runs headless and has no Picture in Picture window. |
 | Link routing ("open links in…") | Link routing | Settings ▸ Links. |
 | Hover cards, Tidy Tabs (AI), Ask on page, Easels, Notes, Live Folders, Sync, Max | — | Not in Cosmos. |
 
@@ -62,7 +62,7 @@ Cosmos uses Arc's keys wherever the feature exists. Like Arc, its shortcuts win 
 | ⌘+ / ⌘- / ⌘0 | Zoom in / out / actual size |
 | ⇧⌘C | Copy the page address |
 | ⌥⇧⌘C | Copy the address as a Markdown link |
-| ⌥⌘P | Picture in Picture |
+| ⌥⌘P | Picture in Picture (not working yet on Chromium) |
 | ⌘P | Print |
 | **Panels** | |
 | ⌘Y | History |

@@ -195,7 +195,7 @@ enum TestIcon {
             return Set(names.filter { $0.hasPrefix("cosmos-incognito") })
         }
         let before = incognitoFolders()
-        let store = BrowserStore(directory: nil, incognito: true)
+        let store = BrowserStore(directory: nil, incognito: true, engine: FakeEngine())
         #expect(incognitoFolders().subtracting(before).isEmpty)
         withExtendedLifetime(store) {}
     }

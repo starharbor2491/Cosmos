@@ -157,6 +157,14 @@ private func folderExpanded(_ ws: Workspace, _ n: Int) throws -> Bool {
         #expect(notes.warnings.count == 1)
     }
 
+    /// Arc's files are read as they are: a number too big for any character must not take the import (or the app) down.
+    @Test func anEmojiNumberOutOfRangeIsADefaultIcon() {
+        let notes = ImportNotes()
+        #expect(ArcSpaceStyle.icon(from: ["emoji_v2": 1e300], notes: notes) == .symbol("moon.stars.fill"))
+        #expect(ArcSpaceStyle.icon(from: ["emoji_v2": [-1e300, 128640.5]], notes: notes) == .symbol("moon.stars.fill"))
+        #expect(notes.warnings.count == 1, "the same warning, once")
+    }
+
     // MARK: Tree
 
     @Test func favoritesAreTabsOnlyAndRememberTheirHome() throws {

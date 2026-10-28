@@ -1,40 +1,30 @@
 import AppKit
 import Foundation
 import Testing
-import WebKit
+import CosmosEngine
 @testable import CosmosKit
 @testable import CosmosCore
 
-/// What WebKit hands over for `window.open(url, name, "width=480,height=640")`.
-private final class SizedFeatures: WKWindowFeatures {
-    override var width: NSNumber? { 480 }
-    override var height: NSNumber? { 640 }
-}
-
-/// The page behind the menu-bar browser: the same profile data store as the browser windows, so the cookies and logins
-/// are shared, and the small differences a panel needs.
+/// The page behind the menu-bar browser: the same engine profile as the browser windows, so the cookies and logins are
+/// shared, and the small differences a panel needs.
 @MainActor
 @Suite struct MenuBarSessionTests {
-    private func html(_ body: String) -> SiteServer.Route { .init(type: "text/html", body: Data(body.utf8)) }
-
-    private func waitFor(_ seconds: Double = 20, _ condition: () -> Bool) async throws {
-        let deadline = Date().addingTimeInterval(seconds)
-        while !condition(), Date() < deadline { try await Task.sleep(for: .milliseconds(25)) }
-    }
-
-    private func read(_ script: String, in web: WKWebView) async throws -> String {
-        try await web.evaluateJavaScript(script) as? String ?? ""
+    /// The engine profile a page was made in.
+    private func profile(of runtime: TabRuntime, in rig: Rig) -> FakeProfile? {
+        rig.store.fakeEngine.profiles.first { $0.pages.contains { $0 === runtime.page } }
     }
 
     // MARK: Shared data
 
-    @Test func theDefaultProfilesDataStoreIsTheOneTheBrowserWindowsUse() {
+    @Test func theDefaultProfileIsTheOneTheBrowserWindowsUse() throws {
         let rig = Rig()
+        let tab = try #require(rig.store.newTab(url: URL(string: "https://example.com/"), in: rig.window).flatMap { rig.store.runtime(forItem: $0, in: rig.window) })
         let session = MenuBarSession(store: rig.store)
         let runtime = session.prepare()
         let profile = rig.store.workspace.profiles.first { $0.isDefault } ?? rig.store.workspace.profiles[0]
-        #expect(runtime.webView.configuration.websiteDataStore === rig.store.environment(forProfile: profile.id).dataStore)
         #expect(runtime.profileID == profile.id)
+        #expect(self.profile(of: runtime, in: rig) === self.profile(of: tab, in: rig), "one engine profile: one set of cookies")
+        #expect(self.profile(of: runtime, in: rig)?.id == profile.id)
         session.teardown()
     }
 
@@ -46,7 +36,7 @@ private final class SizedFeatures: WKWindowFeatures {
         let session = MenuBarSession(store: rig.store)
         let chosen = session.prepare()
         #expect(chosen.profileID == work.id)
-        #expect(chosen.webView.configuration.websiteDataStore === rig.store.environment(forProfile: work.id).dataStore)
+        #expect(profile(of: chosen, in: rig)?.id == work.id)
 
         rig.store.settings.menuBar.profileID = UUID()
         let fallback = session.prepare()
@@ -56,56 +46,30 @@ private final class SizedFeatures: WKWindowFeatures {
         session.teardown()
     }
 
-    @Test func aCookieSetInABrowserTabIsThereInThePanel() async throws {
-        let server = try await SiteServer(routes: ["/": html("<p>hello</p>")])
-        let rig = Rig()
-        let name = "cosmos_menubar_\(UUID().uuidString.prefix(8))"
-        let origin = "http://127.0.0.1:\(server.port)/"
-
-        _ = rig.store.newTab(url: URL(string: "about:blank"), in: rig.window)
-        let tab = try #require(rig.store.currentRuntime(in: rig.window))
-        tab.webView.load(URLRequest(url: URL(string: origin)!))
-        try await waitFor { tab.webView.url?.host == "127.0.0.1" && !tab.webView.isLoading }
-        _ = try await tab.webView.evaluateJavaScript("document.cookie = '\(name)=shared; path=/'")
-
-        rig.store.settings.menuBar.homeAddress = origin
-        rig.store.settings.menuBar.rememberPage = false
-        let session = MenuBarSession(store: rig.store)
-        let panel = session.prepare()
-        try await waitFor { panel.webView.url?.host == "127.0.0.1" && !panel.webView.isLoading }
-        let cookies = try await read("document.cookie", in: panel.webView)
-        #expect(cookies.contains("\(name)=shared"), "the panel should be signed in wherever the browser is")
-
-        _ = try await tab.webView.evaluateJavaScript("document.cookie = '\(name)=; path=/; max-age=0'")
-        session.teardown()
-    }
-
     // MARK: Starting and typing
 
-    @Test func itOpensOnTheHomeAddressAndRemembersWhereItWent() async throws {
-        let server = try await SiteServer(routes: ["/": html("<title>home</title>"), "/two": html("<title>two</title>")])
+    @Test func itOpensOnTheHomeAddressAndRemembersWhereItWent() throws {
         let rig = Rig()
-        rig.store.settings.menuBar.homeAddress = "http://127.0.0.1:\(server.port)/"
+        rig.store.settings.menuBar.homeAddress = "https://home.example/"
         let session = MenuBarSession(store: rig.store)
         let panel = session.prepare()
-        try await waitFor { panel.url?.path == "/" && !panel.isLoading }
-        #expect(panel.url?.host == "127.0.0.1")
+        #expect(panel.fake.loads == [URL(string: "https://home.example/")!])
+        panel.fake.navigate(to: URL(string: "https://home.example/")!, title: "home")
 
-        session.go("http://127.0.0.1:\(server.port)/two")
-        try await waitFor { rig.store.settings.menuBar.lastAddress?.hasSuffix("/two") == true }
-        #expect(rig.store.settings.menuBar.lastAddress == "http://127.0.0.1:\(server.port)/two")
+        session.go("https://home.example/two")
+        #expect(panel.fake.loads.last == URL(string: "https://home.example/two"))
+        panel.fake.navigate(to: URL(string: "https://home.example/two")!, title: "two")
+        #expect(rig.store.settings.menuBar.lastAddress == "https://home.example/two")
         session.teardown()
     }
 
-    @Test func nothingIsRememberedWhenThatIsOff() async throws {
-        let server = try await SiteServer(routes: ["/": html("<title>home</title>")])
+    @Test func nothingIsRememberedWhenThatIsOff() {
         let rig = Rig()
-        rig.store.settings.menuBar.homeAddress = "http://127.0.0.1:\(server.port)/"
+        rig.store.settings.menuBar.homeAddress = "https://home.example/"
         rig.store.settings.menuBar.rememberPage = false
         let session = MenuBarSession(store: rig.store)
         let panel = session.prepare()
-        try await waitFor { panel.url?.host == "127.0.0.1" && !panel.isLoading }
-        try await Task.sleep(for: .milliseconds(200))
+        panel.fake.navigate(to: URL(string: "https://home.example/")!, title: "home")
         #expect(rig.store.settings.menuBar.lastAddress == nil)
         session.teardown()
     }
@@ -126,16 +90,16 @@ private final class SizedFeatures: WKWindowFeatures {
         rig.store.settings.menuBar.layout = .phone
         let session = MenuBarSession(store: rig.store)
         let runtime = session.prepare()
-        #expect(runtime.webView.customUserAgent?.contains("iPhone") == true)
+        #expect(runtime.page.userAgent?.contains("Mobile") == true)
 
         rig.store.settings.menuBar.layout = .desktop
         let again = session.prepare()
         #expect(again === runtime, "a layout change keeps the page")
-        #expect((again.webView.customUserAgent ?? "").isEmpty)
+        #expect((again.page.userAgent ?? "").isEmpty)
         session.teardown()
     }
 
-    /// WKWebView answers "" for an agent that was never set, so "" and nil are the same, and changing nothing is not a change.
+    /// An engine may answer "" for an agent that was never set, so "" and nil are the same, and changing nothing is not a change.
     @Test func anAgentThatIsUnsetIsTheSameWhetherItIsNilOrEmpty() {
         #expect(!MenuBarSession.agentDiffers(current: "", wanted: nil))
         #expect(!MenuBarSession.agentDiffers(current: nil, wanted: nil))
@@ -153,35 +117,18 @@ private final class SizedFeatures: WKWindowFeatures {
         session.teardown()
     }
 
-    /// A real click on a `target="_blank"` link, sent to the page the way a mouse would: the panel has no room for another
-    /// window, so the page it points to has to load where the link was.
-    @Test func aClickOnALinkThatWantsANewWindowLoadsItInThePanel() async throws {
-        let server = try await SiteServer(routes: [
-            "/": html("<html><body style='margin:0'><a href='/two' target='_blank' style='display:block;width:300px;height:300px'>go</a></body></html>"),
-            "/two": html("<title>two</title><p>second page</p>"),
-        ])
+    /// A `target="_blank"` link or a `window.open` without a size: the panel has no room for another window, so the page it
+    /// points to loads where the link was, and the engine's new page is closed.
+    @Test func aPageThatWantsANewWindowLoadsInThePanel() throws {
         let rig = Rig()
-        rig.store.settings.menuBar.homeAddress = "http://127.0.0.1:\(server.port)/"
-        rig.store.settings.menuBar.rememberPage = false
         let session = MenuBarSession(store: rig.store)
         let panel = session.prepare()
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 390, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
-        window.contentView?.addSubview(panel.webView)
-        panel.webView.frame = NSRect(x: 0, y: 0, width: 390, height: 600)
-        window.orderFront(nil)
-        try await waitFor { panel.url?.path == "/" && !panel.isLoading }
-        try await Task.sleep(for: .milliseconds(300))
-
-        func click(_ type: NSEvent.EventType) {
-            let event = NSEvent.mouseEvent(with: type, location: NSPoint(x: 50, y: 550), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                                           windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
-            window.sendEvent(event)
-        }
-        click(.leftMouseDown)
-        click(.leftMouseUp)
-        try await waitFor { panel.url?.path == "/two" }
-        #expect(panel.url?.path == "/two")
-        window.orderOut(nil)
+        let profile = try #require(profile(of: panel, in: rig))
+        let two = URL(string: "https://example.com/two")!
+        let opened = profile.open(NewPageRequest(url: two, userGesture: true), from: panel.fake)
+        #expect(!opened.kept)
+        #expect(opened.page.isClosed)
+        #expect(panel.fake.loads.last == two)
         session.teardown()
     }
 
@@ -195,21 +142,21 @@ private final class SizedFeatures: WKWindowFeatures {
         let session = MenuBarSession(store: rig.store)
         let runtime = session.prepare()
 
-        let plain = WKWindowFeatures()
-        let sized = SizedFeatures()
-        #expect(sized.width != nil, "the test's popup features should carry a size")
-        #expect(TabRuntime.loadsNewWindowInPlace(hostOpensInPlace: true, features: plain))
-        #expect(!TabRuntime.loadsNewWindowInPlace(hostOpensInPlace: true, features: sized))
-        #expect(!TabRuntime.loadsNewWindowInPlace(hostOpensInPlace: false, features: plain))
+        let plain = NewPageRequest(url: URL(string: "https://example.com/"))
+        let sized = NewPageRequest(url: URL(string: "https://example.com/"), features: ["width=480", "height=640"])
+        #expect(TabRuntime.loadsNewWindowInPlace(hostOpensInPlace: true, request: plain))
+        #expect(!TabRuntime.loadsNewWindowInPlace(hostOpensInPlace: true, request: sized))
+        #expect(!TabRuntime.loadsNewWindowInPlace(hostOpensInPlace: false, request: plain))
 
-        let popup = runtime.host?.tab(runtime, createChildWith: WKWebViewConfiguration(), features: sized)
-        #expect(popup != nil)
+        let profile = try #require(profile(of: runtime, in: rig))
+        let popup = profile.open(sized, from: runtime.fake)
+        #expect(popup.kept)
         #expect(shown.count == 1 && shown.first?.isEphemeral == true)
-        #expect(shown.first?.webView === popup)
+        #expect(shown.first?.page === popup.page)
         #expect(forward == [false], "a panel that is not on screen cannot have asked the user for a window")
 
         session.isPanelOpen = { true }
-        _ = runtime.host?.tab(runtime, createChildWith: WKWebViewConfiguration(), features: sized)
+        profile.open(sized, from: runtime.fake)
         #expect(forward == [false, true], "a window asked for from the open panel comes to the front")
         session.teardown()
     }
@@ -595,7 +542,7 @@ private final class SizedFeatures: WKWindowFeatures {
         try Data(old.utf8).write(to: dir.appendingPathComponent("command-bar-learning.json"))
         try Data(old.utf8).write(to: dir.appendingPathComponent("Backups/command-bar-learning.2026-10-20-10-00-00-000.json"))
 
-        let store = BrowserStore(directory: dir)
+        let store = BrowserStore(directory: dir, engine: FakeEngine())
 
         #expect(store.learned.picks["typed words"]?.keys.sorted() == ["hist:https://example.com/"], "what was typed as an address or search is gone, the page pick stays")
         #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("Backups/command-bar-learning.2026-10-20-10-00-00-000.json").path))
@@ -674,5 +621,21 @@ private final class SizedFeatures: WKWindowFeatures {
         #expect(!CosmosAppDelegate.windowCommandsApply(keyWindow: panel))
         #expect(CosmosAppDelegate.windowCommandsApply(keyWindow: other))
         #expect(CosmosAppDelegate.windowCommandsApply(keyWindow: nil))
+    }
+}
+
+/// The view that holds a throwaway page (Peek, the menu-bar panel, a probe window). SwiftUI keeps it when the page under
+/// it is replaced (another Peek over this one, another profile for the panel), so it has to show the new page.
+@MainActor
+@Suite struct RuntimeHostTests {
+    @Test func aNewPageReplacesTheOneShown() {
+        let first = TabRuntime(itemID: UUID(), profileID: nil, page: FakePage(), host: nil)
+        let second = TabRuntime(itemID: UUID(), profileID: nil, page: FakePage(), host: nil)
+        let host = RuntimeWebHost.RuntimeHostView(runtime: first)
+        #expect(host.subviews == [first.view])
+        host.show(second)
+        #expect(host.subviews == [second.view])
+        host.show(second)
+        #expect(host.subviews == [second.view], "the same page again changes nothing")
     }
 }

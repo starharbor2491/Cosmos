@@ -279,8 +279,8 @@ struct DownloadsSection: View {
         VStack(spacing: 0) {
             LibraryHeader(title: "Downloads", query: $query, prompt: "Search downloads") {
                 LibraryFilterMenu(title: \.title, selection: $filter)
-                Button { store.downloads.clearFinished() } label: { LibraryControlLabel(symbol: "trash", title: "Clear") }
-                    .buttonStyle(.plain).disabled(all.allSatisfy(\.isRunning) || !filter.showsFinished)
+                Button { store.downloads.clear(items) } label: { LibraryControlLabel(symbol: "trash", title: "Clear") }
+                    .buttonStyle(.plain).disabled(items.allSatisfy(\.isRunning))
             }
             if items.isEmpty {
                 EmptyPanelMessage(symbol: "arrow.down.circle", title: query.isEmpty && filter == .all ? "No downloads" : "No matches",

@@ -199,17 +199,19 @@ import Testing
             if case .network(let n) = $0, case .glob(let g) = n.pattern { return g }
             return nil
         }
-        #expect(patterns == ["always.com^", "safari.com^", "chromium-or-safari.com^"])
-        #expect(r.conditionalCount == 5)
+        #expect(patterns == ["always.com^", "not-safari.com^", "chromium-or-safari.com^", "nested-no.com^"])
+        #expect(r.conditionalCount == 4)
     }
 
     @Test func conditionEvaluator() {
-        #expect(FilterParser.evaluateCondition("env_safari"))
-        #expect(!FilterParser.evaluateCondition("env_chromium"))
-        #expect(FilterParser.evaluateCondition("!env_chromium"))
-        #expect(FilterParser.evaluateCondition("env_safari && !ext_ublock"))
-        #expect(!FilterParser.evaluateCondition("env_safari && ext_ublock"))
-        #expect(FilterParser.evaluateCondition("(ext_ublock || env_safari) && true"))
+        // Cosmos blocks the way uBlock Origin Lite does on Chromium: with declarativeNetRequest.
+        #expect(FilterParser.evaluateCondition("env_chromium"))
+        #expect(FilterParser.evaluateCondition("env_mv3"))
+        #expect(!FilterParser.evaluateCondition("env_safari"))
+        #expect(FilterParser.evaluateCondition("!env_safari"))
+        #expect(FilterParser.evaluateCondition("env_chromium && !ext_ublock"))
+        #expect(!FilterParser.evaluateCondition("env_chromium && ext_ublock"))
+        #expect(FilterParser.evaluateCondition("(ext_ublock || env_chromium) && true"))
         #expect(!FilterParser.evaluateCondition("unknown_flag"))
     }
 

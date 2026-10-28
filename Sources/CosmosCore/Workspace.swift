@@ -489,9 +489,20 @@ public struct Workspace: Codable, Equatable, Sendable {
             s.profileID = profileMap[s.profileID] ?? profiles[0].id
             spaces.append(s)
         }
+        var added = Set<UUID>()
         for (id, var item) in other.items where id != other.favoritesRootID && items[id] == nil {
             if item.parentID == other.favoritesRootID { item.parentID = favoritesRootID }
             items[id] = item
+            added.insert(id)
+        }
+        // A new item under a container that was here already: the container lists it too, after its own, in the other's
+        // order. (Under a new container it is listed already; the favorites follow below.)
+        for (pid, parent) in other.items where pid != other.favoritesRootID && !added.contains(pid) {
+            guard var mine = items[pid] else { continue }
+            let joining = parent.childIDs.filter { added.contains($0) && items[$0]?.parentID == pid && !mine.childIDs.contains($0) }
+            guard !joining.isEmpty else { continue }
+            mine.childIDs += joining
+            items[pid] = mine
         }
         let incoming = (other.items[other.favoritesRootID]?.childIDs ?? []).filter { items[$0]?.parentID == favoritesRootID }
         if var root = items[favoritesRootID] {

@@ -56,7 +56,7 @@ struct PeekOverlay: View {
             .transition(.scale(scale: 0.96).combined(with: .opacity))
         }
         .animation(Motion.spring, value: peek.id)
-        .background(PeekKeyCatcher { store.closePeek(in: window) })
+        .background(PeekKeyCatcher(active: window.overlay == nil) { store.closePeek(in: window) })
     }
 }
 
@@ -64,44 +64,61 @@ struct RuntimeWebHost: NSViewRepresentable {
     let runtime: TabRuntime
 
     func makeNSView(context: Context) -> RuntimeHostView { RuntimeHostView(runtime: runtime) }
-    func updateNSView(_ nsView: RuntimeHostView, context: Context) {}
+    /// SwiftUI keeps this view when the page under it is replaced (another Peek, another profile for the panel).
+    func updateNSView(_ nsView: RuntimeHostView, context: Context) { nsView.show(runtime) }
 
     final class RuntimeHostView: NSView {
-        private let webView: CosmosWebView
+        private var pageView: NSView?
         init(runtime: TabRuntime) {
-            webView = runtime.webView
             super.init(frame: .zero)
             wantsLayer = true
-            webView.removeFromSuperview()
-            webView.frame = bounds
-            webView.autoresizingMask = [.width, .height]
-            addSubview(webView)
+            show(runtime)
         }
         required init?(coder: NSCoder) { fatalError() }
 
+        func show(_ runtime: TabRuntime) {
+            let next = runtime.view
+            guard next !== pageView else { return }
+            if pageView?.superview === self { pageView?.removeFromSuperview() }
+            next.removeFromSuperview()
+            next.frame = bounds
+            next.autoresizingMask = [.width, .height]
+            addSubview(next)
+            pageView = next
+            focusPage()
+        }
+
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
+            focusPage()
+        }
+
+        private func focusPage() {
             DispatchQueue.main.async { [weak self] in
-                guard let self, let w = self.window else { return }
-                w.makeFirstResponder(self.webView)
+                guard let self, let w = self.window, let page = self.pageView else { return }
+                w.makeFirstResponder(page)
             }
         }
     }
 }
 
-/// Esc anywhere in the window closes the Peek (key events are otherwise swallowed by the page).
+/// Esc anywhere in the window closes the Peek (key events are otherwise swallowed by the page), unless something is open
+/// over the Peek (the Command Bar, a panel): that one gets the Esc.
 struct PeekKeyCatcher: NSViewRepresentable {
+    var active = true
     let onEscape: () -> Void
 
     func makeNSView(context: Context) -> CatcherView {
         let v = CatcherView()
         v.onEscape = onEscape
+        v.active = active
         return v
     }
-    func updateNSView(_ v: CatcherView, context: Context) { v.onEscape = onEscape }
+    func updateNSView(_ v: CatcherView, context: Context) { v.onEscape = onEscape; v.active = active }
 
     final class CatcherView: NSView {
         var onEscape: (() -> Void)?
+        var active = true
         private var monitor: Any?
 
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -111,7 +128,7 @@ struct PeekKeyCatcher: NSViewRepresentable {
             if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
             guard window != nil else { return }
             monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-                guard let self, event.window === self.window, event.keyCode == 53 else { return event }
+                guard let self, self.active, event.window === self.window, event.keyCode == 53 else { return event }
                 self.onEscape?()
                 return nil
             }

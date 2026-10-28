@@ -1,9 +1,8 @@
 import AppKit
 import SwiftUI
-import WebKit
 import CosmosCore
 
-/// Lays out the live web views for the selected item: one page, or 2–4 panes side by side with draggable dividers.
+/// Lays out the live pages for the selected item: one page, or 2–4 panes side by side with draggable dividers.
 /// Pages sit in rounded, softly shadowed cards over the space's theme.
 final class WebContentHostView: NSView {
     struct Pane {
@@ -18,6 +17,8 @@ final class WebContentHostView: NSView {
     private var weights: [Double] = []
     private var accent: NSColor = .controlAccentColor
     private var lastFocusedID: ObjectIdentifier?
+    /// Whether the last update wanted the page to have the keyboard (no panel over it).
+    private var hadFocus = false
     var onWeightsChanged: (([Double]) -> Void)?
 
     static let corner: CGFloat = Metrics.Radius.page
@@ -33,7 +34,7 @@ final class WebContentHostView: NSView {
         for p in newPanes {
             let id = ObjectIdentifier(p.runtime)
             if containers[id] == nil {
-                let c = PaneContainer(webView: p.runtime.webView)
+                let c = PaneContainer(pageView: p.runtime.view)
                 containers[id] = c
                 addSubview(c)
             }
@@ -45,19 +46,21 @@ final class WebContentHostView: NSView {
         needsLayout = true
         layoutSubtreeIfNeeded()
 
+        // The page in front takes the keyboard when it comes in front, and again when a panel over it (the Command Bar,
+        // which had the keyboard) goes away.
         if wantsFocus, let focused = newPanes.first(where: \.isFocused) ?? newPanes.first {
             let fid = ObjectIdentifier(focused.runtime)
-            if fid != lastFocusedID {
+            if fid != lastFocusedID || !hadFocus {
                 lastFocusedID = fid
                 DispatchQueue.main.async { [weak self] in
                     guard let self, let window = self.window else { return }
-                    if window.firstResponder is NSTextView || window.firstResponder is NSTextField { if window.attachedSheet == nil, window.firstResponder !== focused.runtime.webView { /* leave text entry alone */ } }
-                    window.makeFirstResponder(focused.runtime.webView)
+                    window.makeFirstResponder(focused.runtime.view)
                 }
             }
         } else if newPanes.isEmpty {
             lastFocusedID = nil
         }
+        hadFocus = wantsFocus
     }
 
     static func normalised(_ w: [Double], count: Int) -> [Double] {
@@ -118,14 +121,14 @@ final class WebContentHostView: NSView {
     }
 }
 
-/// A rounded card holding one web view.
+/// A rounded card holding one page.
 final class PaneContainer: NSView {
-    private let webView: WKWebView
+    private let pageView: NSView
     private let shadowHost = NSView()
     private let card = NSView()
 
-    init(webView: WKWebView) {
-        self.webView = webView
+    init(pageView: NSView) {
+        self.pageView = pageView
         super.init(frame: .zero)
         wantsLayer = true
         layer?.masksToBounds = false
@@ -146,10 +149,10 @@ final class PaneContainer: NSView {
         card.layer?.borderWidth = 0.5
         card.layer?.borderColor = NSColor.white.withAlphaComponent(0.14).cgColor
         addSubview(card)
-        webView.removeFromSuperview()
-        webView.translatesAutoresizingMaskIntoConstraints = true
-        webView.autoresizingMask = [.width, .height]
-        card.addSubview(webView)
+        pageView.removeFromSuperview()
+        pageView.translatesAutoresizingMaskIntoConstraints = true
+        pageView.autoresizingMask = [.width, .height]
+        card.addSubview(pageView)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -160,7 +163,7 @@ final class PaneContainer: NSView {
         super.layout()
         shadowHost.frame = bounds
         card.frame = bounds
-        webView.frame = card.bounds
+        pageView.frame = card.bounds
     }
 
     func setFocused(_ focused: Bool, accent: NSColor) {

@@ -305,9 +305,38 @@ import Testing
         #expect(data.search("site3.com").count == 1)
         #expect(data.search("").count == 3)
     }
+
+    /// Entries imported from another browser are older than the ones closed here: they go where their dates put them, and
+    /// at the limit it is the oldest that go, never what was just closed.
+    @Test func olderEntriesTakeTheirPlaceAndTheOldestGoAtTheLimit() {
+        func entry(_ title: String, hoursAgo: Double) -> ArchivedItem {
+            let item = SidebarItem(title: title, content: .tab(TabData(url: URL(string: "https://\(title).example"))))
+            return ArchivedItem(archivedAt: Date(timeIntervalSince1970: 1_800_000_000 - hoursAgo * 3600), reason: .closed, spaceID: nil, items: [item])
+        }
+        var data = ArchiveData(limit: 3)
+        data.add(entry("mine-old", hoursAgo: 2))
+        data.add(entry("mine-new", hoursAgo: 1))
+        for imported in [entry("arc-a", hoursAgo: 50), entry("arc-b", hoursAgo: 1.5), entry("arc-c", hoursAgo: 60)] { data.add(imported) }
+        #expect(data.entries.map { $0.items[0].title } == ["mine-new", "arc-b", "mine-old"])
+    }
 }
 
 @Suite struct StoreTests {
+    /// The copy is dated when it is made: a file last written days ago must not make every save in the next minutes look
+    /// like it is due another copy.
+    @Test func oneBackupPerIntervalEvenAfterTheFileSatUnchanged() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = JSONFileStore<[String]>(url: dir.appendingPathComponent("list.json"), backupInterval: 3600)
+        let now = Date()
+        try store.save(["a"], now: now.addingTimeInterval(-3 * 86400))
+        try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-3 * 86400)], ofItemAtPath: store.url.path)
+        try store.save(["b"], now: now)
+        try store.save(["c"], now: now.addingTimeInterval(60))
+        try store.save(["d"], now: now.addingTimeInterval(120))
+        #expect(store.backups().count == 1)
+    }
+
     @Test func atomicSaveLoadAndBackups() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-test-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -358,6 +387,24 @@ import Testing
         let snapshot = mine
         mine.merge(theirs)
         #expect(mine == snapshot)
+    }
+
+    /// Importing again from the same place: the spaces are there already, and the tabs added there since have to be listed
+    /// by their folder, in the order they had, or they are in the file but nowhere in the sidebar.
+    @Test func newTabsInASpaceThatIsAlreadyHereJoinItsList() throws {
+        var theirs = Workspace.fresh()
+        let space = theirs.spaces[0]
+        let firstOpt = theirs.addTab(url: URL(string: "https://one.example"), under: space.pinnedRootID)
+        let first = try #require(firstOpt)
+        var mine = Workspace.fresh()
+        mine.merge(theirs)
+
+        let secondOpt = theirs.addTab(url: URL(string: "https://two.example"), under: space.pinnedRootID, at: 0)
+        let thirdOpt = theirs.addTab(url: URL(string: "https://three.example"), under: space.pinnedRootID)
+        let second = try #require(secondOpt), third = try #require(thirdOpt)
+        mine.merge(theirs)
+        #expect(mine.problems().isEmpty, "\(mine.problems())")
+        #expect(mine.item(space.pinnedRootID)?.childIDs == [first, second, third])
     }
 
     @Test func freshWorkspaceIsPristine() {

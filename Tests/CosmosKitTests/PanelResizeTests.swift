@@ -32,9 +32,20 @@ import Testing
         #expect(edges(200, 298) == .top)
         #expect(edges(3, 3) == [.left, .bottom])
         #expect(edges(397, 297) == [.right, .top])
-        #expect(edges(10, 290) == [.left, .top], "a corner is a square, wider than the strips")
+        #expect(edges(7, 293) == [.left, .top], "a corner is a square, wider than the strips")
         #expect(edges(12, 150).isEmpty, "but only at the corner")
         #expect(edges(-1, 150).isEmpty && edges(200, 301).isEmpty, "outside the panel is not on it")
+    }
+
+    /// The corners are no bigger than the sky around the page (8 points): the page and the toolbar's first and last buttons,
+    /// which start there, keep their clicks.
+    @Test func theCornersStopWhereThePageAndTheButtonsBegin() {
+        let bounds = NSRect(x: 0, y: 0, width: 400, height: 300)
+        func edges(_ x: CGFloat, _ y: CGFloat) -> Edges { PanelResizeArea.ResizeView.edges(at: NSPoint(x: x, y: y), in: bounds) }
+        #expect(edges(9, 9).isEmpty, "the Back button")
+        #expect(edges(391, 9).isEmpty, "the Open in Cosmos button")
+        #expect(edges(9, 291).isEmpty, "the page's corner")
+        #expect(edges(7, 7) == [.left, .bottom])
     }
 
     @Test func draggingTheRightEdgeWidensThePanelAndLeavesTheRestAlone() {

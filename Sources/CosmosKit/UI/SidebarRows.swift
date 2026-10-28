@@ -130,7 +130,9 @@ struct TodaySection: View {
                 SidebarItemView(store: store, window: window, itemID: item.id, depth: 0, renaming: $renaming, indicator: $indicator)
                     .transition(Motion.row)
             }
-            Color.clear.frame(height: Metrics.Space.xl)
+            // Below the last row is the end of the list: a tab let go there goes last, not to the top.
+            Color.clear.frame(height: Metrics.Space.xl).contentShape(Rectangle())
+                .onDrop(of: SidebarDrop.types, delegate: ContainerDropDelegate(store: store, window: window, rootID: space.unpinnedRootID, atStart: false, indicator: $indicator))
         }
         .animation(Motion.spring, value: rows.map(\.id))
         .onDrop(of: SidebarDrop.types, delegate: ContainerDropDelegate(store: store, window: window, rootID: space.unpinnedRootID, atStart: true, indicator: $indicator))
@@ -293,6 +295,10 @@ struct TabRow: View {
             store.select(item.id, in: window)
             if pinned, Self.isSecondClick(NSApp.currentEvent) { renaming = item.id }
         }
+        // A row is a button to VoiceOver: its title, and whether it is the one showing.
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(store.title(forItem: item.id, in: window))
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
         .onHover { hover = $0 }
         .help(item.tab?.url?.absoluteString ?? "")
         .contextMenu { ItemContextMenu(store: store, window: window, itemID: item.id, renaming: $renaming) }
@@ -477,7 +483,8 @@ struct ItemContextMenu: View {
             Button("Add Split View") { store.select(itemID, in: window); store.addSplit(in: window) }
         }
         Divider()
-        Button("Rename…") { renaming?.wrappedValue = itemID }
+        // A Favorite's tile has no title to edit in place.
+        if let renaming { Button("Rename…") { renaming.wrappedValue = itemID } }
         Button("Duplicate") { store.duplicate(itemID, in: window) }
         if let url = item.tab?.url {
             Button("Copy Link") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(url.absoluteString, forType: .string) }
@@ -553,6 +560,9 @@ struct SpaceButton: View {
         .buttonStyle(PressableStyle(scale: 0.9))
         .onHover { hover = $0 }
         .help(space.title)
+        // VoiceOver reads the space's name, not its icon.
+        .accessibilityLabel(space.title)
+        .accessibilityAddTraits(selected ? .isSelected : [])
         .contextMenu { SpaceMenuItems(store: store, window: window, space: space) }
     }
 }

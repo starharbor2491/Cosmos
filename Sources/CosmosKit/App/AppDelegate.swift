@@ -1,7 +1,8 @@
 import AppKit
 import SwiftUI
-import WebKit
 import CosmosCore
+import CosmosEngine
+import CosmosChromium
 
 /// Command-line / environment switches. Real users never need them; they exist for demos and automated checks.
 struct LaunchOptions {
@@ -10,6 +11,8 @@ struct LaunchOptions {
     /// Never download filter lists (demos and automated runs use the cached or bundled ones).
     var offline = false
     var automationScript: URL?
+    /// A Chromium.app to run as it is, without downloading or updating one.
+    var chromium: URL?
 
     static func parse(_ args: [String], env: [String: String]) -> LaunchOptions {
         var o = LaunchOptions()
@@ -20,6 +23,7 @@ struct LaunchOptions {
             case "--demo": o.demo = true
             case "--offline": o.offline = true
             case "--automation": if i + 1 < args.count { o.automationScript = URL(fileURLWithPath: args[i + 1]); i += 1 }
+            case "--chromium": if i + 1 < args.count { o.chromium = URL(fileURLWithPath: args[i + 1]); i += 1 }
             default: break
             }
             i += 1
@@ -28,7 +32,14 @@ struct LaunchOptions {
         if o.automationScript == nil, let a = env["COSMOS_AUTOMATION"] { o.automationScript = URL(fileURLWithPath: a) }
         if env["COSMOS_DEMO"] == "1" { o.demo = true }
         if env["COSMOS_OFFLINE"] == "1" { o.offline = true }
+        if o.chromium == nil, let c = env["COSMOS_CHROMIUM"] { o.chromium = URL(fileURLWithPath: c) }
         return o
+    }
+
+    /// Where Cosmos keeps the Chromium it runs, shared by every data folder (a demo does not download it again).
+    static var chromiumDirectory: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Cosmos", isDirectory: true).appendingPathComponent("Chromium", isDirectory: true)
     }
 
     var resolvedDataDirectory: URL {
@@ -55,6 +66,7 @@ public func runCosmos() {
 final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     let options: LaunchOptions
     private(set) var store: BrowserStore!
+    private(set) var engine: ChromiumEngine!
     private(set) var controllers: [BrowserWindowController] = []
     private var probes: [ProbeWindowController] = []
     var probeCount: Int { probes.count }
@@ -78,11 +90,25 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
         // Views read this while they are built, so it has to be set before the first window exists.
         SpatialProbe.isRecording = options.automationScript != nil
         NSApp.applicationIconImage = AppIcon.image
-        store = BrowserStore(directory: options.resolvedDataDirectory)
+        engine = ChromiumEngine(supportDirectory: LaunchOptions.chromiumDirectory, application: options.chromium, offline: options.offline)
+        store = BrowserStore(directory: options.resolvedDataDirectory, engine: engine)
+        engine.settings = store.settings.engine
+        var wasReady = engine.status.isReady
+        engine.onStatusChange = { [weak self] in
+            guard let self else { return }
+            let status = self.engine.status
+            for s in self.allStores { s.engineStatus = status }
+            // Pages asked for while there was no Chromium (the first download failed, then a retry worked) never got
+            // one: they are made again now.
+            if status.isReady, !wasReady { for s in self.allStores { s.engineBecameReady() } }
+            wasReady = status.isReady
+        }
+        engine.start()
+        store.engineStatus = engine.status
         store.favicons.offline = options.offline
         wire(store)
         if let dir = store.dataDirectory {
-            let extensions = ExtensionCenter(store: store, directory: dir, persistentStorage: !options.demo)
+            let extensions = ExtensionCenter(store: store, directory: dir)
             store.extensionCenter = extensions
             extensions.start()
             let blocker = ContentBlockerController(store: store, directory: dir, offline: options.offline || options.demo)
@@ -117,7 +143,15 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
         store.saveNow()
         store.isTerminating = true
         for c in controllers { c.store.isTerminating = true }
+        engine.shutdown()
         return .terminateNow
+    }
+
+    /// The main store and every incognito window's own.
+    private var allStores: [BrowserStore] {
+        var out: [BrowserStore] = store.map { [$0] } ?? []
+        for c in controllers where !out.contains(where: { $0 === c.store }) { out.append(c.store) }
+        return out
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
@@ -180,8 +214,16 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
             guard let self, let store else { return }
             self.openProbe(url, store: store)
         }
-        store.onPopupWindow = { runtime, features, bringForward in
-            PopupWindows.present(runtime, features: WKWindowFeaturesBox(features), bringForward: bringForward)
+        store.onPopupWindow = { runtime, request, bringForward in
+            PopupWindows.present(runtime, request: request, bringForward: bringForward)
+        }
+        store.onRetryEngine = { [weak self] in
+            guard let engine = self?.engine else { return }
+            Task { await engine.checkForUpdate(force: true) }
+        }
+        store.onEngineSettingsChanged = { [weak self, weak store] in
+            guard let self, let store, store === self.store else { return }
+            self.engine.settings = store.settings.engine
         }
         store.downloads.onEvent = { [weak self, weak store] item in
             guard let self, let store else { return }
@@ -200,7 +242,12 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
         let st = target ?? store!
         let controller = BrowserWindowController(store: st, state: state, cascadeFrom: controllers.last?.window)
         controllers.append(controller)
-        controller.onClose = { [weak self] c in self?.controllers.removeAll { $0 === c } }
+        controller.onClose = { [weak self] c in
+            guard let self else { return }
+            self.controllers.removeAll { $0 === c }
+            // The last window of an incognito store takes its pages and its engine profile (and with it every cookie) along.
+            if c.store.isIncognito, !self.controllers.contains(where: { $0.store === c.store }) { c.store.closeEnvironments() }
+        }
         controller.showWindow(nil)
         if restoreSelection, let sel = state.selection[state.focusedSpaceID], st.workspace.item(sel) != nil {
             st.select(sel, in: state)
@@ -209,7 +256,8 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
     }
 
     func newWindow() {
-        let space = active?.state.focusedSpaceID ?? store.workspace.spaces[0].id
+        // The space of the window in front, unless that is a private window (its spaces are not this store's).
+        let space = active.flatMap { store.workspace.space($0.state.focusedSpaceID)?.id } ?? store.workspace.spaces[0].id
         let state = WindowState(focusedSpaceID: space, sidebarWidth: store.settings.sidebarWidth)
         let c = openWindow(state: state)
         state.overlay = .commandBar(.newTab)
@@ -250,14 +298,17 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
 
     /// Shows `overlay` in the browser window the user last used, opening one if there is none, and brings it forward.
     func present(_ overlay: Overlay) {
-        if active == nil { newWindow() }
-        guard let c = active ?? controllers.first else { return }
+        // In one of the browser's own windows, never a private one in front of it (it would act on a store that keeps nothing).
+        func own() -> BrowserWindowController? { active.flatMap { $0.store === store ? $0 : nil } ?? controllers.last { $0.store === store } }
+        if own() == nil { newWindow() }
+        guard let c = own() else { return }
         c.state.overlay = overlay
         c.window?.makeKeyAndOrderFront(nil)
     }
 
     func newIncognitoWindow() {
-        let incognito = BrowserStore(directory: nil, incognito: true)
+        let incognito = BrowserStore(directory: nil, incognito: true, engine: engine)
+        incognito.engineStatus = engine.status
         wire(incognito)
         incognito.favicons.offline = store.favicons.offline
         incognito.inheritPreferences(from: store)
@@ -318,20 +369,15 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
     func openExternal(_ url: URL) {
         let scheme = url.scheme?.lowercased() ?? ""
         guard ["http", "https", "file"].contains(scheme) else { return }
-        guard let controller = active ?? controllers.first else {
-            newWindow()
-            if let c = active { open(url, in: c) }
-            return
-        }
-        if scheme == "file" { open(url, in: controller); return }
-        switch store.linkRouting.destination(for: url) {
-        case .probe: openProbe(url, store: store)
-        case .mostRecentSpace: open(url, in: controller)
-        case .space(let id):
-            guard store.workspace.space(id) != nil else { open(url, in: controller); return }
-            store.switchSpace(to: id, in: controller.state)
-            open(url, in: controller)
-        }
+        // A link from another app follows the link rules whether or not a window is open, and goes to one of the browser's
+        // own windows, never to a private one that happens to be in front.
+        let destination: LinkDestination = scheme == "file" ? .mostRecentSpace : store.linkRouting.destination(for: url)
+        if case .probe = destination { openProbe(url, store: store); return }
+        func own() -> BrowserWindowController? { active.flatMap { $0.store === store ? $0 : nil } ?? controllers.last { $0.store === store } }
+        if own() == nil { newWindow() }
+        guard let controller = own() else { return }
+        if case .space(let id) = destination, store.workspace.space(id) != nil { store.switchSpace(to: id, in: controller.state) }
+        open(url, in: controller)
     }
 
     private func open(_ url: URL, in c: BrowserWindowController) {

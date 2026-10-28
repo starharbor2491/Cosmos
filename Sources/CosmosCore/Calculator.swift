@@ -12,6 +12,12 @@ public enum Calculator {
             let parts = text[r].components(separatedBy: CharacterSet(charactersIn: "% ")).filter { !$0.isEmpty && $0 != "of" }
             if parts.count == 2, let a = Double(parts[0]), let b = Double(parts[1]) { return a / 100 * b }
         }
+        // A date or a number written with dashes or slashes (2024-10-25, 10/28/2024, 1-800-555-0199) is not a sum.
+        if text.range(of: #"^\d+([-/.])\d+(\1\d+)+$"#, options: .regularExpression) != nil { return nil }
+        // A comma only groups thousands (1,000); a decimal comma or a list is not guessed at.
+        if text.contains(","), text.replacingOccurrences(of: #"(?<![0-9])\d{1,3}(,\d{3})+(?![0-9])"#, with: "0", options: .regularExpression).contains(",") {
+            return nil
+        }
         text = text.replacingOccurrences(of: "×", with: "*").replacingOccurrences(of: "÷", with: "/")
             .replacingOccurrences(of: "x", with: "*").replacingOccurrences(of: ",", with: "")
         // Must contain at least one digit and one operator/function, and only calculator characters.
@@ -51,10 +57,10 @@ public enum Calculator {
         }
 
         mutating func parseTerm() -> Double? {
-            guard var v = parsePower() else { return nil }
+            guard var v = parseUnary() else { return nil }
             while i < chars.count, chars[i] == "*" || chars[i] == "/" || chars[i] == "%" {
                 let op = chars[i]; i += 1
-                guard let r = parsePower() else { return nil }
+                guard let r = parseUnary() else { return nil }
                 switch op {
                 case "*": v *= r
                 case "/": guard r != 0 else { return nil }; v /= r
@@ -64,11 +70,12 @@ public enum Calculator {
             return v
         }
 
+        /// The power binds before a sign in front of it (-2^2 is -4); its exponent may have a sign of its own (2^-1).
         mutating func parsePower() -> Double? {
-            guard let base = parseUnary() else { return nil }
+            guard let base = parsePrimary() else { return nil }
             if i < chars.count, chars[i] == "^" {
                 i += 1
-                guard let e = parsePower() else { return nil }
+                guard let e = parseUnary() else { return nil }
                 return pow(base, e)
             }
             return base
@@ -77,7 +84,7 @@ public enum Calculator {
         mutating func parseUnary() -> Double? {
             if i < chars.count, chars[i] == "-" { i += 1; return parseUnary().map { -$0 } }
             if i < chars.count, chars[i] == "+" { i += 1; return parseUnary() }
-            return parsePrimary()
+            return parsePower()
         }
 
         mutating func parsePrimary() -> Double? {

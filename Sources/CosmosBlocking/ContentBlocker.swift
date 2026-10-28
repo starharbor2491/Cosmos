@@ -10,15 +10,15 @@ public struct CompileResult: Sendable {
     public var reports: [String: CompileReport]
 }
 
-/// Entry point of the content-blocking engine: filter list text in, WebKit content-rule-list JSON out.
+/// Entry point of the content-blocking engine: filter list text in, Chromium `declarativeNetRequest` rulesets and
+/// element-hiding data out.
 ///
-/// Every input list compiles on its own. WebKit applies `ignore-previous-rules` only within one list, so exceptions,
-/// `$badfilter` and `$generichide` entries affect the list that contains them.
+/// Every input list compiles on its own, so `$badfilter` and `$generichide` entries affect the list that contains them.
 public enum ContentBlocker {
     /// Bump when the compiler's output for the same input changes; it is part of the compiled-list cache key.
-    public static let compilerVersion = 3
+    public static let compilerVersion = 4
 
-    public static func compile(lists: [(name: String, text: String)], options: ContentRuleCompiler.Options = .init()) -> CompileResult {
+    public static func compile(lists: [(name: String, text: String)], options: DNRCompiler.Options = .init()) -> CompileResult {
         var all: [CompiledRuleList] = []
         var total = CompileReport()
         var perList: [String: CompileReport] = [:]
@@ -32,15 +32,16 @@ public enum ContentBlocker {
     }
 
     /// Compiles a single list. Output lists are named `<name>.network.<n>` and `<name>.cosmetic.<n>` (n from 1).
-    public static func compile(name: String, text: String, options: ContentRuleCompiler.Options = .init()) -> (lists: [CompiledRuleList], report: CompileReport) {
+    public static func compile(name: String, text: String, options: DNRCompiler.Options = .init()) -> (lists: [CompiledRuleList], report: CompileReport) {
         let parsed = FilterParser.parse(text)
-        let output = ContentRuleCompiler(options: options).compile(parsed)
+        let output = DNRCompiler(options: options).compile(parsed)
         var lists: [CompiledRuleList] = []
         for (i, rules) in output.networkLists.enumerated() {
             lists.append(CompiledRuleList(name: "\(name).network.\(i + 1)", json: assemble(rules), ruleCount: rules.count, kind: .network))
         }
-        for (i, rules) in output.cosmeticLists.enumerated() {
-            lists.append(CompiledRuleList(name: "\(name).cosmetic.\(i + 1)", json: assemble(rules), ruleCount: rules.count, kind: .cosmetic))
+        if !output.cosmetic.isEmpty, let data = try? JSONEncoder.sorted.encode(output.cosmetic) {
+            let count = output.cosmetic.generic.count + output.cosmetic.specific.values.reduce(0) { $0 + $1.count }
+            lists.append(CompiledRuleList(name: "\(name).cosmetic.1", json: String(decoding: data, as: UTF8.self), ruleCount: count, kind: .cosmetic))
         }
         return (lists, output.report)
     }
@@ -54,5 +55,14 @@ public enum ContentBlocker {
         guard let url = Bundle.module.url(forResource: "fallback-rules", withExtension: "txt"),
               let text = try? String(contentsOf: url, encoding: .utf8) else { return "" }
         return text
+    }
+}
+
+
+extension JSONEncoder {
+    static var sorted: JSONEncoder {
+        let e = JSONEncoder()
+        e.outputFormatting = [.sortedKeys]
+        return e
     }
 }

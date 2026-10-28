@@ -1,10 +1,10 @@
 # Cosmos
 
-A space-themed web browser for macOS, made for people leaving Arc. It keeps the parts of Arc that were hard to give up (a vertical sidebar of **spaces**, Favorites, pinned tabs and a Today list that tidies itself, the **Command Bar**, **Peek**, split view, **Boosts**) and gives each space its own gradient sky. It runs on WebKit, so it is small and light on battery. It imports your Arc sidebar, history, bookmarks and extensions.
+A space-themed web browser for macOS, made for people leaving Arc. It keeps the parts of Arc that were hard to give up (a vertical sidebar of **spaces**, Favorites, pinned tabs and a Today list that tidies itself, the **Command Bar**, **Peek**, split view, **Boosts**) and gives each space its own gradient sky. Underneath it runs regular Chromium, which it downloads and keeps up to date by itself, so sites and Chrome extensions behave as in Chrome. It imports your Arc sidebar, history, bookmarks and extensions.
 
 Arc stops working on 22 December 2026. [`arc-teardown/`](arc-teardown/) is the study of how Arc works that Cosmos was built from.
 
-> **Status.** Cosmos 1.0 is a complete, working browser that has been built and checked end to end on one Mac (macOS 27). It is not notarized, has had no users but its author, and has gaps listed under [What is not here](#what-is-not-here). Read that before you trust it with your only browser.
+> **Status.** Cosmos 1.0 and 1.1 were built and checked end to end on WebKit, on one Mac (macOS 27). The move to Chromium that this README describes is checked by the test suite, including tests that drive a real headless Chromium (pages, the page agent, Boosts, blocking, extensions), but it has **not yet been used in the running app**. The 1.1.1 download on the Releases page is the WebKit version. Cosmos is not notarized, has had no users but its author, and has gaps listed under [What is not here](#what-is-not-here). Read that before you trust it with your only browser.
 
 ## What you get
 
@@ -16,16 +16,17 @@ Arc stops working on 22 December 2026. [`arc-teardown/`](arc-teardown/) is the s
 - **Peek** (⇧-click a link) and **Probe** (⌥⌘N, Arc's Little Arc): a quick look at a page without opening a tab, in a floating window that can become a tab.
 - **Split view** (⌃⇧=): up to four pages side by side.
 - **Boosts.** Per-site colour filters, fonts, zoom, hidden elements (click to zap), your own CSS and JavaScript.
-- **Ad, tracker and cookie-banner blocking** with EasyList, EasyPrivacy and the Fanboy cookie list (downloaded, not bundled), compiled to WebKit content rules. One switch per site in Site Controls.
-- **Extensions** from Arc, Chrome, Brave, Edge and others, or by Chrome Web Store link, run with WebKit's extension engine (macOS 15.4+). See [docs/extensions.md](docs/extensions.md).
-- **Radial menu.** Right-click a link, an image, some text or a text field and a ring of that thing's actions opens around the pointer: flick toward a slice, or click one. It is built from the items WebKit's own right-click menu has, so none of those is lost (the ones you do not place wait under More); the extras macOS adds when it draws the menu, such as Services, are in the system menu, which ⌥-click opens. Choose what is on each ring and the order in Settings, switch it off for sites where you want the system menu (also from Site Controls), and hold ⌥ for the system menu at any time. A page that draws its own right-click menu keeps it, and Probe windows and the menu-bar browser always use the system menu.
+- **Ad, tracker and cookie-banner blocking** with EasyList, EasyPrivacy and the Fanboy cookie list (downloaded, not bundled), compiled to Chromium's own `declarativeNetRequest` rules. One switch per site in Site Controls.
+- **Extensions** from Arc, Chrome, Brave, Edge and others, or by Chrome Web Store link, run in Chromium with Chrome's own extension APIs; Cosmos draws their buttons, popups, menu items and shortcuts. See [docs/extensions.md](docs/extensions.md).
+- **Radial menu.** Right-click a link, an image, some text or a text field and a ring of that thing's actions opens around the pointer: flick toward a slice, or click one. It holds the same items as the ordinary right-click menu, extensions' items included (the ones you do not place wait under More), and ⌥-click opens the ordinary menu. Choose what is on each ring and the order in Settings, switch it off for sites where you want the system menu (also from Site Controls), and hold ⌥ for the system menu at any time. A page that draws its own right-click menu keeps it, and Probe windows and the menu-bar browser always use the system menu.
 - **Menu-bar browser.** Turn it on in Settings ▸ Menu Bar and a Cosmos icon appears in the menu bar. Click it for a small browser under the icon, phone-sized or desktop-sized, for a quick look at something without finding a window. Its controls (back, forward, reload, address, pin, open in Cosmos) are one compact row along the bottom, and you can resize the panel by dragging any edge or corner (the strip around the page); the size is kept for that layout until you reset it in Settings, and the panel always hangs from the icon. It uses the same cookies and logins as the profile you pick (so you are signed in wherever the browser is), the same blocking and Boosts, and its pages go into your history. Click away to put it down, or pin it to keep it over other windows. It opens on the page you left, or on a start page you choose.
 - **Link routing.** Links from other apps open in a Probe window, your current space, or a space chosen by site.
-- **Everything else you expect.** Downloads, history, find in page, Picture in Picture (also automatic when you leave a playing video), page zoom, incognito windows, a "Set as default browser" button, site permissions for camera and microphone that are remembered per site, and a memory saver that puts idle tabs to sleep.
+- **Everything else you expect.** Downloads, history, find in page, page zoom, incognito windows, a "Set as default browser" button, and a memory saver that puts idle tabs to sleep.
+- **One set of settings.** Chromium's own settings (cookies, site permission defaults, secure DNS, fonts, languages and the rest) are in Cosmos's Settings ▸ Engine, which writes them into Chromium; there is no second settings screen. The same pane shows the Chromium version and checks for a newer one once a day.
 
 ## Install
 
-Cosmos needs macOS 14 or later (extensions need 15.4) and the Swift command line tools (`xcode-select --install`). Full Xcode is not needed.
+Cosmos needs macOS 14 or later and the Swift command line tools (`xcode-select --install`). Full Xcode is not needed. On first launch it downloads Chromium (about 185 MB, 380 MB unpacked) from Google's public snapshot builds.
 
 ```bash
 git clone <this repository> && cd Cosmos
@@ -60,13 +61,13 @@ The longer list, with every shortcut, is in [docs/arc-to-cosmos.md](docs/arc-to-
 
 Cosmos is a browser, not a clone of everything Arc shipped.
 
-- **No sync between devices and no account.** Your tabs and settings are a few files on your Mac (listed below); the cookies and site data that WebKit keeps for each profile are in WebKit's own folders.
+- **No sync between devices and no account.** Your tabs and settings are a few files on your Mac (listed below), and each profile's cookies and site data are in its Chromium folder next to them.
 - **None of Arc's AI features** (Ask on page, summaries, Tidy Tabs by AI, AI renaming), and no Easels, Notes, Live Folders or calendar and mail previews.
 - **Arc's Boosts cannot be imported.** In the Arc profile used to build this, Boost definitions are not stored on disk (only an image cache), so Cosmos cannot read them. Recreate a Boost in about a minute from Site Controls.
-- **WebKit, not Chromium.** Sites behave as in Safari. Chromium-only web features are missing. Extensions that rely on Chrome-only APIs (history, bookmarks, downloads, notifications, sign-in through Chrome) will load but those parts will not work. The Add prompt warns when it sees this.
-- **Ad blocking is Safari-style.** WebKit content rules cannot do everything uBlock Origin does (no scriptlets, no `:has-text`, regex filters with alternation, and so on). About 99.9% of EasyList's network filters compile. [docs/ad-blocking.md](docs/ad-blocking.md) has the numbers and the gaps. For more, add uBlock Origin Lite as an extension.
+- **Chromium runs headless underneath, and some of what Chrome shows in its own windows has no Cosmos counterpart yet:** permission prompts (a site that asks for the camera, microphone, location or notifications gets no prompt; the defaults are in Settings ▸ Engine), Picture in Picture, DevTools, HTTP sign-in dialogs (basic auth), Safe Browsing, and extensions' side panels, notifications and Google sign-in. Dragging files onto a page does not work yet, VoiceOver cannot read page content, and the page agent and Boosts do not reach frames from other sites that Chromium runs in their own process.
+- **Ad blocking is Manifest V3-style.** `declarativeNetRequest` rules cannot do everything uBlock Origin does (no scriptlets, no `:has-text`, no `$redirect`, no `$popup`). About 97% of EasyList and EasyPrivacy's network filters compile. [docs/ad-blocking.md](docs/ad-blocking.md) has the numbers and the gaps. For more, add uBlock Origin Lite as an extension.
 - **Not verified:** anything that needs a person at the trackpad. The sidebar drag gesture, the haptic taps, the two-finger space swipe, Force Touch Peek and how the animations feel are built and unit tested (state machines, payloads, the model operations) but were never exercised on screen, because nothing here records the screen. Also not checked by eye: the exact alignment of the window buttons, JavaScript dialogs, OAuth sign-in popups, and anything on macOS 14 or 15 (all testing was on macOS 27).
-- **Not notarized**, so macOS asks you to confirm the first launch. Updates are manual: pull and run the build script again.
+- **Not notarized**, so macOS asks you to confirm the first launch. Updates to Cosmos itself are manual: pull and run the build script again. Chromium updates itself.
 
 ## Where your data lives
 
@@ -85,26 +86,30 @@ Cosmos is a browser, not a clone of everything Arc shipped.
 | `Favicons/` | the logos of sites in your sidebar; ones not renewed for 90 days are deleted |
 | `Backups/` | dated copies of the JSON files, kept automatically; Clear History and removing something from the Archive rewrite the files they change and delete the older copies, which would still list it |
 
-That folder holds Cosmos's own files. Cookies, local storage and the page cache are kept by WebKit, one store per profile, under `~/Library/WebKit/` and `~/Library/Caches/` (in a folder named after the app's bundle id), and downloads go to `~/Downloads`. Incognito windows keep their cookies and site data in memory only.
+Cookies, local storage and the page cache are kept by Chromium, one folder per profile, in `Engine Profiles/` there, and downloads go to `~/Downloads`. Incognito windows use a throwaway Chromium folder that is deleted when they close. Chromium itself is in `~/Library/Application Support/Cosmos/Chromium/` (the current snapshot and the one before).
 
-Nothing leaves your Mac except what you browse, the filter lists Cosmos downloads, the logos of sites that have a tab in your sidebar (fetched from the site itself, asking only for its home page and icon, never the page you were on), search suggestions (switch off in Settings) and Chrome Web Store downloads you ask for. There is no telemetry. Clear History (Settings ▸ Privacy, or Clear… in the Library's History section, which asks first) removes the visited pages, what the Command Bar learned from them, the saved site icons, the page the menu bar browser was on and the dated copies of the files those were in (the sidebar's own file and copies still list a page that is open in a tab); closed tabs in the Archive stay until you clear the Archive, and cookies, site data and the page cache are cleared separately (Settings ▸ Privacy ▸ Clear Site Data).
+Nothing leaves your Mac except what you browse, Chromium snapshots and the daily check for a newer one (from Google's storage), the filter lists Cosmos downloads, the logos of sites that have a tab in your sidebar (fetched from the site itself, asking only for its home page and icon, never the page you were on), search suggestions (switch off in Settings) and Chrome Web Store downloads you ask for. There is no telemetry. Clear History (Settings ▸ Privacy, or Clear… in the Library's History section, which asks first) removes the visited pages, what the Command Bar learned from them, the saved site icons, the page the menu bar browser was on and the dated copies of the files those were in (the sidebar's own file and copies still list a page that is open in a tab); closed tabs in the Archive stay until you clear the Archive, and cookies, site data and the page cache are cleared separately (Settings ▸ Privacy ▸ Clear Site Data).
 
 ## For developers
 
 [docs/architecture.md](docs/architecture.md) explains the modules and how a tab, a space and a window fit together. [docs/development.md](docs/development.md) covers building, the tests (`scripts/test.sh`), the self-snapshot automation harness (how the UI was checked without screen recording) and the quirks of building with only the Command Line Tools.
 
 ```
-Sources/CosmosCore       model, storage, search ranking (no UI, no WebKit)
+Sources/CosmosCore       model, storage, search ranking (no UI, no engine)
 Sources/CosmosImport     Arc, Chromium, Firefox and Safari importers; extension discovery
-Sources/CosmosBlocking   filter list parser and WebKit rule compiler
-Sources/CosmosKit        the browser: AppKit, SwiftUI, WKWebView
+Sources/CosmosBlocking   filter list parser and declarativeNetRequest compiler
+Sources/CosmosEngine     what an engine provides: the protocols the browser talks to
+Sources/CosmosChromium   the engine: regular Chromium, headless, over the DevTools protocol
+Sources/CosmosKit        the browser: AppKit and SwiftUI
 Sources/Cosmos           the app (a few lines)
 Sources/CosmosCLI        cosmos-cli: import and inspect from the terminal
 ```
 
 ## Credits and licenses
 
-Cosmos is MIT licensed ([LICENSE](LICENSE)). It uses only Apple frameworks; there are no third-party code dependencies.
+Cosmos is MIT licensed ([LICENSE](LICENSE)). Its own code uses only Apple frameworks; there are no third-party code dependencies.
+
+- **Chromium** (BSD-style license and the licenses of its components, <https://www.chromium.org>) is not included: Cosmos downloads Google's unmodified snapshot builds to your Mac at first launch and runs them as they are.
 
 - The registrable-domain logic uses the **Public Suffix List** (<https://publicsuffix.org>, MPL 2.0), bundled with its comments removed in `Sources/CosmosCore/Resources/public_suffix_rules.txt`.
 - **Filter lists are not included.** Cosmos downloads EasyList and EasyPrivacy (GPLv3+ / CC BY-SA 3.0, easylist.to), the Fanboy cookie list (CC BY 3.0) and, if you turn them on, uBlock Origin's lists (GPLv3) from their publishers. Settings ▸ Blocking shows each list's license.

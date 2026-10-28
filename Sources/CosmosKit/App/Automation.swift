@@ -1,5 +1,4 @@
 import AppKit
-import WebKit
 import CosmosCore
 
 /// Drives the running app from a JSON script (`--automation script.json` or `COSMOS_AUTOMATION`), so the UI can be
@@ -88,6 +87,20 @@ final class Automation {
             if let text = step["text"] as? String, let tv = controller?.window?.firstResponder as? NSTextView {
                 tv.insertText(text, replacementRange: tv.selectedRange)
             } else { note("  type: no text view has focus") }
+        case "typePage":
+            // Key presses for each character, sent through the application to whatever has the keyboard (the page).
+            if let text = step["text"] as? String, let window = controller?.window {
+                for ch in text {
+                    for type in [NSEvent.EventType.keyDown, .keyUp] {
+                        if let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                        windowNumber: window.windowNumber, context: nil, characters: String(ch),
+                                                        charactersIgnoringModifiers: String(ch), isARepeat: false, keyCode: 0) {
+                            NSApp.sendEvent(event)
+                        }
+                    }
+                    await sleep(0.03)
+                }
+            }
         case "key":
             if let name = step["name"] as? String, let tv = controller?.window?.firstResponder as? NSTextView {
                 let sel: Selector? = ["return": #selector(NSResponder.insertNewline(_:)), "tab": #selector(NSResponder.insertTab(_:)),
@@ -130,7 +143,7 @@ final class Automation {
             }
         case "rightClick":
             // A right click at (x, y) in the page, measured from its top-left, as if the pointer were there.
-            if let s = store, let st = state, let web = s.currentRuntime(in: st)?.webView, let window = web.window {
+            if let s = store, let st = state, let web = s.currentRuntime(in: st)?.view, let window = web.window {
                 let x = step["x"] as? Double ?? 0, y = step["y"] as? Double ?? 0
                 let local = NSPoint(x: x, y: web.isFlipped ? y : web.bounds.height - y)
                 let point = web.convert(local, to: nil)
@@ -153,7 +166,8 @@ final class Automation {
                 let count = step["double"] as? Bool == true ? 2 : 1
                 if !window.isKeyWindow { NSApp.activate(ignoringOtherApps: true); window.makeKeyAndOrderFront(nil); await sleep(0.3) }
                 for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-                    if let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                    let flags = NSEvent.ModifierFlags(rawValue: UInt(step["flags"] as? Int ?? 0))
+                    if let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
                                                       windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: count, pressure: type == .leftMouseDown ? 1 : 0) {
                         NSApp.sendEvent(event)
                     }
@@ -209,10 +223,8 @@ final class Automation {
             }
         case "eval":
             if let js = step["js"] as? String, let s = store, let st = state, let rt = s.currentRuntime(in: st) {
-                let result: String = await withCheckedContinuation { cont in
-                    rt.webView.evaluateJavaScript(js) { r, e in cont.resume(returning: e.map { "error: \($0.localizedDescription)" } ?? "\(r ?? "nil")") }
-                }
-                note("  eval → \(result.prefix(600))")
+                let result = await rt.evaluate(returning: js)
+                note("  eval → \(String(describing: result ?? "nil").prefix(600))")
             }
         case "state":
             if let s = store, let st = state {
@@ -403,29 +415,7 @@ final class Automation {
         guard let window = target, let content = window.contentView else {
             note("  snapshot: no window"); return
         }
-        var webViews: [WKWebView] = []
-        func collect(_ v: NSView) {
-            if let w = v as? WKWebView, !w.isHidden, w.window != nil { webViews.append(w) }
-            v.subviews.forEach(collect)
-        }
-        collect(content)
-
-        var swaps: [(WKWebView, NSImageView)] = []
-        for w in webViews {
-            let snap: NSImage? = await withCheckedContinuation { cont in
-                w.takeSnapshot(with: WKSnapshotConfiguration()) { img, _ in cont.resume(returning: img) }
-            }
-            guard let snap, let parent = w.superview else { continue }
-            let iv = NSImageView(frame: w.frame)
-            iv.image = snap
-            iv.imageScaling = .scaleAxesIndependently
-            iv.autoresizingMask = w.autoresizingMask
-            parent.addSubview(iv, positioned: .above, relativeTo: w)
-            w.isHidden = true
-            swaps.append((w, iv))
-        }
-        defer { for (w, iv) in swaps { iv.removeFromSuperview(); w.isHidden = false } }
-
+        // Pages are pictures the engine sends, which the page views draw themselves, so they are in the picture as they are.
         content.layoutSubtreeIfNeeded()
         let bounds = content.bounds
         guard let rep = content.bitmapImageRepForCachingDisplay(in: bounds) else { note("  snapshot: no bitmap"); return }
@@ -434,7 +424,7 @@ final class Automation {
         do {
             try FileManager.default.createDirectory(at: URL(fileURLWithPath: path).deletingLastPathComponent(), withIntermediateDirectories: true)
             try png.write(to: URL(fileURLWithPath: path))
-            note("  snapshot → \(path) (\(rep.pixelsWide)×\(rep.pixelsHigh), \(swaps.count) web views)")
+            note("  snapshot → \(path) (\(rep.pixelsWide)×\(rep.pixelsHigh))")
         } catch {
             note("  snapshot: \(error.localizedDescription)")
         }

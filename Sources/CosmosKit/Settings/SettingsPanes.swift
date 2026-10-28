@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import WebKit
 import CosmosCore
 
 // MARK: - General
@@ -180,9 +179,8 @@ struct PrivacyPane: View {
             let ok = await model.confirm(.init(title: "Clear cookies and site data?", message: "You'll be signed out of websites in every profile. This can't be undone.",
                                                confirmTitle: "Clear Site Data", destructive: true))
             guard ok else { return }
-            let types = WKWebsiteDataStore.allWebsiteDataTypes()
             for profile in store.workspace.profiles {
-                await store.environment(forProfile: profile.id).dataStore.removeData(ofTypes: types, modifiedSince: .distantPast)
+                await store.environment(forProfile: profile.id).engineProfile.clearSiteData()
             }
             announce("Cookies and site data cleared.")
         }
@@ -295,7 +293,7 @@ struct AboutPane: View {
             Text("Cosmos").font(.system(size: 30, weight: .bold, design: .rounded)).foregroundStyle(palette.text)
             Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0")")
                 .font(.system(size: 13, weight: .medium)).foregroundStyle(palette.secondary)
-            Text("A space-themed browser for people who miss Arc.\nBuilt on WebKit.")
+            Text("A space-themed browser for people who miss Arc.\nBuilt on Chromium.")
                 .font(.system(size: 13.5)).multilineTextAlignment(.center).foregroundStyle(palette.secondary)
                 .padding(.bottom, Metrics.Space.s)
             HStack(spacing: Metrics.Space.m) {

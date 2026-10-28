@@ -11,7 +11,6 @@ extension BrowserStore {
         rt.adopt(itemID: id)
         runtimes[RuntimeKey(item: id, profile: profileID(forItem: id, in: window))] = rt
         runtimeRevision += 1
-        extensionCenter?.tabOpened(rt)
         select(id, in: window)
         return id
     }

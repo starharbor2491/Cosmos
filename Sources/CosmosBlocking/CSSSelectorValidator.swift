@@ -1,8 +1,8 @@
 import Foundation
 
-/// A strict CSS selector checker mirroring what WebKit accepts in a `css-display-none` action.
+/// A strict CSS selector checker for element-hiding rules.
 ///
-/// WebKit silently drops a whole rule when any selector in its comma-separated list fails to parse, so a rule
+/// A browser drops a whole style rule when any selector in its comma-separated list fails to parse, so a rule
 /// built from many selectors must contain only ones that are valid. This accepts the CSS used by real filter lists
 /// (type/class/id/attribute selectors, combinators, `:not`/`:is`/`:where`/`:has`, structural pseudo-classes) and
 /// rejects everything else, including the procedural extensions of uBlock Origin / AdGuard / ABP.
@@ -261,8 +261,15 @@ public enum CSSSelectorValidator {
             return String(decoding: s[start..<i], as: UTF8.self).lowercased()
         }
 
+        /// How many functional pseudo-classes deep the parser is: real selectors nest a few, and one nested thousands deep
+        /// would run the recursion out of stack.
+        var nesting = 0
+
         /// Consumes arguments and the closing parenthesis.
         mutating func parseFunctionalArguments(_ name: String) -> Bool {
+            guard nesting < 32 else { return false }
+            nesting += 1
+            defer { nesting -= 1 }
             if CSSSelectorValidator.selectorListPseudoClasses.contains(name) {
                 guard parseList(relative: false) else { return false }
                 return closeParen()

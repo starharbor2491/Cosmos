@@ -1,13 +1,13 @@
 import Foundation
 import Testing
-import WebKit
+import CosmosEngine
 @testable import CosmosKit
 @testable import CosmosCore
 
 @MainActor
 @Suite struct ResourceMonitorTests {
-    private func usage(_ id: UUID = UUID(), pid: Int32? = nil, bytes: UInt64? = nil, cpu: Double? = nil) -> ResourceMonitor.TabUsage {
-        .init(id: id, title: "", url: nil, pid: pid, footprint: bytes, cpu: cpu, inUse: false)
+    private func usage(_ id: UUID = UUID(), bytes: UInt64? = nil, cpu: Double? = nil) -> ResourceMonitor.TabUsage {
+        .init(id: id, title: "", url: nil, footprint: bytes, cpu: cpu, inUse: false)
     }
 
     @Test func theBiggestPageComesFirstAndOneWithNoFiguresLast() {
@@ -22,11 +22,15 @@ import WebKit
         #expect(ResourceMonitor.ordered([b, c, a]).map(\.id) == first)
     }
 
-    @Test func tabsSharingOneProcessAreCountedOnce() {
+    /// Cosmos costs the app plus the engine's processes, each once. A tab's figure is a share of those, not added again.
+    @Test func theAppAndEachEngineProcessAreCountedOnce() {
         var snap = ResourceMonitor.Snapshot()
         snap.app = ProcessUsage(pid: 1, footprint: 100, cpuSeconds: 0)
         snap.appCPU = 1
-        snap.tabs = [usage(pid: 7, bytes: 400, cpu: 10), usage(pid: 7, bytes: 400, cpu: 10), usage(pid: 8, bytes: 50, cpu: 5), usage()]
+        snap.engine = [ProcessUsage(pid: 7, footprint: 400, cpuSeconds: 0), ProcessUsage(pid: 7, footprint: 400, cpuSeconds: 0),
+                       ProcessUsage(pid: 8, footprint: 50, cpuSeconds: 0)]
+        snap.engineCPU = 15
+        snap.tabs = [usage(bytes: 400, cpu: 10), usage(bytes: 50, cpu: 5), usage()]
         #expect(snap.cosmosFootprint == 550)
         #expect(snap.cosmosCPU == 16)
     }
@@ -35,12 +39,6 @@ import WebKit
         let snap = ResourceMonitor.Snapshot()
         #expect(snap.cosmosFootprint == 0)
         #expect(snap.cosmosCPU == nil)
-    }
-
-    /// A tab that is still loading cannot be put to sleep, so the tests wait for their blank pages to be done.
-    private func waitUntilLoaded(_ rig: Rig) async throws {
-        let deadline = Date().addingTimeInterval(20)
-        while rig.store.runtimes.values.contains(where: \.isLoading), Date() < deadline { try await Task.sleep(for: .milliseconds(25)) }
     }
 
     @Test func theMonitorSeesTheAppAndEveryAwakeTab() {
@@ -81,7 +79,6 @@ import WebKit
         let rig = Rig()
         let a = try #require(rig.store.newTab(url: URL(string: "about:blank?a"), in: rig.window))
         let b = try #require(rig.store.newTab(url: URL(string: "about:blank?b"), in: rig.window))
-        try await waitUntilLoaded(rig)
         rig.store.resources.refresh(from: rig.store)
         let tabs = rig.store.resources.snapshot.tabs
         #expect(tabs.first { $0.id == b }?.inUse == true)
@@ -93,23 +90,30 @@ import WebKit
         _ = rig.store.newTab(url: URL(string: "about:blank?a"), in: rig.window)
         _ = rig.store.newTab(url: URL(string: "about:blank?b"), in: rig.window)
         let shown = try #require(rig.store.newTab(url: URL(string: "about:blank?c"), in: rig.window))
-        try await waitUntilLoaded(rig)
         #expect(rig.store.sleepBackgroundTabs() == 2)
         #expect(rig.store.runtimes.keys.map(\.item) == [shown])
         #expect(rig.store.sleepBackgroundTabs() == 0)
     }
 
-    /// The page process's number comes from a property WebKit keeps for its own tools; this is what tells us a system
-    /// update took it away.
-    @Test func aLoadedPageHasAProcessWeCanReadTheMemoryOf() async throws {
-        let server = try await PageServer(html: "<html><body><h1>hello</h1></body></html>")
+    /// The engine answers after the app and tabs are shown: each tab's own memory and processor time, and the engine's
+    /// processes, which are read like the app's.
+    @Test func theEnginesFiguresFollowForTabsAndItsProcesses() async throws {
         let rig = Rig()
-        let id = try #require(rig.store.newTab(url: nil, in: rig.window))
-        let web = try #require(rig.store.runtime(forItem: id, in: rig.window)).webView
-        await LoadWaiter().load(URL(string: "http://127.0.0.1:\(server.port)/")!, in: web)
-        let pid = try #require(web.webProcessID, "WebKit no longer says which process draws a page")
-        let usage = try #require(ProcessSampler.sample(pid: pid), "the page process is not ours to look at")
-        #expect(usage.footprint > 1_000_000)
-        #expect(pid != getpid())
+        let id = try #require(rig.store.newTab(url: URL(string: "https://example.com/"), in: rig.window))
+        let page = try #require(rig.store.runtime(forItem: id, in: rig.window)).fake
+        page.reportedUsage = PageUsage(memory: 12_000_000, cpuSeconds: 1)
+        let profile = try #require(rig.store.fakeEngine.profiles.first)
+        profile.processes = [getpid()]   // a process that is sure to be there to read
+        let start = Date()
+        rig.store.resources.refresh(from: rig.store, now: start)
+        for _ in 0..<100 where rig.store.resources.snapshot.engine.isEmpty { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(rig.store.resources.snapshot.tabs.first?.footprint == 12_000_000)
+        #expect(rig.store.resources.snapshot.engine.map(\.pid) == [getpid()])
+
+        page.reportedUsage = PageUsage(memory: 12_000_000, cpuSeconds: 1.5)
+        rig.store.resources.refresh(from: rig.store, now: start.addingTimeInterval(2))
+        for _ in 0..<100 where rig.store.resources.snapshot.tabs.first?.cpu == nil { try await Task.sleep(for: .milliseconds(20)) }
+        let cpu = try #require(rig.store.resources.snapshot.tabs.first?.cpu)
+        #expect(abs(cpu - 25) < 0.001, "half a second of work in two seconds")
     }
 }

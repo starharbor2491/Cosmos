@@ -16,16 +16,12 @@ struct ExtensionsPane: View {
     @Environment(\.palette) private var palette
 
     var body: some View {
-        Pane(title: "Extensions", subtitle: "Chrome and Safari extensions, run by WebKit.", symbol: "puzzlepiece.extension.fill") {
-            if !ExtensionCenter.isSupported {
-                SettingsGroup {
-                    SettingRow(title: "Extensions need macOS 15.4 or later", detail: "This Mac has an older macOS.", symbol: "exclamationmark.triangle") { EmptyView() }
-                }
-            } else if let center = store.extensionCenter {
+        Pane(title: "Extensions", subtitle: "Chrome extensions, run by Chromium.", symbol: "puzzlepiece.extension.fill") {
+            if let center = store.extensionCenter {
                 installed(center)
                 add(center)
                 if let found { discovered(center, found) }
-                Text("Cosmos runs extensions with WebKit, the engine Safari uses. Most Chrome extensions work, including those built for Manifest V3. Features that only exist in Chrome (history, bookmarks, downloads, notifications and sign-in through Chrome) are not available, and the Add prompt tells you when an extension needs them. Extensions are not loaded in Incognito windows.")
+                Text("Cosmos runs extensions in Chromium, with Chrome's own extension APIs, and draws their buttons, popups, menu items and shortcuts itself. Extensions built for Manifest V3 work; Chromium no longer runs Manifest V2. Side panels, notifications and sign-in with a Google account don't show yet, and the Add prompt tells you when an extension uses them. Extensions are not loaded in Incognito windows.")
                     .font(.system(size: 11.5)).foregroundStyle(palette.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, Metrics.Space.xs)

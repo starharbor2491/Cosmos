@@ -1,6 +1,6 @@
 import AppKit
-import WebKit
 import CosmosCore
+import CosmosEngine
 
 /// The page behind the menu-bar browser and what it needs from the main browser, without any of its own UI. The page is
 /// made from the chosen profile's environment, so it uses the very same cookie jar and site data as that profile's tabs
@@ -8,8 +8,8 @@ import CosmosCore
 @MainActor
 @Observable
 final class MenuBarSession {
-    /// What a phone's Safari says about itself; sites that look at it answer with their mobile pages.
-    static let phoneUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+    /// What Chrome on a phone says about itself; sites that look at it answer with their mobile pages.
+    static let phoneUserAgent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36"
 
     let store: BrowserStore
     private(set) var runtime: TabRuntime?
@@ -53,7 +53,7 @@ final class MenuBarSession {
         }
         teardown()
         let host = MenuBarHost(session: self, store: store)
-        let made = TabRuntime(itemID: UUID(), profileID: profile, configuration: store.environment(forProfile: profile).makeConfiguration(), host: host)
+        let made = TabRuntime(itemID: UUID(), profileID: profile, environment: store.environment(forProfile: profile), host: host)
         made.isEphemeral = true
         applyLayout(to: made)
         if let start = store.settings.menuBar.startURL(engine: engine) { made.load(start) }
@@ -65,13 +65,13 @@ final class MenuBarSession {
 
     private func applyLayout(to runtime: TabRuntime) {
         let agent = store.settings.menuBar.layout.isMobile ? Self.phoneUserAgent : nil
-        guard Self.agentDiffers(current: runtime.webView.customUserAgent, wanted: agent) else { return }
-        runtime.webView.customUserAgent = agent
+        guard Self.agentDiffers(current: runtime.page.userAgent, wanted: agent) else { return }
+        runtime.page.userAgent = agent
         // Sites choose their page by the agent, so one that is open is asked again.
         if runtime.url != nil { runtime.reload() }
     }
 
-    /// Whether a web view's agent has to be changed to `wanted`. A web view that was never given one answers "".
+    /// Whether a page's agent has to be changed to `wanted`. A page that was never given one has the engine's own.
     static func agentDiffers(current: String?, wanted: String?) -> Bool {
         (current ?? "") != (wanted ?? "")
     }
@@ -140,8 +140,8 @@ final class MenuBarHost: TabHost {
 
     /// Only a script-sized window gets here (the rest load in place, see `opensNewWindowsInPlace`): an OAuth sign-in needs
     /// its opener, so it is a window of its own.
-    func tab(_ tab: TabRuntime, createChildWith configuration: WKWebViewConfiguration, features: WKWindowFeatures) -> WKWebView? {
-        store.openPopup(from: tab, configuration: configuration, features: features, bringForward: session?.isPanelOpen() == true)
+    func tab(_ tab: TabRuntime, didOpen page: EnginePage, request: NewPageRequest) -> Bool {
+        store.openPopup(page, profileID: tab.profileID, request: request, bringForward: session?.isPanelOpen() == true)
     }
 
     func tabRequestsClose(_ tab: TabRuntime) { session?.onHide() }

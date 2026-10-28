@@ -4,21 +4,22 @@ import Testing
 @testable import CosmosCore
 
 @Suite struct RadialMenuTests {
-    // MARK: Recognising WebKit's items
+    // MARK: Recognising the menu's items
 
-    @Test func webKitItemsAreMatchedByIdentifier() {
-        #expect(RadialAction.resolve(identifier: "WKMenuItemIdentifierCopyLink", title: "Copy Link") == .copyLink)
-        #expect(RadialAction.resolve(identifier: "WKMenuItemIdentifierOpenLinkInNewWindow", title: "Open Link in New Tab") == .openLinkInNewTab)
-        #expect(RadialAction.resolve(identifier: "WKMenuItemIdentifierShareMenu", title: "Share…") == .share)
+    /// Every item of the page menu Cosmos builds names its action (`cosmos.<action>`), whatever its title says.
+    @Test func cosmossItemsAreMatchedByIdentifier() {
+        #expect(RadialAction.resolve(identifier: "cosmos.copyLink", title: "Copy Link") == .copyLink)
+        #expect(RadialAction.resolve(identifier: "cosmos.openLinkInNewTab", title: "Open Link in New Tab") == .openLinkInNewTab)
+        #expect(RadialAction.resolve(identifier: "cosmos.share", title: "Share…") == .share)
         #expect(RadialAction.resolve(identifier: "cosmos.openLinkInPeek", title: "Open Link in Peek") == .openLinkInPeek)
+        #expect(RadialAction.resolve(identifier: "cosmos.searchWeb", title: "Search Google for “words”") == .searchWeb)
     }
 
-    @Test func itemsKnownOnlyByTheirMethodNameAreMatchedByTitle() {
-        // WebKit's Cut item carries "forwardContextMenuAction:" as its identifier.
-        #expect(RadialAction.resolve(identifier: "forwardContextMenuAction:", title: "Cut") == .cut)
+    @Test func otherItemsAreMatchedByTitle() {
+        #expect(RadialAction.resolve(identifier: "extension.abc/1", title: "Cut") == .cut)
         #expect(RadialAction.resolve(identifier: nil, title: " Back ") == .back)
-        #expect(RadialAction.resolve(identifier: "forwardContextMenuAction:", title: "Make Upper Case") == nil)
-        #expect(RadialAction.resolve(identifier: "WKMenuItemIdentifierSpellingMenu", title: "Spelling and Grammar") == nil)
+        #expect(RadialAction.resolve(identifier: "cosmos.noSuchAction", title: "Make Upper Case") == nil)
+        #expect(RadialAction.resolve(identifier: "extension.abc/2", title: "Spelling and Grammar") == nil)
     }
 
     @Test func everyActionHasATitleASymbolAndAContext() {
@@ -57,7 +58,7 @@ import Testing
         RadialEntry(id: id ?? action?.rawValue ?? UUID().uuidString, action: action, title: title ?? action?.title ?? "Other")
     }
 
-    @Test func aShortMenuIsTheDefaultOrderThenWebKitsExtras() {
+    @Test func aShortMenuIsTheDefaultOrderThenTheExtras() {
         let entries = [entry(.copyLink), entry(.openLink), entry(nil, "Spelling", id: "x1"), entry(.share)]
         let ring = RadialLayout.ring(entries: entries, context: .link, custom: nil)
         #expect(ring.map(\.id) == ["openLink", "copyLink", "share", "x1"])

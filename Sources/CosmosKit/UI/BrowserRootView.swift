@@ -84,6 +84,7 @@ struct ContentArea: View {
                     )
                 }
 
+                if !store.engineStatus.isReady, !window.libraryOpen { EngineStatusCard(store: store).transition(.opacity) }
                 if window.overlay == .find, !window.libraryOpen { FindBar(store: store, window: window).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing).padding(14) }
                 if let peek = window.peek { PeekOverlay(store: store, window: window, peek: peek) }
                 StatusBubble(store: store, window: window)
@@ -186,6 +187,51 @@ struct ToastView: View {
             }
         }
         .animation(Motion.spring, value: window.toast)
+    }
+}
+
+// MARK: - Engine status
+
+/// Over the page area while there is no engine to draw pages: Chromium is being downloaded on the first launch, or could
+/// not be.
+struct EngineStatusCard: View {
+    let store: BrowserStore
+    @Environment(\.palette) private var palette
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: WebContentHostView.corner, style: .continuous)
+                .fill(palette.isDark ? Color.black.opacity(0.55) : Color.white.opacity(0.75))
+                .overlay(RoundedRectangle(cornerRadius: WebContentHostView.corner, style: .continuous).strokeBorder(palette.stroke, lineWidth: 0.5))
+            VStack(spacing: 14) {
+                CosmosLogo(size: 64)
+                switch store.engineStatus {
+                case .preparing(let what, let progress):
+                    Text(what).font(.system(size: 17, weight: .semibold)).foregroundStyle(palette.text)
+                    Text("Cosmos draws pages with Chromium. The first time, it fetches it (about 185 MB); pages open as soon as it is ready.")
+                        .font(.system(size: 12.5)).foregroundStyle(palette.secondary).multilineTextAlignment(.center).frame(maxWidth: 340)
+                    if let progress {
+                        ProgressView(value: progress).progressViewStyle(.linear).frame(width: 240).tint(palette.accent)
+                        Text("\(Int(progress * 100))%").font(.system(size: 11.5, weight: .medium).monospacedDigit()).foregroundStyle(palette.tertiary)
+                    } else {
+                        ProgressView().controlSize(.small)
+                    }
+                case .failed(let why):
+                    Text("Cosmos has no Chromium to draw pages with").font(.system(size: 17, weight: .semibold)).foregroundStyle(palette.text)
+                    Text(why).font(.system(size: 12.5)).foregroundStyle(palette.secondary).multilineTextAlignment(.center).frame(maxWidth: 380)
+                    Button { store.onRetryEngine?() } label: {
+                        Text("Try Again").font(.system(size: 13, weight: .semibold))
+                            .padding(.horizontal, 16).padding(.vertical, 7)
+                            .background(Capsule().fill(palette.accentFill)).foregroundStyle(palette.onAccent)
+                    }
+                    .buttonStyle(.plain)
+                case .ready:
+                    EmptyView()
+                }
+            }
+            .padding(24)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 

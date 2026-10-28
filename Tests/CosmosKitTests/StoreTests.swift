@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-import WebKit
+import CosmosEngine
 @testable import CosmosKit
 @testable import CosmosCore
 
@@ -11,8 +11,8 @@ final class Rig {
     let store: BrowserStore
     let window: WindowState
 
-    init(seed: Bool = false) {
-        store = BrowserStore(directory: dir)
+    init(seed: Bool = false, engine: BrowserEngine? = nil) {
+        store = BrowserStore(directory: dir, engine: engine ?? FakeEngine())
         window = store.makeWindowState()
         store.register(window)
         if seed { DemoSeed.populate(store) }
@@ -126,18 +126,90 @@ final class Rig {
         #expect(rig.store.workspace.item(selected) != nil)
     }
 
-    /// WebKit raises an exception, and the app dies, if the page it gets back for `window.open()` was not built from
-    /// the configuration it handed over.
-    @Test func aScriptOpenedWindowIsBuiltFromTheConfigurationWebKitGave() throws {
+    /// A page a script or a link opened in a new window is already made (and loading) in the engine: it becomes the new,
+    /// selected tab with that very page, not a fresh page that would lose its opener.
+    @Test func aPageTheEngineOpenedBecomesASelectedTabWithThatPage() throws {
         let rig = Rig()
-        let opener = try #require(rig.store.newTab(url: URL(string: "about:blank?opener"), in: rig.window))
+        let opener = try #require(rig.store.newTab(url: URL(string: "https://example.com/opener"), in: rig.window))
         let openerRuntime = try #require(rig.store.runtime(forItem: opener, in: rig.window))
-        let configuration = WKWebViewConfiguration()
-        let child = try #require(rig.store.tab(openerRuntime, createChildWith: configuration, features: WKWindowFeatures()))
-        // WebKit hands out a copy of a web view's configuration; the copy shares the process pool.
-        #expect(child.configuration.processPool === configuration.processPool)
+        let profile = try #require(rig.store.fakeEngine.profiles.first)
+        let opened = profile.open(NewPageRequest(url: URL(string: "https://example.com/child"), userGesture: true), from: openerRuntime.fake)
+        #expect(opened.kept)
+        let child = try #require(rig.window.selectedItemID)
+        #expect(child != opener)
+        #expect(rig.store.runtime(forItem: child, in: rig.window)?.page === opened.page)
+        #expect(opened.page.loads.isEmpty, "the engine is loading it already")
+        #expect(rig.store.workspace.item(child)?.tab?.url?.absoluteString == "https://example.com/child")
         #expect(rig.store.workspace.allTabs().count == 2)
         #expect(rig.store.workspace.problems().isEmpty)
+    }
+
+    @Test func eachProfileHasItsOwnEngineFolderAndIncognitoHasNone() throws {
+        let rig = Rig()
+        rig.store.newTab(url: URL(string: "https://example.com/"), in: rig.window)
+        let profile = try #require(rig.store.fakeEngine.profiles.first)
+        #expect(profile.id == rig.space.profileID)
+        #expect(profile.directory?.path == rig.dir.appendingPathComponent("Engine Profiles/\(rig.space.profileID.uuidString)").path)
+
+        let incognito = BrowserStore(directory: nil, incognito: true, engine: FakeEngine())
+        let window = incognito.makeWindowState()
+        incognito.register(window)
+        incognito.newTab(url: URL(string: "https://example.com/"), in: window)
+        #expect(!incognito.fakeEngine.profiles.isEmpty)
+        #expect(incognito.fakeEngine.profiles.allSatisfy { $0.id == nil && $0.directory == nil })
+    }
+
+    /// The engine stopped (a settings change, a crash): its pages are gone, so the tabs on screen get new ones and load.
+    @Test func whenTheEngineRestartsTheTabsOnScreenGetNewPages() throws {
+        let rig = Rig()
+        let id = try #require(rig.store.newTab(url: URL(string: "https://example.com/a"), in: rig.window))
+        let old = try #require(rig.store.runtime(forItem: id, in: rig.window))
+        let profile = try #require(rig.store.fakeEngine.profiles.first)
+        profile.restart()
+        let new = try #require(rig.store.runtime(forItem: id, in: rig.window))
+        #expect(new !== old)
+        #expect(old.fake.isClosed)
+        #expect(new.fake.loads == [URL(string: "https://example.com/a")!])
+    }
+
+    /// The memory saver counts from when a tab was last looked at: one the user just left after half an hour on it is not
+    /// idle, however long ago it was first selected.
+    @Test func aTabJustLeftIsNotPutToSleepAtOnce() throws {
+        let rig = Rig()
+        rig.store.settings.memorySaverMinutes = 10
+        let a = try #require(rig.store.newTab(url: URL(string: "https://example.com/a"), in: rig.window))
+        try #require(rig.store.runtime(forItem: a, in: rig.window)).lastActivity = Date().addingTimeInterval(-30 * 60)
+        rig.store.newTab(url: URL(string: "https://example.com/b"), in: rig.window)
+        rig.store.discardIdleRuntimes()
+        #expect(rig.store.runtime(forItem: a, in: rig.window) != nil)
+    }
+
+    /// Replacing everything (an Arc import) takes the spaces the windows were on: they move to one that is there, or every
+    /// command that works on "this space" quietly does nothing.
+    @Test func aWindowWhoseSpaceIsGoneMovesToOneThatIsThere() throws {
+        let rig = Rig()
+        rig.store.edit { $0 = Workspace.fresh(spaceTitle: "Imported") }
+        #expect(rig.store.workspace.space(rig.window.focusedSpaceID) != nil)
+        #expect(rig.store.newTab(url: URL(string: "https://example.com/"), in: rig.window) != nil)
+    }
+
+    /// "Close the window with its last tab": with it on, the ⌘W that closes the last tab closes the window too; with it
+    /// off the window stays, empty, until the next ⌘W.
+    @Test func closingTheLastTabClosesTheWindowOnlyWithTheSettingOn() {
+        let rig = Rig()
+        var closed = 0
+        rig.store.onCloseWindowRequest = { _ in closed += 1 }
+        rig.store.newTab(url: URL(string: "https://example.com/a"), in: rig.window)
+        rig.store.closeSelected(in: rig.window)
+        #expect(closed == 0)
+        #expect(rig.window.selectedItemID == nil)
+        rig.store.closeSelected(in: rig.window)
+        #expect(closed == 1, "⌘W on an empty window closes it")
+
+        rig.store.settings.closeWindowOnLastTab = true
+        rig.store.newTab(url: URL(string: "https://example.com/b"), in: rig.window)
+        rig.store.closeSelected(in: rig.window)
+        #expect(closed == 2)
     }
 
     @Test func workspaceSurvivesARestart() throws {
@@ -147,7 +219,7 @@ final class Rig {
         rig.store.saveSession()
         rig.store.saveNow()
 
-        let reopened = BrowserStore(directory: rig.dir)
+        let reopened = BrowserStore(directory: rig.dir, engine: FakeEngine())
         #expect(reopened.workspace.allTabs().count == rig.store.workspace.allTabs().count)
         #expect(reopened.workspace.spaces.map(\.title) == rig.store.workspace.spaces.map(\.title))
         let state = reopened.makeWindowState(restoring: 0)
@@ -163,13 +235,19 @@ final class Rig {
     }
 
     @Test func anIncognitoStoreKeepsNothing() throws {
-        let incognito = BrowserStore(directory: nil, incognito: true)
+        let incognito = BrowserStore(directory: nil, incognito: true, engine: FakeEngine())
         let window = incognito.makeWindowState()
         incognito.register(window)
         let id = try #require(incognito.newTab(url: URL(string: "about:blank?x"), in: window))
         incognito.closeTab(id, in: window)
         #expect(incognito.archive.entries.isEmpty)
         #expect(incognito.dataDirectory == nil)
+    }
+
+    /// A private window keeps nothing, so nothing is imported into one: what was brought over would be gone when it closes.
+    @Test func aPrivateWindowOffersNothingToImport() async {
+        let incognito = BrowserStore(directory: nil, incognito: true, engine: FakeEngine())
+        #expect(await ImportCoordinator.sources(for: incognito).isEmpty)
     }
 
     @Test func permissionAnswersAreRememberedPerSiteAndCanBeReset() throws {
@@ -185,7 +263,7 @@ final class Rig {
     }
 
     @Test func incognitoNeverRemembersPermissions() throws {
-        let incognito = BrowserStore(directory: nil, incognito: true)
+        let incognito = BrowserStore(directory: nil, incognito: true, engine: FakeEngine())
         let window = incognito.makeWindowState()
         incognito.register(window)
         _ = try #require(incognito.newTab(url: URL(string: "about:blank?perm"), in: window))

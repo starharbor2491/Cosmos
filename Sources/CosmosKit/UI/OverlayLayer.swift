@@ -20,10 +20,12 @@ struct OverlayLayer: View {
     private var panels: some View {
         ZStack {
             switch window.overlay {
-            case .commandBar:
+            case .commandBar(let mode):
                 Scrim(opacity: 0.30) { window.overlay = nil }
                 VStack {
+                    // ⌘T over an open ⌘L bar (or the other way round) is a new bar: its Enter does something else.
                     CommandBarView(store: store, window: window)
+                        .id(mode)
                         .padding(.top, 86)
                     Spacer()
                 }

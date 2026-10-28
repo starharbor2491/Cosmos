@@ -105,7 +105,7 @@ public struct SkipReason: RawRepresentable, Hashable, Codable, Sendable, CustomS
     public var description: String { rawValue }
     public static func < (a: SkipReason, b: SkipReason) -> Bool { a.rawValue < b.rawValue }
 
-    /// `$redirect`, `$csp`, `$removeparam`, `$replace`, ... : behaviours WebKit rules cannot express.
+    /// `$redirect`, `$csp`, `$removeparam`, `$replace`, ... : behaviours `declarativeNetRequest` rules cannot express.
     public static func unsupportedOption(_ name: String) -> SkipReason { SkipReason("option:\(name)") }
     /// `/regex/` filters using alternation, counted repeats, `\b` and friends.
     public static let regexNotRepresentable = SkipReason("regex-not-representable")
@@ -115,7 +115,7 @@ public struct SkipReason: RawRepresentable, Hashable, Codable, Sendable, CustomS
     public static let htmlFilter = SkipReason("html-filter")
     public static let cssInjection = SkipReason("css-injection")
     public static let scriptRule = SkipReason("script-rule")
-    /// Selector WebKit would silently drop (unknown pseudo-class, nested `:has`, ...).
+    /// Selector a browser would silently drop (unknown pseudo-class, nested `:has`, ...).
     public static let invalidSelector = SkipReason("invalid-selector")
     /// `example.*` or `/regex/` in a domain list.
     public static let entityDomain = SkipReason("entity-domain")

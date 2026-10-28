@@ -91,6 +91,10 @@ public final class WindowState: Identifiable {
     public var librarySection = LibrarySection.downloads
     /// What the History section lists (⇧⌘A sets it to the archived tabs).
     public var libraryTimeline = TimelineKind.everything
+    /// The Boosts panel's Boost and tab (its rawValue). Kept here, not in the panel: Zap puts the panel away while an element
+    /// is picked, and it comes back where it was.
+    var boostsSelection: UUID?
+    var boostsTab = "Colors"
     /// Selected sidebar item per space (a tab, or a split).
     public var selection: [UUID: UUID] = [:] { didSet { radial = nil } }
     /// The Library's rail is in the sidebar: hiding the sidebar leaves the Library, so the bar over the page (Back, Forward,

@@ -57,7 +57,7 @@ struct SidebarView: View {
         }
         .frame(width: window.sidebarWidth)
         .environment(\.palette, palette)
-        .background(SwipeCatcher(onMove: swipeMoved, onEnd: swipeEnded))
+        .background(SwipeCatcher(isEnabled: window.overlay == nil, onMove: swipeMoved, onEnd: swipeEnded))
         .onChange(of: window.sidebarPage) { _, page in slideTo(page) }
         .onChange(of: pages) { _, pages in slide.repair(pages: pages, current: window.sidebarPage) }
         .recordsSpatialFrames()

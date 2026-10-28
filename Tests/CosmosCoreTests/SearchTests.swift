@@ -18,6 +18,13 @@ import Testing
         #expect(resolved("example.com?q=1") == "url:https://example.com?q=1")
     }
 
+    /// A name under an international top-level domain is an address, typed in Unicode or in its ASCII form.
+    @Test func internationalNamesAreAddresses() {
+        #expect(resolved("пример.рф") == "url:https://xn--e1afmkfd.xn--p1ai" || resolved("пример.рф") == "url:https://пример.рф")
+        #expect(resolved("xn--e1afmkfd.xn--p1ai") == "url:https://xn--e1afmkfd.xn--p1ai")
+        #expect(resolved("bücher.de").hasPrefix("url:https://"))
+    }
+
     @Test func localAndIPsUseHTTP() {
         #expect(resolved("localhost:3000") == "url:http://localhost:3000")
         #expect(resolved("localhost") == "url:http://localhost")
@@ -57,6 +64,17 @@ import Testing
 }
 
 @Suite struct PublicSuffixTests {
+    /// Addresses carry international names in their ASCII form (`xn--…`); the list's rules are written in Unicode. Both
+    /// have to be the same rule: two shops under 公司.cn are two sites.
+    @Test func internationalSuffixesMatchTheASCIIFormOfAnAddress() throws {
+        let psl = PublicSuffixList.shared
+        let a = try #require(URL(string: "https://a.公司.cn/")), b = try #require(URL(string: "https://b.公司.cn/"))
+        #expect(a.host == "a.xn--55qx5d.cn")
+        #expect(psl.registrableDomain(of: "www.a.xn--55qx5d.cn") == "a.xn--55qx5d.cn")
+        #expect(!psl.isSameSite(a, b))
+        #expect(psl.registrableDomain(of: "shop.xn--e1afmkfd.xn--p1ai") == "xn--e1afmkfd.xn--p1ai")
+    }
+
     @Test func registrableDomains() {
         let psl = PublicSuffixList.shared
         #expect(psl.registrableDomain(of: "www.bbc.co.uk") == "bbc.co.uk")
@@ -67,6 +85,20 @@ import Testing
         #expect(psl.siteName(of: "mail.google.com") == "google")
         #expect(psl.isSameSite(URL(string: "https://a.example.com")!, URL(string: "https://b.example.com/x")!))
         #expect(!psl.isSameSite(URL(string: "https://a.github.io")!, URL(string: "https://b.github.io")!))
+    }
+}
+
+/// A site's short name at the start of a query offers a search on that site, but the query stays a web search unless the
+/// user asks for the site (with Tab): "so what is love" and "apple pie" are not searches of Stack Overflow or Apple.
+@Suite struct ComposerTests {
+    @Test func aSitesShortNameDoesNotTakeOverTheQuery() throws {
+        let catalog = SearchCatalog.bundled
+        let engine = catalog.engine(catalog.defaultEngine)
+        for (query, site) in [("so what is love", "stackoverflow"), ("apple pie recipe", "appledev"), ("x men cast", "x")] {
+            let rows = CommandComposer.compose(query: query, ranked: [], suggestions: [], catalog: catalog, engine: engine).rows
+            #expect(rows.first?.kind == .webSearch, "\(query)")
+            #expect(rows.dropFirst().first?.kind == .siteSearch(site), "\(query): the site's search is right under it")
+        }
     }
 }
 
@@ -88,9 +120,33 @@ import Testing
         #expect(Calculator.evaluate("hello") == nil)
         #expect(Calculator.evaluate("1") == nil)
         #expect(Calculator.evaluate("1/0") == nil)
-        #expect(Calculator.evaluate("2024-10-25") != nil || true)   // ambiguous: allowed to evaluate or not
         #expect(Calculator.evaluate("rust 1.2") == nil)
         #expect(Calculator.evaluate("(1+2") == nil)
+    }
+
+    /// A date, or a number written with dashes or slashes, is something to look up, not a sum.
+    @Test func datesAndDashedNumbersAreNotSums() {
+        #expect(Calculator.evaluate("2024-10-25") == nil)
+        #expect(Calculator.evaluate("10/28/2024") == nil)
+        #expect(Calculator.evaluate("1-800-555-0199") == nil)
+        #expect(Calculator.evaluate("10-3") == 7, "one dash between two numbers is a subtraction")
+        #expect(Calculator.evaluate("10 - 3 - 2") == 5)
+    }
+
+    /// A comma groups thousands; anything else it might mean (a decimal comma, a list) is not guessed at.
+    @Test func aCommaOnlyGroupsThousands() {
+        #expect(Calculator.evaluate("1,000*2") == 2000)
+        #expect(Calculator.evaluate("1,234,567+1") == 1_234_568)
+        #expect(Calculator.evaluate("1,5*2") == nil)
+        #expect(Calculator.evaluate("3,4+1") == nil)
+    }
+
+    /// As on paper: the power binds before the minus in front of it.
+    @Test func aMinusInFrontAppliesAfterThePower() {
+        #expect(Calculator.evaluate("-2^2") == -4)
+        #expect(Calculator.evaluate("(-2)^2") == 4)
+        #expect(Calculator.evaluate("2^-1") == 0.5)
+        #expect(Calculator.evaluate("-3*-2") == 6)
     }
 }
 
@@ -137,6 +193,13 @@ import Testing
         #expect(CommandRanker.rank(query: "yout", candidates: pool).first?.candidate.id == "d1")
     }
 
+    /// An abbreviation starts at a word: a letter that also turns up earlier, mid-word, must not hide the word it starts.
+    @Test func anAbbreviationIsFoundAtAnyWordItStarts() {
+        #expect(CommandRanker.fuzzy("ghb", in: "highlight github") > 0)
+        #expect(CommandRanker.fuzzy("nspc", in: "an new space") > 0)
+        #expect(CommandRanker.fuzzy("ghb", in: "highlights") == 0)
+    }
+
     @Test func fuzzySubsequenceFallback() {
         let r = CommandRanker.rank(query: "nspc", candidates: pool)
         #expect(r.first?.candidate.id == "c1")
@@ -175,8 +238,9 @@ import Testing
         #expect(out.rows.first?.kind == .webSearch)
         #expect(out.rows.first?.url?.host == "duckduckgo.com")
         let site = CommandComposer.compose(query: "youtube lofi beats", ranked: [], suggestions: [], catalog: cat, engine: cat.engine("google"))
-        #expect(site.rows.first?.kind == .siteSearch("youtube"))
-        #expect(site.rows.first?.url?.absoluteString.contains("search_query=lofi%20beats") == true)
+        #expect(site.rows.first?.kind == .webSearch)
+        #expect(site.rows.dropFirst().first?.kind == .siteSearch("youtube"))
+        #expect(site.rows.dropFirst().first?.url?.absoluteString.contains("search_query=lofi%20beats") == true)
         let tab = CommandComposer.compose(query: "yout", ranked: [], suggestions: [], catalog: cat, engine: cat.engine("google"))
         #expect(tab.tabSearchSite?.id == "youtube")
     }

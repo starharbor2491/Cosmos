@@ -7,8 +7,14 @@ struct BoostsPanel: View {
     let store: BrowserStore
     let window: WindowState
     @Environment(\.palette) private var palette
-    @Local private var selectedID: UUID?
-    @Local private var tab: Tab = .colors
+    private var selectedID: UUID? {
+        get { window.boostsSelection }
+        nonmutating set { window.boostsSelection = newValue }
+    }
+    private var tab: Tab {
+        get { Tab(rawValue: window.boostsTab) ?? .colors }
+        nonmutating set { window.boostsTab = newValue.rawValue }
+    }
 
     enum Tab: String, CaseIterable, Identifiable {
         case colors = "Colors", font = "Font", zap = "Zap", css = "CSS", code = "JS"
@@ -38,7 +44,9 @@ struct BoostsPanel: View {
             }
         }
         .onAppear {
-            if selectedID == nil { selectedID = store.boostForCurrentPageIfExists(in: window) ?? store.boosts.boosts.first?.id }
+            // The page's own Boost when it has one; otherwise the one selected last, if it is still there.
+            if let current = store.boostForCurrentPageIfExists(in: window) { selectedID = current }
+            else if !store.boosts.boosts.contains(where: { $0.id == selectedID }) { selectedID = store.boosts.boosts.first?.id }
         }
     }
 
@@ -137,7 +145,7 @@ struct BoostsPanel: View {
             HStack(spacing: 10) {
                 PromptTextField(text: boost.name, prompt: "Name")
                     .textFieldStyle(.plain).font(.system(size: 16, weight: .semibold)).foregroundStyle(palette.text)
-                Toggle("", isOn: boost.isEnabled).toggleStyle(.switch).labelsHidden().tint(palette.accent)
+                Toggle("Boost on", isOn: boost.isEnabled).toggleStyle(.switch).labelsHidden().tint(palette.accent)
                 Button(role: .destructive) {
                     let b = boost.wrappedValue
                     store.removeBoostLive(b)

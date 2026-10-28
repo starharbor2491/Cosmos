@@ -20,7 +20,8 @@ struct PanelResizeArea: NSViewRepresentable {
         /// The strip along an edge that takes hold of it, and the square at a corner that takes hold of two. They lie in the
         /// strip of sky around the page, never over it.
         static let band: CGFloat = 6
-        static let corner: CGFloat = 16
+        /// No bigger than the sky around the page (`Metrics.Space.s`): the page and the toolbar's end buttons start there.
+        static let corner: CGFloat = Metrics.Space.s
 
         var onResized: ((CGSize) -> Void)?
         private var edges: MenuBarPlacement.Edges = []

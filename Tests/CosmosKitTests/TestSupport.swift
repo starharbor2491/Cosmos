@@ -1,29 +1,189 @@
 import Foundation
 import Network
 import Testing
-import WebKit
+import AppKit
+import CosmosEngine
 @testable import CosmosKit
 @testable import CosmosCore
 
+/// Stands in for Chromium, so the browser around the engine can be tested without starting one. Pages remember what
+/// they were asked to do; a test makes them report what an engine would (`navigate`, `crash`, `open`).
 @MainActor
-final class LoadWaiter: NSObject, WKNavigationDelegate {
-    private var continuation: CheckedContinuation<Void, Never>?
-    var settings: Settings?
-    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, preferences: WKWebpagePreferences,
-                 decisionHandler: @escaping @MainActor (WKNavigationActionPolicy, WKWebpagePreferences) -> Void) {
-        if let settings, let url = navigationAction.request.url { ContentBlockerController.configure(preferences, for: url, settings: settings) }
-        decisionHandler(.allow, preferences)
+final class FakeEngine: BrowserEngine {
+    let name = "Fake"
+    var status: EngineStatus = .ready(version: "1.0") { didSet { onStatusChange?() } }
+    var onStatusChange: (() -> Void)?
+    var versionDescription: String? = "1.0"
+    var lastUpdateCheck: Date?
+    var lastUpdateError: String?
+    var pendingUpdate: String?
+    private(set) var profiles: [FakeProfile] = []
+
+    func checkForUpdates() async { lastUpdateCheck = Date() }
+
+    func makeProfile(id: UUID?, directory: URL?) -> EngineProfile {
+        let profile = FakeProfile(id: id, directory: directory)
+        profiles.append(profile)
+        return profile
     }
-    func load(_ url: URL, in web: WKWebView) async {
-        web.navigationDelegate = self
-        await withCheckedContinuation { c in
-            continuation = c
-            web.load(URLRequest(url: url))
-        }
+
+    func shutdown() { profiles.forEach { $0.close() } }
+}
+
+@MainActor
+final class FakeProfile: EngineProfile {
+    let id: UUID?
+    let directory: URL?
+    weak var delegate: EngineProfileDelegate?
+    var extensions: EngineExtensions?
+    private(set) var scripts: [PageScript] = []
+    /// The last `setContentBlocking`, nil before the first.
+    private(set) var blocking: (lists: [CompiledBlockingList]?, allowlist: [String])?
+    private(set) var pages: [FakePage] = []
+    private(set) var restarts = 0
+    private(set) var clearedSiteData = 0
+    private(set) var isClosed = false
+    var processes: [Int32] = []
+
+    init(id: UUID?, directory: URL?) {
+        self.id = id
+        self.directory = directory
+        // Like Chromium, a profile that keeps nothing (incognito) runs no extensions.
+        extensions = directory == nil && id == nil ? nil : FakeExtensions()
     }
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { continuation?.resume(); continuation = nil }
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { continuation?.resume(); continuation = nil }
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { continuation?.resume(); continuation = nil }
+
+    var fakeExtensions: FakeExtensions? { extensions as? FakeExtensions }
+
+    func makePage() -> EnginePage {
+        let page = FakePage()
+        pages.append(page)
+        return page
+    }
+
+    func setPageScripts(_ scripts: [PageScript]) { self.scripts = scripts }
+    func setContentBlocking(_ lists: [CompiledBlockingList]?, allowlist: [String]) { blocking = (lists, allowlist) }
+    func clearSiteData() async { clearedSiteData += 1 }
+    func processIDs() async -> [Int32] { processes }
+    func restart() { restarts += 1; delegate?.profileDidRestart(self) }
+    func close() { isClosed = true }
+
+    /// What the engine does when a page (or, with no opener, an extension) opens one: it makes the page, then asks.
+    @discardableResult
+    func open(_ request: NewPageRequest, from opener: FakePage?) -> (page: FakePage, kept: Bool) {
+        let page = makePage() as! FakePage
+        let kept = delegate?.profile(self, didOpen: page, opener: opener, request: request) ?? false
+        if !kept { page.close() }
+        return (page, kept)
+    }
+
+    func startDownload(_ download: EngineDownload) { delegate?.profile(self, didStartDownload: download) }
+}
+
+@MainActor
+final class FakePage: EnginePage {
+    /// Takes the keyboard, as an engine's page view does.
+    final class PageView: NSView { override var acceptsFirstResponder: Bool { true } }
+    let view: NSView = PageView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+    weak var delegate: EnginePageDelegate?
+    var state = PageState()
+    private(set) var loads: [URL] = []
+    private(set) var shownHTML: [(html: String, url: URL)] = []
+    private(set) var reloads = 0
+    private(set) var stops = 0
+    private(set) var evaluated: [(script: String, world: ScriptWorld)] = []
+    /// What `evaluate` answers for a script.
+    var answer: (String) -> Any? = { _ in nil }
+    var zoom = 1.0
+    var userAgent: String?
+    private(set) var commands: [EditCommand] = []
+    private(set) var downloads: [URL] = []
+    var contextClick: ContextClick?
+    var isInElementFullscreen = false
+    var reportedUsage: PageUsage?
+    private(set) var activations = 0
+    private(set) var isClosed = false
+
+    func load(_ url: URL) { loads.append(url) }
+    func loadHTML(_ html: String, showing url: URL) { shownHTML.append((html, url)) }
+    func reload(fromOrigin: Bool) { reloads += 1 }
+    func stop() { stops += 1 }
+    func goBack() {}
+    func goForward() {}
+    func evaluate(_ script: String, in world: ScriptWorld) async -> Any? {
+        evaluated.append((script, world))
+        return answer(script)
+    }
+    func perform(_ command: EditCommand) { commands.append(command) }
+    func snapshot(width: CGFloat) async -> NSImage? { nil }
+    func pdf() async -> Data? { nil }
+    func download(_ url: URL) { downloads.append(url) }
+    func recentContextClick() -> ContextClick? { contextClick }
+    func showInspector() -> Bool { false }
+    func usage() async -> PageUsage? { reportedUsage }
+    func activate() { activations += 1 }
+    func close() { isClosed = true }
+
+    /// What a finished navigation to `url` looks like to the page's delegate.
+    func navigate(to url: URL, title: String = "") {
+        state.isLoading = true
+        delegate?.pageDidStartNavigation(self)
+        state.url = url
+        state.title = title
+        delegate?.pageDidCommitNavigation(self)
+        state.isLoading = false
+        state.progress = 1
+        delegate?.pageDidFinishLoading(self)
+    }
+
+    /// A message from the page agent, as `__cosmosPost` delivers it.
+    func post(_ message: [String: Any], fromMainFrame: Bool = true) {
+        delegate?.page(self, agentMessage: message, fromMainFrame: fromMainFrame)
+    }
+
+    func crash() { delegate?.pageRendererDidTerminate(self) }
+}
+
+/// The engine's side of extensions: loads remember their folder, and the buttons and menu items are whatever a test
+/// sets.
+@MainActor
+final class FakeExtensions: EngineExtensions {
+    var onChange: (() -> Void)?
+    private(set) var loaded: [String: URL] = [:]
+    private(set) var unloaded: [String] = []
+    /// While set, every load fails with this reason.
+    var refusal: String?
+    var buttons: [ExtensionAction] = []
+    var items: [ExtensionMenuItem] = []
+    var commands: [ExtensionCommand] = []
+    private(set) var performed: [String] = []
+    private(set) var clicked: [(ExtensionMenuItem, ExtensionClickContext)] = []
+
+    struct LoadError: LocalizedError { var errorDescription: String? }
+
+    /// The id the engine gives the extension in `folder`: like Chromium's, it follows from the folder.
+    static func id(for folder: URL) -> String { "ext-" + folder.lastPathComponent }
+
+    func load(folder: URL) async throws -> String {
+        if let refusal { throw LoadError(errorDescription: refusal) }
+        let id = Self.id(for: folder)
+        loaded[id] = folder
+        return id
+    }
+    func unload(id: String) async { loaded[id] = nil; unloaded.append(id) }
+    func actions(for page: EnginePage?) -> [ExtensionAction] { buttons.filter { loaded[$0.extensionID] != nil } }
+    func performAction(_ extensionID: String, on page: EnginePage) async -> EnginePage? { performed.append(extensionID); return nil }
+    func menuItems(for page: EnginePage?) -> [ExtensionMenuItem] { items }
+    func performMenuItem(_ item: ExtensionMenuItem, context: ExtensionClickContext, on page: EnginePage) async { clicked.append((item, context)) }
+    func performCommand(_ command: ExtensionCommand, on page: EnginePage?) async { performed.append(command.name) }
+}
+
+extension TabRuntime {
+    /// The fake page under a runtime made by a store on a `FakeEngine`.
+    var fake: FakePage { page as! FakePage }
+}
+
+extension BrowserStore {
+    var fakeEngine: FakeEngine { engine as! FakeEngine }
 }
 
 /// Serves one fixed HTML page on 127.0.0.1 so a real http:// document can be loaded.

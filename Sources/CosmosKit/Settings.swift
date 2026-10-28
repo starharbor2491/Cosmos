@@ -36,6 +36,8 @@ public struct Settings: Codable, Equatable {
     public var radialMenu = RadialSettings()
     /// The small browser under an icon in the menu bar (see `MenuBar` in CosmosCore).
     public var menuBar = MenuBarSettings()
+    /// The page engine's own settings (Chromium's, folded into Cosmos's Settings). They apply when a profile's engine starts.
+    public var engine = EngineSettings()
 
     public init() {}
 
@@ -43,6 +45,7 @@ public struct Settings: Codable, Equatable {
         case searchEngineID, appearance, sidebarWidth, sidebarSide, revealSidebarOnHover, adBlockingEnabled, enabledFilterLists
         case autoPictureInPicture, restoreTabsOnLaunch, showSearchSuggestions, peekFromPinned, permissionDecisions
         case adBlockAllowlist, hasCompletedOnboarding, memorySaverMinutes, showStatusBubble, closeWindowOnLastTab, trackpadHaptics, radialMenu, menuBar
+        case engine
     }
 
     // Tolerant decoding: a settings file written by an older/newer build must never lock the user out.
@@ -59,5 +62,6 @@ public struct Settings: Codable, Equatable {
         get(.hasCompletedOnboarding, &hasCompletedOnboarding); get(.memorySaverMinutes, &memorySaverMinutes)
         get(.showStatusBubble, &showStatusBubble); get(.closeWindowOnLastTab, &closeWindowOnLastTab)
         get(.trackpadHaptics, &trackpadHaptics); get(.radialMenu, &radialMenu); get(.menuBar, &menuBar)
+        get(.engine, &engine)
     }
 }

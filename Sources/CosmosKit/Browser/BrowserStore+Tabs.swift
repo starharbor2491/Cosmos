@@ -1,6 +1,6 @@
 import AppKit
-import WebKit
 import CosmosCore
+import CosmosEngine
 
 // MARK: - Live pages
 
@@ -9,25 +9,22 @@ extension BrowserStore {
         runtimes[RuntimeKey(item: id, profile: profileID(forItem: id, in: window))]
     }
 
-    /// The page behind a sidebar tab, created on first use. `configuration` is WebKit's own, for `window.open` children.
+    /// The page behind a sidebar tab, created on first use. `page` is one the engine already made (a page a site opened).
     @discardableResult
-    func ensureRuntime(forItem id: UUID, in window: WindowState?, configuration: WKWebViewConfiguration? = nil, load: Bool = true) -> TabRuntime? {
+    func ensureRuntime(forItem id: UUID, in window: WindowState?, page: EnginePage? = nil, load: Bool = true) -> TabRuntime? {
         guard let item = workspace.item(id), item.isTab else { return nil }
         let pid = profileID(forItem: id, in: window)
         let key = RuntimeKey(item: id, profile: pid)
         if let existing = runtimes[key] { return existing }
-        let env = environment(forProfile: pid)
-        let rt = TabRuntime(itemID: id, profileID: pid, configuration: configuration ?? env.makeConfiguration(), host: self)
+        let rt = TabRuntime(itemID: id, profileID: pid, page: page ?? environment(forProfile: pid).makePage(), host: self)
         runtimes[key] = rt
         runtimeRevision += 1
-        extensionCenter?.tabOpened(rt)
-        if configuration == nil, load, let url = item.tab?.url { rt.load(url) }
+        if page == nil, load, let url = item.tab?.url { rt.load(url) }
         return rt
     }
 
     func discardRuntime(forItem id: UUID) {
         for key in runtimes.keys where key.item == id {
-            if let rt = runtimes[key] { extensionCenter?.tabClosed(rt) }
             runtimes[key]?.tearDown()
             runtimes[key] = nil
         }
@@ -103,13 +100,14 @@ extension BrowserStore {
         if let sid = workspace.spaceID(of: target), sid != window.focusedSpaceID { switchSpace(to: sid, in: window) }
 
         let previousTabs = window.selectedItemID.map { workspace.tabs(under: $0).map(\.id) } ?? []
-        let previousRuntime = extensionCenter == nil ? nil : currentRuntime(in: window)
         window.libraryOpen = false
         window.selectedItemID = target
         window.noteSelected(target)
         if case .commandBar = window.overlay { window.overlay = nil }
 
         let now = Date()
+        // The tabs being left were in use until now: the memory saver counts from here, not from when they were selected.
+        for old in previousTabs { runtime(forItem: old, in: window)?.lastActivity = now }
         for t in workspace.tabs(under: target) {
             ensureRuntime(forItem: t.id, in: window)
         }
@@ -117,9 +115,7 @@ extension BrowserStore {
             edit { $0.updateTab(focused) { $0.lastActiveAt = now } }
             runtime(forItem: focused, in: window)?.lastActivity = now
             runtime(forItem: focused, in: window)?.exitPictureInPicture()
-            if let center = extensionCenter, let now = runtime(forItem: focused, in: window), now !== previousRuntime {
-                center.tabActivated(now, previous: previousRuntime)
-            }
+            runtime(forItem: focused, in: window)?.page.activate()
         }
         // Leaving a tab that is playing video: float it (Auto Picture-in-Picture).
         if settings.autoPictureInPicture {
@@ -185,6 +181,8 @@ extension BrowserStore {
             return
         }
         closeTab(id, in: window)
+        // "Close the window with its last tab": the window would be left showing nothing.
+        if settings.closeWindowOnLastTab, window.selectedItemID == nil { closeWindowRequested(window) }
     }
 
     func closeTab(_ id: UUID, in window: WindowState?) {
@@ -285,7 +283,7 @@ extension BrowserStore {
     }
 
     func closeWindowRequested(_ window: WindowState) {
-        NSApp.keyWindow?.performClose(nil)
+        if let onCloseWindowRequest { onCloseWindowRequest(window) } else { NSApp.keyWindow?.performClose(nil) }
     }
 
     // MARK: Editing the tree
@@ -382,7 +380,7 @@ extension BrowserStore {
         guard let pid = workspace.item(id)?.parentID, workspace.item(pid)?.isSplit == true else { return }
         edit { $0.setSplit(pid) { $0.focusedChildID = id } }
         ensureRuntime(forItem: id, in: window)
-        runtime(forItem: id, in: window)?.webView.window?.makeFirstResponder(runtime(forItem: id, in: window)?.webView)
+        if let view = runtime(forItem: id, in: window)?.view { view.window?.makeFirstResponder(view) }
     }
 
     func closeFocusedPane(in window: WindowState) {
@@ -402,6 +400,7 @@ extension BrowserStore {
         guard edit({ $0.combineIntoSplit(otherID, dragged) }) != nil else {
             window.showToast("Can't split these tabs", symbol: "rectangle.split.2x1"); return
         }
+        haptics.levelChange()
         if let sid = workspace.item(dragged)?.parentID { select(sid, in: window) }
     }
 
@@ -544,7 +543,6 @@ extension BrowserStore {
         let urlChanged = url != nil && url != data.url && url?.scheme != "about" && !(tab.loadFailed && url == data.url)
         let title = tab.title
         let titleChanged = !title.isEmpty && title != data.pageTitle
-        if urlChanged || titleChanged { extensionCenter?.tabChanged(tab) }
         guard urlChanged || titleChanged || (tab.isMuted != data.isMuted && tab.isMuted) else { return }
         edit { ws in
             ws.updateTab(tab.itemID) {
@@ -555,7 +553,6 @@ extension BrowserStore {
     }
 
     public func tabDidFinishLoading(_ tab: TabRuntime) {
-        extensionCenter?.tabChanged(tab, loading: true)
         guard !isIncognito, let url = tab.url else { return }
         let w = window(showing: tab.itemID)
         let typed = w?.pendingTypedNavigation ?? false
@@ -588,23 +585,18 @@ extension BrowserStore {
     /// Downloads `url` through the page `tab` is showing (its cookies go with the request). Needs no window.
     func startDownload(of url: URL, from tab: TabRuntime) {
         if let downloadStarter { downloadStarter(url, tab); return }
-        tab.webView.startDownload(using: URLRequest(url: url)) { [weak self] download in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                download.delegate = self.downloads
-                self.downloads.began(download, from: tab.webView)
-            }
-        }
+        tab.page.download(url)
     }
 
     /// A script-sized window (an OAuth sign-in, a payment sheet) gets a small window of its own, like a real popup. It
     /// needs no browser window, so a page in the menu-bar panel can have one too. `bringForward` is for a window the user
     /// asked for from a panel that does not make Cosmos the frontmost app; a page on its own never takes the focus.
-    func openPopup(from tab: TabRuntime, configuration: WKWebViewConfiguration, features: WKWindowFeatures, bringForward: Bool = false) -> WKWebView {
-        let rt = TabRuntime(itemID: UUID(), profileID: tab.profileID, configuration: configuration, host: self)
+    func openPopup(_ page: EnginePage, profileID: UUID?, request: NewPageRequest, bringForward: Bool = false) -> Bool {
+        guard let onPopupWindow else { return false }
+        let rt = TabRuntime(itemID: UUID(), profileID: profileID, page: page, host: self)
         rt.isEphemeral = true
-        onPopupWindow?(rt, features, bringForward)
-        return rt.webView
+        onPopupWindow(rt, request, bringForward)
+        return true
     }
 
     /// A ring made over a page is of that page: a reload or a followed link leaves it holding the old page's actions.
@@ -614,7 +606,7 @@ extension BrowserStore {
     }
 
     public func tab(_ tab: TabRuntime, showRadialMenu menu: NSMenu, context: RadialContext, center: CGPoint, windowSize: CGSize) -> Bool {
-        guard settings.radialMenu.isActive(on: tab.webView.url?.host),
+        guard settings.radialMenu.isActive(on: tab.url?.host),
               let w = window(showing: tab.itemID) ?? windows.first(where: { $0.peek?.runtime === tab }) else { return false }
         let session = RadialSession(menu: menu, context: context, center: center, windowSize: windowSize,
                                     custom: settings.radialMenu.customRing(for: context), haptics: haptics)
@@ -626,22 +618,42 @@ extension BrowserStore {
         return true
     }
 
-    public func tab(_ tab: TabRuntime, createChildWith configuration: WKWebViewConfiguration, features: WKWindowFeatures) -> WKWebView? {
-        if TabRuntime.isScriptSizedPopup(features) { return openPopup(from: tab, configuration: configuration, features: features) }
-        guard let w = window(showing: tab.itemID) ?? activeWindow else { return nil }
-        // The page must be made from WebKit's configuration, so its runtime has to exist before selecting the tab
-        // (selecting creates one from the profile's own configuration otherwise).
+    public func tab(_ tab: TabRuntime, didOpen page: EnginePage, request: NewPageRequest) -> Bool {
+        if request.isScriptSizedPopup { return openPopup(page, profileID: tab.profileID, request: request) }
+        guard let w = window(showing: tab.itemID) ?? windows.first(where: { $0.peek?.runtime === tab }) ?? activeWindow else { return false }
+        return openTab(with: page, request: request, in: w)
+    }
+
+    /// A page the engine made becomes a new tab, ahead of the others. Its runtime has to exist before the tab is selected
+    /// (selecting makes a fresh page otherwise).
+    @discardableResult
+    func openTab(with page: EnginePage, request: NewPageRequest, in w: WindowState) -> Bool {
         guard let space = workspace.space(w.focusedSpaceID),
-              let id = edit({ $0.addTab(url: nil, under: space.unpinnedRootID, at: 0) }),
-              let rt = ensureRuntime(forItem: id, in: w, configuration: configuration, load: false) else { return nil }
+              let id = edit({ $0.addTab(url: request.url.flatMap { TabRuntime.isWebLink($0) ? $0 : nil }, under: space.unpinnedRootID, at: 0) }),
+              ensureRuntime(forItem: id, in: w, page: page, load: false) != nil else { return false }
         select(id, in: w)
-        return rt.webView
+        return true
+    }
+
+    /// A page an extension opened on its own (`chrome.tabs.create`, its options page).
+    func openedByExtension(_ page: EnginePage, request: NewPageRequest, profileID: UUID?) -> Bool {
+        if request.isScriptSizedPopup { return openPopup(page, profileID: profileID, request: request) }
+        guard let w = activeWindow ?? windows.first else { return false }
+        return openTab(with: page, request: request, in: w)
+    }
+
+    public func extensionMenuItems(for tab: TabRuntime, contexts: Set<String>) -> [ExtensionMenuItem] {
+        extensionCenter?.menuItems(for: tab, contexts: contexts) ?? []
+    }
+
+    public func tab(_ tab: TabRuntime, performExtensionItem item: ExtensionMenuItem, context: ExtensionClickContext) {
+        extensionCenter?.performMenuItem(item, context: context, on: tab)
     }
 
     public func tabRequestsClose(_ tab: TabRuntime) {
         if tab.isEphemeral {
             for w in windows where w.peek?.runtime === tab { closePeek(in: w) }
-            NSApp.windows.first { $0.contentView?.subviews.contains(tab.webView) == true }?.close()
+            NSApp.windows.first { $0.contentView.map { tab.view.isDescendant(of: $0) } == true }?.close()
             return
         }
         closeTab(tab.itemID, in: window(showing: tab.itemID) ?? activeWindow)
@@ -668,9 +680,8 @@ extension BrowserStore {
 extension BrowserStore {
     func openPeek(_ url: URL, from itemID: UUID?, in window: WindowState) {
         closePeek(in: window)
-        let pid = itemID.flatMap { profileID(forItem: $0, in: window) } ?? workspace.space(window.focusedSpaceID)?.profileID
-        let env = environment(forProfile: isIncognito ? nil : pid)
-        let rt = TabRuntime(itemID: UUID(), profileID: isIncognito ? nil : pid, configuration: env.makeConfiguration(), host: self)
+        let pid = isIncognito ? nil : (itemID.flatMap { profileID(forItem: $0, in: window) } ?? workspace.space(window.focusedSpaceID)?.profileID)
+        let rt = TabRuntime(itemID: UUID(), profileID: pid, environment: environment(forProfile: pid), host: self)
         rt.isEphemeral = true
         rt.load(url)
         window.peek = PeekSession(runtime: rt, openedFrom: itemID)

@@ -78,6 +78,8 @@ public final class JSONFileStore<Value: Codable> {
         try? fm.createDirectory(at: backupDirectory, withIntermediateDirectories: true)
         let dest = backupDirectory.appendingPathComponent("\(name).\(Self.stamp.string(from: now)).json")
         try? fm.copyItem(at: url, to: dest)
+        // A copy keeps the file's own date; it is dated when it was made, which is what the interval is counted from.
+        try? fm.setAttributes([.modificationDate: now], ofItemAtPath: dest.path)
         for old in backups().dropFirst(keepBackups) { try? fm.removeItem(at: old) }
     }
 
@@ -88,6 +90,14 @@ public final class JSONFileStore<Value: Codable> {
         deleteBackups()
         try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try JSONEncoder.cosmos.encode(value).write(to: url, options: .atomic)
+    }
+
+    /// Moves a file that cannot be read out of the way (`name.unreadable-<date>.json`, beside it), so writing a new one does
+    /// not destroy what may still be recovered from it.
+    public func setAside(now: Date = Date()) {
+        guard fm.fileExists(atPath: url.path) else { return }
+        let dest = url.deletingLastPathComponent().appendingPathComponent("\(name).unreadable-\(Self.stamp.string(from: now)).json")
+        try? fm.moveItem(at: url, to: dest)
     }
 
     public func deleteBackups() {

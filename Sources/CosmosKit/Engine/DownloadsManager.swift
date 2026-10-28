@@ -1,5 +1,5 @@
 import AppKit
-import WebKit
+import CosmosEngine
 
 /// One file coming down (or already down).
 @MainActor
@@ -16,46 +16,40 @@ public final class DownloadItem: Identifiable {
     public private(set) var bytes: Int64 = 0
     public let startedAt = Date()
 
-    @ObservationIgnored fileprivate var download: WKDownload?
-    @ObservationIgnored fileprivate var progressObservation: NSKeyValueObservation?
+    @ObservationIgnored fileprivate var download: EngineDownload?
 
-    init(download: WKDownload) {
+    init(download: EngineDownload) {
         self.download = download
-        sourceURL = download.originalRequest?.url
-        filename = sourceURL?.lastPathComponent.nonEmptyOr("Download") ?? "Download"
-        progressObservation = download.progress.observe(\.fractionCompleted, options: [.new]) { [weak self] p, _ in
-            MainActor.assumeIsolated { self?.fraction = p.fractionCompleted; self?.bytes = p.completedUnitCount }
-        }
+        sourceURL = download.url
+        filename = DownloadsManager.safeFilename(download.suggestedFilename)
     }
 
     public func cancel() {
-        download?.cancel { _ in }
+        download?.cancel()
+        download = nil
         state = .cancelled
     }
 
     public func reveal() { if let destination { NSWorkspace.shared.activateFileViewerSelecting([destination]) } }
     public func open() { if let destination { NSWorkspace.shared.open(destination) } }
 
-    fileprivate func set(filename: String, destination: URL) { self.filename = filename; self.destination = destination }
-    fileprivate func finish() { state = .finished; fraction = 1; progressObservation = nil; download = nil }
-    fileprivate func fail(_ message: String) { state = .failed(message); progressObservation = nil; download = nil }
+    fileprivate func progressed(_ d: EngineDownload) { fraction = d.fraction; bytes = d.receivedBytes }
+    fileprivate func finish(at url: URL) { destination = url; filename = url.lastPathComponent; state = .finished; fraction = 1; download = nil }
+    fileprivate func fail(_ message: String) { state = .failed(message); download = nil }
 
     public var isRunning: Bool { if case .running = state { return true } else { return false } }
 }
 
-private extension String {
-    func nonEmptyOr(_ fallback: String) -> String { isEmpty ? fallback : self }
-}
-
-/// Downloads go straight to ~/Downloads (renamed on collision), like Arc, and show up in the sidebar's tray.
+/// Downloads go straight to ~/Downloads (renamed on collision), like Arc, and show up in the Library.
 @MainActor
 @Observable
-public final class DownloadsManager: NSObject, WKDownloadDelegate {
+public final class DownloadsManager {
     public private(set) var items: [DownloadItem] = []
     /// Called when something starts or finishes, for toasts.
     @ObservationIgnored public var onEvent: ((DownloadItem) -> Void)?
-    @ObservationIgnored private var byDownload: [ObjectIdentifier: DownloadItem] = [:]
     @ObservationIgnored public var directory: URL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+
+    public init() {}
 
     public var hasActive: Bool { items.contains { $0.isRunning } }
     public var overallFraction: Double {
@@ -64,37 +58,52 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
         return running.map(\.fraction).reduce(0, +) / Double(running.count)
     }
 
-    func began(_ download: WKDownload, from webView: WKWebView?) {
+    /// The engine started a download. It writes the file where it keeps its own; once it is complete, it moves here.
+    func began(_ download: EngineDownload) {
         let item = DownloadItem(download: download)
-        byDownload[ObjectIdentifier(download)] = item
+        download.onChange = { [weak self, weak item] d in
+            guard let self, let item else { return }
+            switch d.state {
+            case .running: item.progressed(d)
+            case .finished(let staged): self.finish(item, staged: staged)
+            case .failed(let message): item.fail(message); self.onEvent?(item)
+            case .cancelled: if item.isRunning { item.fail("Cancelled") }
+            }
+        }
         items.insert(item, at: 0)
         onEvent?(item)
     }
 
-    public func clearFinished() { items.removeAll { !$0.isRunning } }
-
-    // MARK: WKDownloadDelegate
-
-    public func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String,
-                         completionHandler: @escaping @MainActor (URL?) -> Void) {
-        let url = uniqueURL(for: Self.safeFilename(suggestedFilename))
-        byDownload[ObjectIdentifier(download)]?.set(filename: url.lastPathComponent, destination: url)
-        completionHandler(url)
-    }
-
-    public func downloadDidFinish(_ download: WKDownload) {
-        guard let item = byDownload.removeValue(forKey: ObjectIdentifier(download)) else { return }
-        item.finish()
-        if let dest = item.destination {
-            DistributedNotificationCenter.default().postNotificationName(NSNotification.Name("com.apple.DownloadFileFinished"), object: dest.path)
+    private func finish(_ item: DownloadItem, staged: URL) {
+        let destination = uniqueURL(for: item.filename)
+        do {
+            try FileManager.default.moveItem(at: staged, to: destination)
+        } catch {
+            item.fail(error.localizedDescription)
+            onEvent?(item)
+            return
         }
+        Self.quarantine(destination, from: item.sourceURL)
+        item.finish(at: destination)
+        DistributedNotificationCenter.default().postNotificationName(NSNotification.Name("com.apple.DownloadFileFinished"), object: destination.path)
         onEvent?(item)
     }
 
-    public func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
-        guard let item = byDownload.removeValue(forKey: ObjectIdentifier(download)) else { return }
-        item.fail(error.localizedDescription)
-        onEvent?(item)
+    /// Removes the downloads in `shown` that are over: Clear takes what the list shows, nothing it hides.
+    public func clear(_ shown: [DownloadItem]) {
+        let gone = Set(shown.filter { !$0.isRunning }.map(\.id))
+        items.removeAll { gone.contains($0.id) }
+    }
+
+    /// Marks a file as downloaded from the web, so macOS checks it before it first opens, unless the engine already did.
+    static func quarantine(_ file: URL, from source: URL?) {
+        var url = file
+        guard (try? url.resourceValues(forKeys: [.quarantinePropertiesKey]))?.quarantineProperties == nil else { return }
+        var properties: [String: Any] = [kLSQuarantineAgentNameKey as String: "Cosmos", kLSQuarantineTypeKey as String: kLSQuarantineTypeWebDownload as String]
+        if let source, ["http", "https"].contains(source.scheme ?? "") { properties[kLSQuarantineDataURLKey as String] = source }
+        var values = URLResourceValues()
+        values.quarantineProperties = properties
+        try? url.setResourceValues(values)
     }
 
     /// The name a server suggests is its opinion, not ours: it never gets to choose a folder.

@@ -90,7 +90,7 @@ final class TestClock: @unchecked Sendable {
         let lists = await f.manager.refresh()
         #expect(names(lists) == ["easylist.network.1", "easylist.cosmetic.1", "easyprivacy.network.1", "fanboy-cookiemonster.cosmetic.1"])
         #expect(f.fetcher.calls.count == 3)
-        for l in lists { #expect(RuleListValidator.validate(json: l.json) == [], "\(l.name)") }
+        for l in lists { #expect(l.kind == .cosmetic || dnrProblems(l.json) == [], "\(l.name)") }
 
         let dir = f.directory.appendingPathComponent("FilterLists")
         #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent("easylist.txt").path))
@@ -145,7 +145,7 @@ final class TestClock: @unchecked Sendable {
         let before = try #require(first.first { $0.name == "easylist.network.1" })
         let after = try #require(second.first { $0.name == "easylist.network.1" })
         #expect(after.ruleCount == before.ruleCount + 1)
-        #expect(after.json.contains("new-ad\\\\.example\\\\.com"))
+        #expect(after.json.contains("||new-ad.example.com^"))
         // old compiled files of the replaced version are cleaned up
         let compiled = try FileManager.default.contentsOfDirectory(atPath: f.directory.appendingPathComponent("FilterLists/compiled").path)
         #expect(compiled.filter { $0.hasPrefix("easylist.network.1.") }.count == 1)
@@ -176,7 +176,7 @@ final class TestClock: @unchecked Sendable {
         #expect(lists.allSatisfy { $0.name.hasPrefix(FilterListManager.fallbackListID) })
         #expect(lists.contains { $0.kind == .network && $0.ruleCount > 50 })
         #expect(lists.contains { $0.kind == .cosmetic })
-        for l in lists { #expect(RuleListValidator.validate(json: l.json) == [], "\(l.name)") }
+        for l in lists { #expect(l.kind == .cosmetic || dnrProblems(l.json) == [], "\(l.name)") }
     }
 
     @Test func cachedRuleListsWorkWithoutAnyNetworkAndUseTheFallbackBeforeTheFirstDownload() async {
@@ -254,7 +254,7 @@ final class TestClock: @unchecked Sendable {
 
         let lists = await manager.refresh()
         #expect(lists.map(\.name) == ["\(info.id).network.1", "\(info.id).cosmetic.1"])
-        #expect(lists[0].json.contains("custom-ads\\\\.example\\\\.com"))
+        #expect(lists[0].json.contains("||custom-ads.example.com^"))
 
         // survives a restart
         let again = FilterListManager(directory: dir.appendingPathComponent("FilterLists"), settingsURL: settingsURL, catalog: [], fetcher: URLSessionFilterListFetcher())
