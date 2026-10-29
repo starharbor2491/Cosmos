@@ -390,7 +390,7 @@ struct PageAgentTests {
 
     /// An extension's `chrome.notifications` too: Cosmos posts it with the extension's icon, and a click reaches the
     /// extension's `onClicked`.
-    @Test(.disabled("Extensions on CEF: Cosmos has to answer chrome.tabs and the toolbar button itself, and put its shim ahead of the worker (docs/cef-engine.md)")) func anExtensionsNotificationIsPostedAndItsClickReachesTheExtension() async throws {
+    @Test func anExtensionsNotificationIsPostedAndItsClickReachesTheExtension() async throws {
         defer { stop() }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-test-notes-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -448,7 +448,7 @@ struct PageAgentTests {
 
     /// `chrome.sidePanel`: Chromium keeps the options but has no panel to show. Cosmos is asked to open it (here by the
     /// button, as `setPanelBehavior` says), and gets the extension's panel page, which runs with the extension's APIs.
-    @Test(.disabled("Extensions on CEF: Cosmos has to answer chrome.tabs and the toolbar button itself, and put its shim ahead of the worker (docs/cef-engine.md)")) func anExtensionsSidePanelOpensAsAPageCosmosShows() async throws {
+    @Test func anExtensionsSidePanelOpensAsAPageCosmosShows() async throws {
         defer { stop() }
         let folder = try extensionFolder([
             "manifest.json": """
@@ -480,7 +480,7 @@ struct PageAgentTests {
 
     /// `identity.launchWebAuthFlow`: Chromium would sign in in a window nobody sees. Cosmos opens the sign-in page as a
     /// window of its own, and the address the site sends back to the extension is the extension's answer.
-    @Test(.disabled("Extensions on CEF: Cosmos has to answer chrome.tabs and the toolbar button itself, and put its shim ahead of the worker (docs/cef-engine.md)")) func anExtensionsSignInOpensAWindowAndEndsWhereTheSiteSendsBack() async throws {
+    @Test func anExtensionsSignInOpensAWindowAndEndsWhereTheSiteSendsBack() async throws {
         defer { stop() }
         let server = try await SiteServer(routes: [
             "/": html("<body>hello</body>"),
@@ -693,49 +693,10 @@ struct PageAgentTests {
 
     // MARK: Extensions
 
-    /// An extension runs inside Chromium with Chromium's own `chrome.*` APIs. What Chrome would draw for it (the button
-    /// and its badge, a menu item, a shortcut) reaches Cosmos, and Cosmos's clicks reach the extension with the right tab.
-    /// A click on an extension's button goes to the tab the page is in, which Cosmos first asks Chromium about. A Chromium
-    /// slow to answer (a busy Mac) must not lose the click: here it is paused for two seconds at that moment.
-    @Test(.disabled("Extensions on CEF: Cosmos has to answer chrome.tabs and the toolbar button itself, and put its shim ahead of the worker (docs/cef-engine.md)")) func anExtensionsButtonStillWorksWhenChromiumIsSlowToSayWhichTabThePageIsIn() async throws {
-        defer { stop() }
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-test-slow-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: folder) }
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let files = [
-            "manifest.json": """
-            {"manifest_version": 3, "name": "Cosmos Slow", "version": "1.0", "background": {"service_worker": "worker.js"},
-             "action": {"default_title": "Slow"}, "content_scripts": [{"matches": ["http://127.0.0.1/*"], "js": ["content.js"]}]}
-            """,
-            "worker.js": "chrome.action.onClicked.addListener(tab => chrome.tabs.sendMessage(tab.id, 'action'));",
-            "content.js": "chrome.runtime.onMessage.addListener(m => document.documentElement.setAttribute('data-got-' + m, '1'));",
-        ]
-        for (name, text) in files { try Data(text.utf8).write(to: folder.appendingPathComponent(name)) }
-        let profile = try #require(rig.store.environment(forProfile: rig.space.profileID).engineProfile as? ChromiumProfile)
-        let host = try #require(profile.extensions as? ChromiumExtensionHost)
-        let id = try await host.load(folder: folder)
-        let server = try await SiteServer(routes: ["/": html("<body>hello</body>")])
-        let runtime = try await open(URL(string: "http://127.0.0.1:\(server.port)/")!)
-        try await waitFor { host.actions(for: runtime.page).contains { $0.extensionID == id } }
-        let browser = try #require(await profile.processIDs().first)
-        defer { kill(browser, SIGCONT) }
-        host.willAskTab = {
-            kill(browser, SIGSTOP)
-            DispatchQueue.global().asyncAfter(deadline: .now() + 2) { kill(browser, SIGCONT) }
-        }
-        var popups = 0
-        rig.store.onPopupWindow = { _, _, _ in popups += 1 }
-        let tabs = rig.store.workspace.unpinned(in: rig.space).count
-        _ = await host.performAction(id, on: runtime.page)
-        host.willAskTab = nil
-        for _ in 0..<100 where (await runtime.evaluate(returning: "document.documentElement.getAttribute('data-got-action')") as? String) == nil {
-            try await Task.sleep(for: .milliseconds(50))
-        }
-        #expect(await runtime.evaluate(returning: "document.documentElement.getAttribute('data-got-action')") as? String == "1")
-        #expect(rig.store.workspace.unpinned(in: rig.space).count == tabs && popups == 0, "the click opened nothing else")
-    }
-
-    @Test(.disabled("Extensions on CEF: Cosmos has to answer chrome.tabs and the toolbar button itself, and put its shim ahead of the worker (docs/cef-engine.md)")) func anExtensionRunsAndItsButtonMenuAndShortcutWork() async throws {
+    /// An extension runs inside Chromium with Chromium's own `chrome.*` APIs, from a copy with Cosmos's scripts ahead of
+    /// its own. What Chrome would draw for it (the button and its badge, a menu item, a shortcut) reaches Cosmos, and
+    /// Cosmos's clicks reach the extension with the right tab, by Cosmos's tab ids.
+    @Test func anExtensionRunsAndItsButtonMenuAndShortcutWork() async throws {
         defer { stop() }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-test-extension-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -783,7 +744,6 @@ struct PageAgentTests {
         let tabs = rig.store.workspace.unpinned(in: rig.space).count
         #expect(await extensions.performAction(id, on: runtime.page) == nil, "no popup: the click goes to the worker")
         #expect(try await waitForAttribute("data-got-action") == "1")
-        // Finding the tab the page is in means looking into Chromium's tabs, which are not pages to open.
         try await Task.sleep(for: .milliseconds(1200))
         #expect(rig.store.workspace.unpinned(in: rig.space).count == tabs && popups == 0, "the click opened nothing else")
 
@@ -796,6 +756,267 @@ struct PageAgentTests {
         let command = try #require(extensions.commands.first { $0.extensionID == id && $0.name == "ping" })
         await extensions.performCommand(command, on: runtime.page)
         #expect(try await waitForAttribute("data-got-command-ping") == "1")
+    }
+
+    /// The value of an attribute on the page's root element, once a script there has set it (nil after ten seconds).
+    private func waitForAttribute(_ name: String, in runtime: TabRuntime) async throws -> String? {
+        for _ in 0..<200 {
+            if let v = await runtime.evaluate(returning: "document.documentElement.getAttribute('\(name)')") as? String { return v }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        return nil
+    }
+
+    /// `chrome.tabs.query` answers with Cosmos's tabs, by Cosmos's ids. An extension sees a tab's address only with the
+    /// "tabs" permission or a host permission for its site, as in Chrome; and a content script's message says which tab
+    /// it came from (Chromium does not know, as Cosmos's pages are not Chrome tabs).
+    @Test func anExtensionSeesCosmossTabsAsItsPermissionsAllow() async throws {
+        defer { stop() }
+        let server = try await SiteServer(routes: ["/": html("<title>Here</title>here"), "/other": html("<title>There</title>there")])
+        func extensionFiles(_ permissions: String) -> [String: String] {
+            [
+                "manifest.json": """
+                {"manifest_version": 3, "name": "Cosmos Tabs", "version": "1.0", "permissions": [\(permissions)], "host_permissions": ["http://127.0.0.1/*"],
+                 "background": {"service_worker": "worker.js"}, "content_scripts": [{"matches": ["http://127.0.0.1/*", "http://localhost/*"], "js": ["content.js"]}]}
+                """,
+                "worker.js": """
+                chrome.runtime.onMessage.addListener((m, sender, reply) => {
+                  chrome.tabs.query({}).then(tabs => reply({ tabs: tabs.map(t => [t.id, t.url || null, t.active]), me: sender.tab && sender.tab.id,
+                                                             myURL: sender.tab && sender.tab.url, frame: sender.frameId }));
+                  return true;
+                });
+                """,
+                "content.js": "chrome.runtime.sendMessage('query').then(r => document.documentElement.setAttribute('data-tabs', JSON.stringify(r)));",
+            ]
+        }
+        let plain = try extensionFolder(extensionFiles(""))
+        let withTabs = try extensionFolder(extensionFiles("\"tabs\""))
+        defer { try? FileManager.default.removeItem(at: plain); try? FileManager.default.removeItem(at: withTabs) }
+        let profile = try #require(rig.store.environment(forProfile: rig.space.profileID).engineProfile as? ChromiumProfile)
+        let host = try #require(profile.extensions as? ChromiumExtensionHost)
+        _ = try await host.load(folder: plain)
+        let other = try await open(URL(string: "http://localhost:\(server.port)/other")!)
+        let here = try await open(URL(string: "http://127.0.0.1:\(server.port)/")!)
+        let hereID = host.tabNumber(of: try #require(here.page as? ChromiumPage))
+        let otherID = host.tabNumber(of: try #require(other.page as? ChromiumPage))
+        let seen = try #require(try await waitForAttribute("data-tabs", in: here))
+        let answer = try #require(try JSONSerialization.jsonObject(with: Data(seen.utf8)) as? [String: Any])
+        #expect(answer["me"] as? Int == hereID, "the message says which tab it came from")
+        #expect(answer["myURL"] as? String == "http://127.0.0.1:\(server.port)/")
+        #expect(answer["frame"] as? Int == 0)
+        let tabs = try #require(answer["tabs"] as? [[Any]])
+        #expect(Set(tabs.compactMap { $0.first as? Int }) == [hereID, otherID])
+        #expect(tabs.first { $0.first as? Int == hereID }?[1] as? String == "http://127.0.0.1:\(server.port)/", "a site it has a host permission for")
+        #expect(tabs.first { $0.first as? Int == otherID }?[1] is NSNull, "a site it has no host permission for (its content script runs there): no address")
+        #expect(tabs.first { $0.first as? Int == hereID }?[2] as? Bool == true, "the tab the window shows")
+        // Where it has only a content script, the tab its script is in is still no secret to it (Chrome's sender.tab).
+        let seenThere = try #require(try await waitForAttribute("data-tabs", in: other))
+        let there = try #require(try JSONSerialization.jsonObject(with: Data(seenThere.utf8)) as? [String: Any])
+        #expect(there["myURL"] as? String == "http://localhost:\(server.port)/other")
+
+        _ = try await host.load(folder: withTabs)
+        here.reload()
+        try await Task.sleep(for: .milliseconds(300))
+        for _ in 0..<100 where ((await here.evaluate(returning: "document.documentElement.getAttribute('data-tabs') || ''") as? String) ?? "").contains("localhost") == false {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let both = await here.evaluate(returning: "document.documentElement.getAttribute('data-tabs')") as? String ?? ""
+        #expect(both.contains("http://localhost:\(server.port)/other"), "with the tabs permission, every tab's address")
+    }
+
+    /// An extension has the APIs its manifest asks for, and no others, even when its scripts post to Cosmos directly past
+    /// the shim; and `chrome.scripting` needs a host permission for the tab's site, which the sites of its content scripts
+    /// are not (as in Chrome).
+    @Test func anExtensionGetsOnlyTheAPIsAndSitesItsManifestAsksFor() async throws {
+        defer { stop() }
+        let server = try await SiteServer(routes: ["/": html("<title>Here</title>here")])
+        func extensionFiles(_ name: String, _ permissions: String, _ onClick: String, hosts: String = "") -> [String: String] {
+            [
+                "manifest.json": """
+                {"manifest_version": 3, "name": "\(name)", "version": "1.0", "permissions": [\(permissions)], "host_permissions": [\(hosts)],
+                 "action": {"default_title": "\(name)"},
+                 "background": {"service_worker": "worker.js"}, "content_scripts": [{"matches": ["http://127.0.0.1/*"], "js": ["content.js"]}]}
+                """,
+                "worker.js": "chrome.action.onClicked.addListener(async tab => { \(onClick) });",
+                "content.js": "chrome.runtime.onMessage.addListener(m => { document.documentElement.dataset[m.key] = m.value; });",
+            ]
+        }
+        // No "scripting", no "notifications": straight to Cosmos, as the shim would post them.
+        let forger = try extensionFolder(extensionFiles("Cosmos Forger", "", """
+            self.__cosmosExt(JSON.stringify({ kind: 'notification', id: 'n', title: 'forged', message: 'x' }));
+            self.__cosmosExt(JSON.stringify({ kind: 'call', id: 990001, api: 'scripting.executeScript', args: [{ target: { tabId: tab.id },
+              code: "document.documentElement.dataset.forged = 'code'", func: "() => { document.documentElement.dataset.forged = 'func'; }", args: [] }] }));
+            setTimeout(() => chrome.tabs.sendMessage(tab.id, { key: 'forgerDone', value: '1' }), 600);
+            """))
+        // A host permission for the site, but no "scripting".
+        let hostOnly = try extensionFolder(extensionFiles("Cosmos Host Only", "", """
+            self.__cosmosExt(JSON.stringify({ kind: 'call', id: 990002, api: 'scripting.executeScript', args: [{ target: { tabId: tab.id },
+              func: "() => { document.documentElement.dataset.hostOnly = 'ran'; }", args: [] }] }));
+            setTimeout(() => chrome.tabs.sendMessage(tab.id, { key: 'hostOnlyDone', value: '1' }), 600);
+            """, hosts: "\"http://127.0.0.1/*\""))
+        // "scripting", but no host permission: the content script's site is not one.
+        let scripter = try extensionFolder(extensionFiles("Cosmos Scripter", "\"scripting\"", """
+            const r = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => { document.documentElement.dataset.injected = '1'; } })
+              .then(() => 'ran', () => 'refused');
+            chrome.tabs.sendMessage(tab.id, { key: 'scripter', value: r });
+            """))
+        defer { for f in [forger, hostOnly, scripter] { try? FileManager.default.removeItem(at: f) } }
+        let profile = try #require(rig.store.environment(forProfile: rig.space.profileID).engineProfile as? ChromiumProfile)
+        let host = try #require(profile.extensions as? ChromiumExtensionHost)
+        var notes: [String] = []
+        host.onNotification = { _, note in notes.append(note.title) }
+        let forgerID = try await host.load(folder: forger)
+        let hostOnlyID = try await host.load(folder: hostOnly)
+        let scripterID = try await host.load(folder: scripter)
+        let here = try await open(URL(string: "http://127.0.0.1:\(server.port)/")!)
+        try await Task.sleep(for: .milliseconds(300))
+
+        _ = await host.performAction(forgerID, on: here.page)
+        #expect(try await waitForAttribute("data-forger-done", in: here) == "1")
+        #expect(await here.evaluate(returning: "document.documentElement.dataset.forged || ''") as? String == "", "no script went in")
+        #expect(notes.isEmpty, "no notification was posted")
+
+        _ = await host.performAction(hostOnlyID, on: here.page)
+        #expect(try await waitForAttribute("data-host-only-done", in: here) == "1")
+        #expect(await here.evaluate(returning: "document.documentElement.dataset.hostOnly || ''") as? String == "", "a host permission is not scripting")
+
+        _ = await host.performAction(scripterID, on: here.page)
+        #expect(try await waitForAttribute("data-scripter", in: here) == "refused")
+        #expect(await here.evaluate(returning: "document.documentElement.dataset.injected || ''") as? String == "")
+    }
+
+    /// Two extensions with the same name have worlds of their own in a page: what one leaves in its world, the other does
+    /// not see.
+    @Test func extensionsWithTheSameNameDoNotShareAWorld() async throws {
+        defer { stop() }
+        let server = try await SiteServer(routes: ["/": html("<title>Here</title>here")])
+        func extensionFiles(_ onClick: String) -> [String: String] {
+            [
+                "manifest.json": """
+                {"manifest_version": 3, "name": "Same Name", "version": "1.0", "permissions": ["scripting"], "host_permissions": ["http://127.0.0.1/*"],
+                 "action": {"default_title": "Same"}, "background": {"service_worker": "worker.js"}}
+                """,
+                "worker.js": "chrome.action.onClicked.addListener(async tab => { \(onClick) });",
+            ]
+        }
+        let first = try extensionFolder(extensionFiles("""
+            await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => { window.leftBehind = 'secret'; } });
+            """))
+        let second = try extensionFolder(extensionFiles("""
+            const r = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => typeof window.leftBehind });
+            await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', args: [r[0].result],
+              func: (seen) => { document.documentElement.dataset.seen = seen; } });
+            """))
+        defer { try? FileManager.default.removeItem(at: first); try? FileManager.default.removeItem(at: second) }
+        let profile = try #require(rig.store.environment(forProfile: rig.space.profileID).engineProfile as? ChromiumProfile)
+        let host = try #require(profile.extensions as? ChromiumExtensionHost)
+        let firstID = try await host.load(folder: first)
+        let secondID = try await host.load(folder: second)
+        #expect(firstID != secondID)
+        let here = try await open(URL(string: "http://127.0.0.1:\(server.port)/")!)
+        _ = await host.performAction(firstID, on: here.page)
+        try await Task.sleep(for: .milliseconds(500))
+        _ = await host.performAction(secondID, on: here.page)
+        #expect(try await waitForAttribute("data-seen", in: here) == "undefined")
+    }
+
+    /// `chrome.tabs.create` opens one of Cosmos's tabs, and `chrome.scripting` runs in a tab where the extension has a host
+    /// permission, and nowhere else.
+    @Test func anExtensionOpensTabsAndRunsScriptsOnlyWhereItMay() async throws {
+        defer { stop() }
+        let server = try await SiteServer(routes: ["/": html("<title>Here</title>here"), "/other": html("<title>There</title>there"),
+                                                   "/made": html("<title>Made</title>made")])
+        let folder = try extensionFolder([
+            "manifest.json": """
+            {"manifest_version": 3, "name": "Cosmos Scripts", "version": "1.0", "permissions": ["scripting"],
+             "host_permissions": ["http://127.0.0.1/*"], "background": {"service_worker": "worker.js"}, "action": {"default_title": "Run"}}
+            """,
+            "worker.js": """
+            chrome.action.onClicked.addListener(async tab => {
+              const r = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: (end) => document.title + end, args: ['!'] });
+              const others = (await chrome.tabs.query({})).filter(t => t.id !== tab.id);
+              let refused = 'no';
+              try { await chrome.scripting.executeScript({ target: { tabId: others[0].id }, func: () => 1 }); } catch (e) { refused = 'yes'; }
+              await chrome.tabs.create({ url: 'http://localhost:\(server.port)/made', active: false });
+              await chrome.scripting.executeScript({ target: { tabId: tab.id }, args: [r[0].result, refused],
+                func: (got, no) => { document.documentElement.dataset.result = got; document.documentElement.dataset.refused = no; } });
+            });
+            """,
+        ])
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let extensions = try #require(rig.store.environment(forProfile: rig.space.profileID).engineProfile.extensions)
+        let id = try await extensions.load(folder: folder)
+        _ = try await open(URL(string: "http://localhost:\(server.port)/other")!)
+        let here = try await open(URL(string: "http://127.0.0.1:\(server.port)/")!)
+        let tabs = rig.store.workspace.unpinned(in: rig.space).count
+        _ = await extensions.performAction(id, on: here.page)
+        #expect(try await waitForAttribute("data-result", in: here) == "Here!")
+        #expect(await here.evaluate(returning: "document.documentElement.dataset.refused") as? String == "yes", "no permission for the other site")
+        try await waitFor(5) { self.rig.store.workspace.unpinned(in: self.rig.space).count == tabs + 1 }
+        #expect(rig.store.workspace.unpinned(in: rig.space).contains { $0.tab?.url?.path == "/made" }, "a tab of Cosmos's")
+        #expect(rig.store.currentRuntime(in: rig.window) === here, "opened behind, as asked")
+    }
+
+    /// A button with a popup opens the extension's page, which Cosmos shows under the button; the page asks for the tab it
+    /// is over as Chrome's do (the active tab of the current window), and gets it.
+    @Test func aButtonsPopupIsTheExtensionsPageAndSeesItsTab() async throws {
+        defer { stop() }
+        let folder = try extensionFolder([
+            "manifest.json": """
+            {"manifest_version": 3, "name": "Cosmos Popup", "version": "1.0", "permissions": ["activeTab"],
+             "action": {"default_title": "Popup", "default_popup": "popup.html"}}
+            """,
+            "popup.html": "<!doctype html><html><head><title>popup</title></head><body><script src='popup.js'></script></body></html>",
+            "popup.js": "chrome.tabs.query({ active: true, currentWindow: true }).then(t => { document.title = 'popup for ' + t[0].id + ' ' + t[0].url; });",
+        ])
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let profile = try #require(rig.store.environment(forProfile: rig.space.profileID).engineProfile as? ChromiumProfile)
+        let host = try #require(profile.extensions as? ChromiumExtensionHost)
+        let id = try await host.load(folder: folder)
+        let server = try await SiteServer(routes: ["/": html("<title>Here</title>here")])
+        let here = try await open(URL(string: "http://127.0.0.1:\(server.port)/")!)
+        let popup = try #require(await host.performAction(id, on: here.page) as? ChromiumPage)
+        defer { popup.close() }
+        let expected = "popup for \(host.tabNumber(of: try #require(here.page as? ChromiumPage))) http://127.0.0.1:\(server.port)/"
+        try await waitFor { popup.state.title == expected }
+        #expect(popup.state.title == expected, "the click gave it the tab (activeTab), address and all")
+    }
+
+    /// `chrome.tabs` events: the extension hears of a tab Cosmos opens, of its page loading and of its closing.
+    @Test func anExtensionHearsTabsOpenChangeAndClose() async throws {
+        defer { stop() }
+        let server = try await SiteServer(routes: ["/": html("<title>Here</title>here"), "/new": html("<title>New</title>new")])
+        let folder = try extensionFolder([
+            "manifest.json": """
+            {"manifest_version": 3, "name": "Cosmos Events", "version": "1.0", "permissions": ["tabs", "scripting"],
+             "host_permissions": ["http://127.0.0.1/*"], "background": {"service_worker": "worker.js"}, "action": {"default_title": "Log"}}
+            """,
+            "worker.js": """
+            const log = [];
+            chrome.tabs.onCreated.addListener(t => log.push('created ' + t.id));
+            chrome.tabs.onUpdated.addListener((id, change) => { if (change.status === 'complete') log.push('complete ' + id); });
+            chrome.tabs.onRemoved.addListener(id => log.push('removed ' + id));
+            chrome.action.onClicked.addListener(tab => chrome.scripting.executeScript({ target: { tabId: tab.id }, args: [log.join(',')],
+              func: (l) => { document.documentElement.dataset.log = l; } }));
+            """,
+        ])
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let profile = try #require(rig.store.environment(forProfile: rig.space.profileID).engineProfile as? ChromiumProfile)
+        let host = try #require(profile.extensions as? ChromiumExtensionHost)
+        let id = try await host.load(folder: folder)
+        let here = try await open(URL(string: "http://127.0.0.1:\(server.port)/")!)
+        try await Task.sleep(for: .milliseconds(500))
+        let made = try await open(URL(string: "http://localhost:\(server.port)/new")!)
+        let madeID = host.tabNumber(of: try #require(made.page as? ChromiumPage))
+        try await Task.sleep(for: .milliseconds(500))
+        rig.store.closeTab(made.itemID, in: rig.window)
+        try await Task.sleep(for: .milliseconds(500))
+        rig.store.select(here.itemID, in: rig.window)
+        _ = await host.performAction(id, on: here.page)
+        let log = try #require(try await waitForAttribute("data-log", in: here)).split(separator: ",").map(String.init)
+        #expect(log.contains("created \(madeID)"))
+        #expect(log.contains("complete \(madeID)"))
+        #expect(log.contains("removed \(madeID)"))
     }
 
     // MARK: Boosts and blocking

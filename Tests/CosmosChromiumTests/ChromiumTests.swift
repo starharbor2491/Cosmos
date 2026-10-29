@@ -34,6 +34,31 @@ import CosmosEngine
     }
 }
 
+@Suite struct CDPConnectionTests {
+    /// A command to a page's session that is waiting when the page goes away (its tab closed) fails then, instead of
+    /// waiting for ever; one to another session still gets its answer.
+    @Test func aCommandToASessionThatGoesAwayFails() async throws {
+        let toCosmos = Pipe(), toChromium = Pipe()
+        let connection = CDPConnection(readFrom: toCosmos.fileHandleForReading, writeTo: toChromium.fileHandleForWriting)
+        connection.start()
+        defer { connection.close(); try? toCosmos.fileHandleForWriting.close() }
+        func send(_ message: [String: Any]) throws {
+            toCosmos.fileHandleForWriting.write(try JSONSerialization.data(withJSONObject: message) + Data([0]))
+        }
+        let gone = Task { try await connection.send("Runtime.evaluate", ["expression": "1"], session: "closing") }
+        let staying = Task { try await connection.send("Runtime.evaluate", ["expression": "2"], session: "staying") }
+        // Both commands are out before the tab goes.
+        var written = Data()
+        while written.split(separator: 0).count < 2 { written.append(toChromium.fileHandleForReading.availableData) }
+        let ids = written.split(separator: 0).compactMap { try? JSONSerialization.jsonObject(with: Data($0)) as? [String: Any] }
+        let stayingID = try #require(ids.first { $0["sessionId"] as? String == "staying" }?["id"] as? Int)
+        try send(["method": "Target.detachedFromTarget", "params": ["sessionId": "closing", "targetId": "T"]])
+        await #expect(throws: CDPError.self) { try await gone.value }
+        try send(["id": stayingID, "result": ["result": ["value": 2]]])
+        #expect(try await staying.value["result"] as? [String: Int] == ["value": 2])
+    }
+}
+
 @Suite struct ChromiumPreferencesTests {
     @Test func cosmossSettingsBecomeChromiumsOwnPreferences() throws {
         var s = EngineSettings()
@@ -254,5 +279,178 @@ import CosmosEngine
         window.contentView?.addSubview(over)
         view.saw(try click(at: NSPoint(x: 300, y: 9)))
         #expect(view.recentContextClick(now: now + 0.5)?.location == NSPoint(x: 9, y: 9))
+    }
+}
+
+/// The copy of an extension Chromium loads, with Cosmos's scripts ahead of the extension's own.
+@Suite struct ExtensionStageTests {
+    @Test func theWorkerRunsCosmossScriptFirstAndKeepsItsOwnFolder() {
+        let (classic, worker) = ExtensionStage.rewrite(["background": ["service_worker": "js/bg.js"]])
+        #expect((classic["background"] as? [String: Any])?["service_worker"] as? String == "js/cosmos-worker.js",
+                "next to the extension's own, so its relative importScripts resolve as before")
+        #expect(worker.path == "js/cosmos-worker.js")
+        let shim = ChromiumResources.jsString("/cosmos-extension/worker.js")
+        #expect(worker.source == "importScripts(\(shim), \(ChromiumResources.jsString("/js/bg.js")));\n")
+
+        let (_, module) = ExtensionStage.rewrite(["background": ["service_worker": "bg.js", "type": "module"]])
+        #expect(module.path == "cosmos-worker.js")
+        #expect(module.source == "import \(shim);\nimport \(ChromiumResources.jsString("/bg.js"));\n")
+
+        // One without a worker gets one: its pages ask Cosmos through it.
+        let (none, only) = ExtensionStage.rewrite(["name": "x"])
+        #expect((none["background"] as? [String: Any])?["service_worker"] as? String == "cosmos-worker.js")
+        #expect(only.source == "importScripts(\(shim));\n")
+    }
+
+    @Test func cosmossContentScriptGoesAheadOfTheExtensionsInItsWorldOnly() {
+        let manifest: [String: Any] = ["content_scripts": [
+            ["matches": ["<all_urls>"], "js": ["a.js", "b.js"]],
+            ["matches": ["<all_urls>"], "js": ["main.js"], "world": "MAIN"],
+            ["matches": ["<all_urls>"], "css": ["c.css"]],
+        ]]
+        let sets = ExtensionStage.rewrite(manifest).manifest["content_scripts"] as? [[String: Any]] ?? []
+        #expect(sets.map { $0["js"] as? [String] ?? [] } == [["cosmos-extension/content.js", "a.js", "b.js"], ["main.js"], []])
+    }
+
+    @Test func aPageGetsCosmossScriptFirst() {
+        let tag = "<script src=\"/cosmos-extension/page.js\"></script>"
+        #expect(ExtensionStage.withPageShim("<!doctype html><html lang=en><HEAD><title>t</title></head>") == "<!doctype html><html lang=en><HEAD>\(tag)<title>t</title></head>")
+        #expect(ExtensionStage.withPageShim("<!DOCTYPE html><body>x</body>") == "<!DOCTYPE html>\(tag)<body>x</body>", "after the doctype, never before it")
+        #expect(ExtensionStage.withPageShim("<p>bare</p>") == "\(tag)<p>bare</p>")
+    }
+
+    @Test func aStagedCopyHasCosmossFilesAndTheExtensionsOwn() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-stage-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("source", isDirectory: true)
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        try Data(#"{"manifest_version": 3, "name": "t", "version": "1", "background": {"service_worker": "w.js"}}"#.utf8)
+            .write(to: source.appendingPathComponent("manifest.json"))
+        try Data("self.own = 1".utf8).write(to: source.appendingPathComponent("w.js"))
+        try Data("<html><head></head></html>".utf8).write(to: source.appendingPathComponent("popup.html"))
+        let staged = root.appendingPathComponent("staged", isDirectory: true)
+        try ExtensionStage.stage(source, to: staged, scripts: .init(worker: "W", content: "C", page: "P"))
+        #expect(try String(contentsOf: staged.appendingPathComponent("cosmos-extension/worker.js"), encoding: .utf8) == "W")
+        #expect(try String(contentsOf: staged.appendingPathComponent("w.js"), encoding: .utf8) == "self.own = 1")
+        #expect(try String(contentsOf: staged.appendingPathComponent("popup.html"), encoding: .utf8).contains("cosmos-extension/page.js"))
+        #expect(try String(contentsOf: source.appendingPathComponent("popup.html"), encoding: .utf8) == "<html><head></head></html>", "the extension's own folder is left as it was")
+    }
+
+    /// Staging writes into the copy (the manifest, its pages, the worker). A link in the extension's folder would carry
+    /// those writes to the file it points at, anywhere on the Mac; a worker path with ".." would put the worker outside.
+    @Test func anExtensionWithALinkOrAPathOutOfItsFolderIsNotStaged() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-stage-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fm = FileManager.default
+        let outside = root.appendingPathComponent("someone's notes.html")
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("<html><head></head>mine</html>".utf8).write(to: outside)
+
+        let linked = root.appendingPathComponent("linked", isDirectory: true)
+        try fm.createDirectory(at: linked, withIntermediateDirectories: true)
+        try Data(#"{"manifest_version": 3, "name": "t", "version": "1"}"#.utf8).write(to: linked.appendingPathComponent("manifest.json"))
+        try fm.createSymbolicLink(at: linked.appendingPathComponent("popup.html"), withDestinationURL: outside)
+        #expect(throws: CDPError.self) {
+            try ExtensionStage.stage(linked, to: root.appendingPathComponent("staged-1"), scripts: .init(worker: "W", content: "C", page: "P"))
+        }
+        #expect(try String(contentsOf: outside, encoding: .utf8) == "<html><head></head>mine</html>", "the file the link points at is untouched")
+
+        let escaping = root.appendingPathComponent("escaping", isDirectory: true)
+        try fm.createDirectory(at: escaping, withIntermediateDirectories: true)
+        try Data(#"{"manifest_version": 3, "name": "t", "version": "1", "background": {"service_worker": "../../w.js"}}"#.utf8)
+            .write(to: escaping.appendingPathComponent("manifest.json"))
+        #expect(throws: CDPError.self) {
+            try ExtensionStage.stage(escaping, to: root.appendingPathComponent("a/b/staged-2"), scripts: .init(worker: "W", content: "C", page: "P"))
+        }
+        #expect(!fm.fileExists(atPath: root.appendingPathComponent("a/cosmos-worker.js").path))
+    }
+}
+
+@Suite struct ExtensionMatchPatternTests {
+    private func matches(_ pattern: String, _ url: String) -> Bool {
+        ExtensionMatchPattern(pattern)?.matches(URL(string: url)!) ?? false
+    }
+
+    @Test func patternsMatchAsChromesDo() {
+        #expect(matches("<all_urls>", "https://a.example/x"))
+        #expect(matches("<all_urls>", "file:///tmp/x"))
+        #expect(!matches("<all_urls>", "chrome-extension://abc/x"))
+        #expect(matches("*://*/*", "http://a.example/"))
+        #expect(!matches("*://*/*", "file:///tmp/x"), "* is http or https")
+        #expect(matches("https://*.example.com/*", "https://example.com/a"))
+        #expect(matches("https://*.example.com/*", "https://a.b.example.com/a?q=1"))
+        #expect(!matches("https://*.example.com/*", "https://notexample.com/"))
+        #expect(!matches("https://*.example.com/*", "http://example.com/"))
+        #expect(matches("http://127.0.0.1/*", "http://127.0.0.1:8080/page"), "no port in the pattern: every port")
+        #expect(!matches("http://127.0.0.1:9/*", "http://127.0.0.1:8080/page"))
+        #expect(matches("https://example.com/a/*/c", "https://example.com/a/b/c"))
+        #expect(!matches("https://example.com/a/*/c", "https://example.com/a/b/d"))
+        #expect(ExtensionMatchPattern("https://a*.example.com/*") == nil, "a star only as the whole host or its first label")
+        #expect(ExtensionMatchPattern("example.com") == nil)
+    }
+}
+
+/// Cosmos's own matching of the filter lists' request rules, for profiles the blocker extension does not reach.
+@Suite struct RequestRulesTests {
+    private func filter(_ f: String, _ url: String, caseSensitive: Bool = false) -> Bool { URLFilter(f, caseSensitive: caseSensitive).matches(url) }
+
+    @Test func urlFiltersMatchAsDeclarativeNetRequestsDo() {
+        #expect(filter("||ads.example.com^", "https://ads.example.com/x.js"))
+        #expect(filter("||ads.example.com^", "https://cdn.ads.example.com/x.js"), "a subdomain")
+        #expect(!filter("||ads.example.com^", "https://badads.example.com/x.js"), "not merely ending the same")
+        #expect(filter("||ads.example.com^", "https://ads.example.com"), "^ stands for the end too")
+        #expect(!filter("||ads.example.com^", "https://ads.example.community/"))
+        #expect(filter("/ad.js", "http://site.test/ad.js?v=1"))
+        #expect(filter("/banner/*/img", "http://site.test/banner/a/b/img.png"))
+        #expect(!filter("/banner/*/img", "http://site.test/banner/img.png"))
+        #expect(filter("|https://", "https://a.test/"))
+        #expect(!filter("|https://", "http://a.test/?https://"))
+        #expect(filter(".swf|", "http://a.test/movie.swf"))
+        #expect(!filter(".swf|", "http://a.test/movie.swf?x"))
+        #expect(filter("&ad_box=", "http://a.test/?x=1&AD_BOX=2"), "case does not matter unless the rule says")
+        #expect(!filter("&ad_box=", "http://a.test/?x=1&AD_BOX=2", caseSensitive: true))
+        #expect(URLFilter("||ads.example.com^", caseSensitive: false).token == "example")
+        #expect(URLFilter("ad", caseSensitive: false).token == nil)
+    }
+
+    private func list(_ rules: [[String: Any]]) -> CompiledBlockingList {
+        let data = try! JSONSerialization.data(withJSONObject: rules)
+        return CompiledBlockingList(name: "t", json: String(decoding: data, as: UTF8.self), kind: .network, digest: "d")
+    }
+
+    /// Rules are made away from the main thread, a set at a time; a set made for an older change (a slower build) that
+    /// finishes after a newer one does not replace it.
+    @Test func olderRulesDoNotReplaceNewerOnes() {
+        let holder = OwnRequestRules()
+        let older = holder.nextGeneration(), newer = holder.nextGeneration()
+        let blocking = RequestRules(lists: [list([["id": 1, "action": ["type": "block"], "condition": ["urlFilter": "||tracker.test^"]]])], allowlist: [])
+        holder.set(blocking, generation: newer)
+        holder.set(nil, generation: older)
+        #expect(holder.blocks(.init(url: "https://tracker.test/a.js", type: "script", initiator: nil, documents: [])))
+    }
+
+    @Test func theRuleOfHighestPriorityDecides() {
+        let rules = RequestRules(lists: [list([
+            ["priority": 1, "action": ["type": "block"], "condition": ["urlFilter": "||tracker.test^"]],
+            ["priority": 2, "action": ["type": "allow"], "condition": ["urlFilter": "||tracker.test/ok.js"]],
+            ["priority": 1, "action": ["type": "block"], "condition": ["urlFilter": "/ad.js", "resourceTypes": ["script"], "domainType": "thirdParty"]],
+            ["priority": 1, "action": ["type": "block"], "condition": ["urlFilter": "/only-here.js", "initiatorDomains": ["news.test"]]],
+            ["priority": 3, "action": ["type": "allowAllRequests"], "condition": ["urlFilter": "||friendly.test^", "resourceTypes": ["main_frame", "sub_frame"]]],
+        ])], allowlist: ["mine.test"])
+        func blocks(_ url: String, _ type: String = "script", from initiator: String? = "https://news.test", in documents: [String] = ["https://news.test/"]) -> Bool {
+            rules.blocks(.init(url: url, type: type, initiator: initiator, documents: documents))
+        }
+        #expect(blocks("https://tracker.test/t.js"))
+        #expect(!blocks("https://tracker.test/ok.js"), "a higher allow")
+        #expect(!blocks("https://tracker.test/", "main_frame", from: nil, in: []), "without resource types, not a page itself")
+        #expect(blocks("https://cdn.test/ad.js"), "a third party's")
+        #expect(!blocks("https://news.test/ad.js"), "the site's own")
+        #expect(!blocks("https://cdn.test/ad.js", "image"), "another kind of request")
+        #expect(blocks("https://cdn.test/only-here.js"))
+        #expect(!blocks("https://cdn.test/only-here.js", from: "https://other.test", in: ["https://other.test/"]))
+        #expect(!blocks("https://tracker.test/t.js", from: "https://friendly.test", in: ["https://friendly.test/"]), "a page excepted as a whole")
+        #expect(!blocks("https://tracker.test/t.js", from: "https://a.mine.test", in: ["https://a.mine.test/"]), "the user's own allowed site")
+        #expect(!blocks("https://tracker.test/t.js", from: "https://x.test", in: ["https://x.test/frame", "https://mine.test/"]), "a frame in an allowed site")
+        #expect(rules.count == 6)
     }
 }

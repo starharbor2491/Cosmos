@@ -416,12 +416,52 @@ public struct ExtensionClickContext: Equatable, Sendable {
     }
 }
 
+/// One of Cosmos's tabs as extensions see it (`chrome.tabs`): its page, the window it is in and its place there.
+public struct ExtensionTab {
+    public var page: EnginePage
+    /// Cosmos's number for the window, the same while it is open.
+    public var windowID: Int
+    public var index: Int
+    /// The tab its window shows.
+    public var isActive: Bool
+    public var isPinned: Bool
+    public init(page: EnginePage, windowID: Int, index: Int, isActive: Bool, isPinned: Bool) {
+        self.page = page; self.windowID = windowID; self.index = index; self.isActive = isActive; self.isPinned = isPinned
+    }
+}
+
+public struct ExtensionWindow: Equatable {
+    public var id: Int
+    public var isFocused: Bool
+    public var frame: CGRect
+    public init(id: Int, isFocused: Bool, frame: CGRect) { self.id = id; self.isFocused = isFocused; self.frame = frame }
+}
+
+/// Cosmos's tabs and windows, for what extensions ask of them (`chrome.tabs`, `chrome.windows`): Cosmos keeps the tabs,
+/// the engine only their pages.
+@MainActor
+public protocol ExtensionTabsHost: AnyObject {
+    /// The profile's tabs that have a page, window by window, in the order the sidebar shows them.
+    var extensionTabs: [ExtensionTab] { get }
+    var extensionWindows: [ExtensionWindow] { get }
+    /// A new tab on `url` in window `windowID` (nil: the focused one), brought forward with `active`; its page.
+    func openExtensionTab(_ url: URL, windowID: Int?, active: Bool) -> EnginePage?
+    func activateExtensionTab(_ page: EnginePage)
+    func closeExtensionTab(_ page: EnginePage)
+    /// A window of its own on `url`, small (of `size`) for a popup; its page.
+    func openExtensionWindow(_ url: URL, popup: Bool, size: CGSize?) -> EnginePage?
+}
+
 /// The browser-UI side of the extension APIs. Extensions run inside the engine with its own `chrome.*` APIs; what the
 /// engine would normally draw (the toolbar button and its popup, menu items, shortcuts) Cosmos draws through this.
 @MainActor
 public protocol EngineExtensions: AnyObject {
     /// Called whenever an action, menu or the set of extensions changes.
     var onChange: (() -> Void)? { get set }
+    /// Where `chrome.tabs` and `chrome.windows` look; nil: extensions see no tabs.
+    var tabsHost: ExtensionTabsHost? { get set }
+    /// Cosmos's tabs changed (one opened, closed, moved or came forward): the extensions hear of it.
+    func tabsDidChange()
     /// An extension wants a notification shown (`chrome.notifications.create`), or took one back.
     var onNotification: ((_ extensionID: String, EngineNotification) -> Void)? { get set }
     var onNotificationClosed: ((_ extensionID: String, _ id: String) -> Void)? { get set }
@@ -441,5 +481,7 @@ public protocol EngineExtensions: AnyObject {
     func menuItems(for page: EnginePage?) -> [ExtensionMenuItem]
     func performMenuItem(_ item: ExtensionMenuItem, context: ExtensionClickContext, on page: EnginePage) async
     var commands: [ExtensionCommand] { get }
-    func performCommand(_ command: ExtensionCommand, on page: EnginePage?) async
+    /// Runs an extension's shortcut over `page`. Returns the popup's page when the shortcut opens the extension's popup.
+    @discardableResult
+    func performCommand(_ command: ExtensionCommand, on page: EnginePage?) async -> EnginePage?
 }

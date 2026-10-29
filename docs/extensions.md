@@ -1,17 +1,46 @@
 # Extensions
 
-Cosmos runs on regular Chromium, so extensions run in Chromium itself, with Chromium's own, complete `chrome.*` APIs:
-content scripts, service workers, `declarativeNetRequest`, `webRequest`, `storage`, `scripting`, `tabs`, `windows`,
-`cookies`, `alarms`, `offscreen`, messaging and the rest behave as they do in Chrome, because they are Chrome's code.
-Manifest V3 extensions work; Manifest V2 ones only as far as the Chromium in use still loads them (Chrome has been
-removing V2).
+Cosmos runs on Chromium (through CEF), so extensions run in Chromium itself, with Chromium's own `chrome.*` APIs:
+content scripts, service workers, `declarativeNetRequest`, `webRequest`, `storage`, `cookies`, `alarms`, `offscreen`,
+`runtime` messaging and the rest behave as they do in Chrome, because they are Chrome's code. Manifest V3 extensions
+work; Chromium 156 no longer loads Manifest V2 ones.
 
-> **On CEF, not working yet.** Cosmos now runs Chromium through CEF, and its pages are not Chrome tabs: `chrome.tabs`
-> finds none of them and the button cannot be clicked through `Extensions.triggerAction`, and Cosmos attaches to an
-> extension's worker only once it has started, so the shim misses the worker's first lines. Extensions load, and their
-> content scripts and `declarativeNetRequest` rules run, in the default profile only; the button, popup, menu items,
-> shortcuts, notifications, side panel and sign-in described below wait for the extension step in
-> [cef-engine.md](cef-engine.md). The live tests for them are switched off until then.
+**Tabs are Cosmos's.** CEF draws Cosmos's pages without Chrome's windows around them, so Chromium knows of no tabs.
+Cosmos loads each extension from a copy (in `Cosmos Extensions/` of the default profile's folder) with a script of its
+own ahead of the extension's: in its service worker, before each of its content scripts and at the top of each of its
+pages. Through it, Cosmos answers `chrome.tabs`, `chrome.windows` and `chrome.scripting` with its own tabs, by tab ids
+of its own:
+
+- `tabs.query` (by Cosmos's tabs: the tab a window shows is `active`, Favorites and pinned tabs are `pinned`; the
+  `audible`, `muted`, `discarded` and `groupId` filters match as for a tab that is none of those), `get`, `getCurrent`, `create`, `update`, `remove`, `reload`, `goBack`, `goForward`, `duplicate`,
+  `highlight`, `captureVisibleTab`, `sendMessage` (to the tab's content scripts, every frame or one), `getZoom`,
+  `setZoom`, `detectLanguage`; the events `onCreated`, `onUpdated`, `onRemoved` and `onActivated`, to the worker and
+  the extension's pages.
+- `windows.getAll`, `get`, `getCurrent`, `getLastFocused`, `create` (a popup is a small window, anything else a tab),
+  `update`.
+- `scripting.executeScript` (a function with arguments, or files; the extension's world or the page's), `insertCSS`,
+  `removeCSS`, and content scripts registered at run time. Each extension's world in a page is its own, even for two
+  extensions of the same name. `insertCSS` adds a `<style>` element from the extension's world, so a page can see it,
+  and a strict `style-src` policy of the page can refuse it, where Chrome's would apply.
+- A content script's messages and ports say which tab and frame they came from (`sender.tab`, `sender.frameId`), as
+  Chrome's do.
+- The permissions are Chrome's: a tab's address and title only with `tabs`, a host permission for its site, or
+  `activeTab`, which a click on the extension's button, menu item or shortcut gives for that tab until it goes to
+  another site; scripts only with `scripting` and where a host permission or `activeTab` reaches; `captureVisibleTab`
+  only with `<all_urls>` or `activeTab`. As in Chrome, the sites of an extension's content scripts are not host
+  permissions. A frame with no address of its own (`about:blank`, `srcdoc`) counts as its origin. An extension opens
+  only websites, `about:blank` and its own pages.
+- An API that needs a permission (`contextMenus`, `notifications`, `sidePanel`, `identity`, `scripting`) does nothing
+  without it, also when an extension's script posts to Cosmos directly instead of through the `chrome.*` call.
+  Cosmos takes a script to run only as a function's source and its arguments, or files of the extension, but it cannot
+  tell a function written in the extension from one it fetched: Manifest V3's rule against code from elsewhere holds
+  for `executeScript` only as far as the extension's own content security policy holds it.
+- An extension whose folder has a link in it (to a file anywhere else), or whose service worker is outside its
+  folder, is not loaded: Cosmos writes to its copy, and would write through the link. Nor is one that copies the `key`
+  of Cosmos's own bridge extension (and so has its id).
+- Not there: `tabs.connect` (`tabs.sendMessage` works), tab groups, and muting; `windows.remove` does nothing.
+- Extensions load into the default profile only (the first profile's spaces); Chromium's DevTools protocol loads them
+  nowhere else.
 
 What Cosmos adds is the part Chrome would draw: Chromium has no toolbar or menus of its own here, so
 Cosmos draws the extension's button, badge and popup, its right-click menu items and its keyboard shortcuts, and sends
@@ -22,7 +51,7 @@ that end in browser UI:
 |---|---|
 | `chrome.action` / `chrome.browserAction`: title, icon, badge text and colour, enable / disable, per-tab values | the button in a row under the address pill, with its badge |
 | the action's popup (`default_popup`, `setPopup`) | the popup page in a popover under the button, sized to what the page lays out (within Chrome's limits) |
-| `action.onClicked` (no popup) | clicking the button; Chromium delivers the event itself |
+| `action.onClicked` (no popup) | clicking the button; Cosmos starts the extension's worker if it is not running, and the listeners get the tab |
 | `chrome.contextMenus` / `chrome.menus`: items, children, `update`, `remove`, contexts `page` `link` `image` `selection` `editable` `video` `audio` `all`, `%s` in titles | the items appear in the page's right-click menu (in the radial menu under More); a click reaches `onClicked` with the click's `info` and the tab |
 | `chrome.commands` (`commands` in the manifest, `_execute_action`) | the shortcut works in Cosmos windows; `onCommand` gets the command and the tab |
 | `chrome.tabs.create`, an options page | the page opens as a Cosmos tab (a script-sized popup window opens as a popup) |
@@ -51,8 +80,8 @@ Arc had and where to add them.
 
 ## Using them
 
-- Every enabled extension is loaded into each profile's Chromium as the profile opens, so each profile (each space
-  with its own cookies) has its own copy of the extension's storage, as separate Chrome profiles would.
+- Every enabled extension is loaded into the default profile (the first one) as it opens. Spaces with a profile of
+  their own have no extensions: Chromium's DevTools protocol loads them into the default profile only.
 - Turn an extension off (it unloads at once) or remove it (its files are deleted) in Settings ▸ Extensions.
 - Extensions never load in Incognito windows.
 
@@ -74,19 +103,18 @@ Arc had and where to add them.
 
 ## How it was checked
 
-What follows was checked on headless Chromium, before CEF; on CEF these tests are switched off until Cosmos answers
-`chrome.tabs` and the button itself.
+The live tests run on CEF, in the test process. Besides the ones below, `PageAgentTests` checks what an extension sees
+of Cosmos's tabs and what its permissions hide, opening tabs and running scripts only where it may, a popup that asks
+for its tab, and the `chrome.tabs` events. The tests below were first written for headless Chromium and pass on CEF.
 
-- **Live, in headless Chromium** (`PageAgentTests.anExtensionRunsAndItsButtonMenuAndShortcutWork`): a Manifest V3
-  extension with a content script, a service worker, a button, a menu item and a shortcut is loaded into a real
-  profile. The content script runs on a page; the badge the worker sets reaches Cosmos's button; clicking the button,
-  the menu item and the shortcut each reach the worker, which messages the right tab. This test found that an
-  extension can have a second, dead worker that Chromium has replaced: Cosmos now delivers to the worker that can
-  still reach the extension's APIs and lets go of the other. A later one found that the first click in a tab opened a
-  stray page a second later: to find the tab target `Extensions.triggerAction` wants, Cosmos looks into Chromium's
-  tabs, and the profile took each tab for a new page. Tabs are now left alone, and the lookup ends on Chromium's
-  answer rather than a timer, so a slow Chromium (paused for two seconds in
-  `anExtensionsButtonStillWorksWhenChromiumIsSlowToSayWhichTabThePageIsIn`) no longer loses the click.
+- **Live** (`PageAgentTests.anExtensionRunsAndItsButtonMenuAndShortcutWork`): a Manifest V3 extension with a content
+  script, a service worker, a button, a menu item and a shortcut is loaded into a real profile. The content script
+  runs on a page; the badge the worker sets reaches Cosmos's button; clicking the button, the menu item and the
+  shortcut each reach the worker, which messages the right tab. An extension can have a second, dead worker that
+  Chromium has replaced: Cosmos delivers to the worker that can still reach the extension's APIs and lets go of the
+  other. On CEF these tests found that an extension loaded before Chromium was running was loaded twice (starting
+  Chromium loads every extension), and the second load replaced the worker mid-sign-in; and that a click right after
+  loading came before the worker had run its first line.
 - **Live, too:** an extension's notification is posted and its click and button reach the extension
   (`anExtensionsNotificationIsPostedAndItsClickReachesTheExtension`); its side panel opens as a page with the
   extension's APIs (`anExtensionsSidePanelOpensAsAPageCosmosShows`); an interactive `launchWebAuthFlow` opens a window
@@ -110,6 +138,9 @@ What follows was checked on headless Chromium, before CEF; on CEF these tests ar
 | `CosmosKit/Extensions/ExtensionCenter.swift` | the list of installed extensions, install and remove, permission summary, shortcuts, the popup popover |
 | `CosmosKit/UI/ExtensionButtons.swift` | the button row |
 | `CosmosEngine/Engine.swift` (`EngineExtensions`) | what the browser asks of an engine's extensions: load, unload, buttons, menu items, commands |
-| `CosmosChromium/ChromiumExtensionHost.swift` | loads extensions over the pipe (`Extensions.loadUnpacked`), attaches to their service workers, mirrors their UI, delivers clicks (`Extensions.triggerAction` for buttons) |
-| `CosmosChromium/Resources/extension-shim.js` | runs in each extension worker before its own code: reports badge, icon, popup, menu, notification, side panel and sign-in calls to Cosmos, and fires `contextMenus.onClicked`, `commands.onCommand`, the notification events and the end of a sign-in flow when Cosmos says so |
-| `CosmosChromium/Resources/Bridge/` | Cosmos's own small extension in the default profile: tab ids for extension events, clearing site data and Chromium's own history |
+| `CosmosChromium/ChromiumExtensionHost.swift` | loads extensions over the pipe (`Extensions.loadUnpacked`), attaches to their service workers, mirrors their UI, answers `chrome.tabs`, `chrome.windows` and `chrome.scripting` by Cosmos's tabs and the extension's permissions, delivers clicks |
+| `CosmosChromium/ExtensionStage.swift` | the copy of an extension Chromium loads, with Cosmos's scripts ahead of the extension's own |
+| `CosmosChromium/Resources/extension-shim.js` | runs in each extension's worker and pages before its own code: Cosmos's `chrome.tabs`, `chrome.windows` and `chrome.scripting`, reports badge, icon, popup, menu, notification, side panel and sign-in calls to Cosmos, and fires the button, `contextMenus.onClicked`, `commands.onCommand`, the notification events, the tab events and the end of a sign-in flow when Cosmos says so |
+| `CosmosChromium/Resources/extension-content.js` | runs before each extension's content scripts: which tab they are in, for their messages and ports, and `tabs.sendMessage` coming in |
+| `CosmosKit/Extensions/ExtensionTabs.swift` | Cosmos's tabs and windows as extensions see them |
+| `CosmosChromium/Resources/Bridge/` | Cosmos's own small extension in the default profile: clearing site data and Chromium's own history |

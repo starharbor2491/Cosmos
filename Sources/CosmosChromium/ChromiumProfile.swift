@@ -26,6 +26,15 @@ final class ChromiumProfile: EngineProfile {
     var connection: CDPConnection? { runtime.isRunning && !closed ? runtime.connection : nil }
     private(set) var context: CosmosCEFContext?
     private(set) var scripts: [PageScript] = []
+    /// What Cosmos gave (`setPageScripts`), and the hiding of a profile that blocks on its own.
+    private var givenScripts: [PageScript] = []
+    private var hiding: [PageScript] = []
+    /// The rules a profile without the blocker extension matches its requests with, and their making.
+    private let ownRules = OwnRequestRules()
+    private var ownRulesMade: Task<Void, Never>?
+    /// Every profile but the default one, which has the blocker extension, and a private window's, which the extension
+    /// reaches (it is made from the default one).
+    private var blocksOnItsOwn: Bool { !isDefault && !isEphemeral }
 
     private var pages: [String: ChromiumPage] = [:]
     private var sessions: [String: ChromiumPage] = [:]
@@ -36,6 +45,8 @@ final class ChromiumProfile: EngineProfile {
     private var bridgeSession: String?
     private var bridgeReady: [CheckedContinuation<Void, Never>] = []
     private(set) lazy var extensionHost = ChromiumExtensionHost(profile: self)
+    /// Where the copies of the extensions Chromium loads are (`ExtensionStage`): the default profile's only.
+    var extensionStages: URL? { isDefault ? cacheDirectory?.appendingPathComponent("Cosmos Extensions", isDirectory: true) : nil }
     private var blocking: (lists: [CompiledBlockingList], allowlist: [String])?
     /// What the user decided about sites, applied to each site as its pages load.
     private var decisions: Set<PermissionDecision> = []
@@ -95,6 +106,10 @@ final class ChromiumProfile: EngineProfile {
             ChromiumPreferences.prepare(profile: cacheDirectory, root: nil, settings: engine.settings, keepsHistory: false)
         }
         context = isDefault ? CosmosCEFContext.global : CosmosCEFContext(cachePath: cacheDirectory?.path)
+        if blocksOnItsOwn {
+            context?.blocksRequest = OwnRequestRules.check(ownRules)
+            await ownRulesMade?.value
+        }
         if isDefault, let c = connection {
             if let bridge = ChromiumResources.bridgeExtension {
                 _ = try? await c.send("Extensions.loadUnpacked", ["path": bridge.path])
@@ -178,10 +193,15 @@ final class ChromiumProfile: EngineProfile {
     }
 
     func setPageScripts(_ scripts: [PageScript]) {
+        givenScripts = scripts
+        installPageScripts()
+    }
+
+    private func installPageScripts() {
         let helper = ChromiumResources.engineHelper.map { [PageScript(source: $0, world: .agent, time: .documentStart)] } ?? []
         let bridge = ChromiumResources.pageBridge.map { [PageScript(source: $0, world: .page, time: .documentStart)] } ?? []
-        self.scripts = helper + bridge + scripts
-        for page in pages.values { page.installScripts(self.scripts) }
+        scripts = helper + bridge + hiding + givenScripts
+        for page in pages.values { page.installScripts(scripts) }
     }
 
     // MARK: Events
@@ -207,7 +227,6 @@ final class ChromiumProfile: EngineProfile {
                     page.targetDestroyed()
                 }
             }
-            extensionHost.targetDestroyed(p["targetId"] as? String)
         case "Target.targetCrashed":
             if let target = p["targetId"] as? String, let page = pages[target] {
                 page.handle(CDPEvent(method: "Inspector.targetCrashed", params: [:], sessionID: page.sessionID))
@@ -224,7 +243,7 @@ final class ChromiumProfile: EngineProfile {
         let url = info["url"] as? String ?? ""
         if type == "service_worker" {
             runtime.route(session) { [weak self] event in self?.handle(event) }
-            if url.hasPrefix("chrome-extension://"), url.contains("/cosmos-bridge.js") {
+            if let worker = URL(string: url), worker.scheme == "chrome-extension", worker.host == ChromiumResources.bridgeExtensionID {
                 bridgeSession = session
                 connection?.post("Runtime.runIfWaitingForDebugger", session: session)
                 bridgeReady.forEach { $0.resume() }
@@ -237,12 +256,6 @@ final class ChromiumProfile: EngineProfile {
         runtime.register(target: target, for: self)
         if let claim = claims.removeValue(forKey: target) {
             claim.resume(returning: session)
-            return
-        }
-        if extensionHost.claimsPopup(url: url) {
-            let page = ChromiumPage(browser: self)
-            adopt(page, target: target, session: session, info: info)
-            extensionHost.popupAttached(page)
             return
         }
         if let opener = (info["openerId"] as? String).flatMap({ pages[$0] }) {
@@ -310,7 +323,7 @@ final class ChromiumProfile: EngineProfile {
 
     /// Grants or refuses a permission to a site (`http://host:port`) in this profile.
     func setPermission(_ kind: PermissionRequest.Kind, allowed: Bool, origin: String) async {
-        guard let context else { return }
+        guard !closed, let context else { return }
         let permissions: [CosmosCEFPermission] = switch kind {
         case .camera: [.camera]
         case .microphone: [.microphone]
@@ -376,8 +389,22 @@ final class ChromiumProfile: EngineProfile {
         if let blocking, let lists, blocking.lists.map(\.digest) == lists.map(\.digest), blocking.allowlist == allowlist { return }
         if blocking == nil, lists == nil { return }
         blocking = lists.map { ($0, allowlist) }
+        if blocksOnItsOwn { blockOnItsOwn(); return }
         guard isDefault, started else { return }
         Task { await installBlocker(lists ?? [], allowlist: allowlist) }
+    }
+
+    /// Blocking where the blocker extension does not run: the hiding is a page script, and requests are matched on CEF's
+    /// network thread by rules made away from the main thread (a profile's start waits for them).
+    private func blockOnItsOwn() {
+        let lists = blocking?.lists ?? [], allowlist = blocking?.allowlist ?? []
+        hiding = BlockerExtension.hidingScript(lists, allowlist: allowlist).map { [PageScript(source: $0, world: .agent, time: .documentStart)] } ?? []
+        installPageScripts()
+        let holder = ownRules
+        let generation = holder.nextGeneration()
+        ownRulesMade = Task.detached(priority: .userInitiated) {
+            holder.set(lists.contains { $0.kind == .network } ? RequestRules(lists: lists, allowlist: allowlist) : nil, generation: generation)
+        }
     }
 
     private func installBlocker(_ lists: [CompiledBlockingList], allowlist: [String]) async {

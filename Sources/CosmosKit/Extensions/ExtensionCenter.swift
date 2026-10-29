@@ -348,7 +348,10 @@ final class ExtensionCenter {
               let engine = engine(for: runtime) else { return false }
         for command in engine.commands where item(forEngineID: command.extensionID) != nil {
             guard let shortcut = ExtensionShortcut(command.shortcut), shortcut.matches(event) else { continue }
-            Task { await engine.performCommand(command, on: runtime.page) }
+            Task {
+                // `_execute_action` opens the popup, as the button does.
+                if let popup = await engine.performCommand(command, on: runtime.page) { showPopup(popup, anchor: runtime.view) }
+            }
             return true
         }
         return false

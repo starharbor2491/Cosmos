@@ -72,6 +72,11 @@ typedef NS_ENUM(NSInteger, CosmosCEFPermissionSetting) {
 - (void)setPermission:(CosmosCEFPermission)permission origin:(NSString *)origin to:(CosmosCEFPermissionSetting)setting;
 /// Deletes every cookie of the profile; `done` runs on the main thread after.
 - (void)deleteCookies:(dispatch_block_t)done;
+/// Asked about each request of the profile's pages before it is made, on CEF's network thread (not the main one): YES
+/// stops it. It gets the request's address, its kind ("main_frame", "script", … as declarativeNetRequest names them), the
+/// origin that made it, and the address of the document it is for and of each document that one is in, nearest first.
+@property (atomic, copy, nullable) BOOL (^blocksRequest)(NSString *url, NSString *type, NSString *_Nullable initiator,
+                                                         NSArray<NSString *> *documents);
 /// Puts settings into the running profile, as its `Preferences` file holds them: each key is a setting Chromium has, or
 /// a group of them. Settings Chromium does not have, or does not let be set, are left out.
 - (void)setPreferences:(NSDictionary<NSString *, id> *)preferences;

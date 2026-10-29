@@ -4,5 +4,6 @@
   "description": "Lets Cosmos clear site data and history in the Chromium it runs on. Part of Cosmos; not shown in the extensions list.",
   "version": "1.0",
   "background": { "service_worker": "cosmos-bridge.js" },
-  "permissions": ["debugger", "browsingData", "history"]
+  "permissions": ["browsingData", "history"],
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtUTeldkGXMhosDtquM3PRoD6FIU4LjE+T/wxvaLo1WzH809NWT86SOPcyMmrrmi2DtqBX8T/3xUyuSVEDbAvuL25xRAz72Ulemgqu8QQagbKe7/77+vlY0Y0rdZgsIECn4OgBYKAtMdfbEya1ihHcYkBbdrPiakrb91WZ85IxJwXxoDiDgwJyymyTr5A2+foI4bD65Jpb7JzA6sGAUkqfgS3TeHMaNGx8rlXwQK6dbtfoPOeIPIIQIYMi858obwL3f5E4eATJNJC5wNUzdR7U7kpEpMkXkoQsPzjzIa0lbLg9oV4l/b+x2UMcXymEqF0I0KYvjYMZ5Z+lRNF2yomswIDAQAB"
 }

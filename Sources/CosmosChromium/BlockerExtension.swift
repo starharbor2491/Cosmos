@@ -35,15 +35,7 @@ enum BlockerExtension {
             }
         }
 
-        var cosmetic = Cosmetic()
-        for list in lists where list.kind == .cosmetic {
-            guard let one = try? JSONDecoder().decode(Cosmetic.self, from: Data(list.json.utf8)) else { continue }
-            cosmetic.generic += one.generic
-            cosmetic.specific.merge(one.specific) { $0 + $1 }
-            cosmetic.exceptions.merge(one.exceptions) { $0 + $1 }
-            cosmetic.genericHide += one.genericHide
-            cosmetic.hideNothing += one.hideNothing
-        }
+        let cosmetic = merged(lists)
         var scripts: [[String: Any]] = []
         let quiet = Array(Set(hosts + cosmetic.hideNothing)).sorted()
         let noGeneric = Array(Set(quiet + cosmetic.genericHide)).sorted()
@@ -83,6 +75,57 @@ enum BlockerExtension {
         if !scripts.isEmpty { manifest["content_scripts"] = scripts }
         guard let data = try? JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys]) else { return false }
         return (try? data.write(to: folder.appendingPathComponent("manifest.json"))) != nil
+    }
+
+    /// The lists' hiding rules, together.
+    static func merged(_ lists: [CompiledBlockingList]) -> Cosmetic {
+        var cosmetic = Cosmetic()
+        for list in lists where list.kind == .cosmetic {
+            guard let one = try? JSONDecoder().decode(Cosmetic.self, from: Data(list.json.utf8)) else { continue }
+            cosmetic.generic += one.generic
+            cosmetic.specific.merge(one.specific) { $0 + $1 }
+            cosmetic.exceptions.merge(one.exceptions) { $0 + $1 }
+            cosmetic.genericHide += one.genericHide
+            cosmetic.hideNothing += one.hideNothing
+        }
+        return cosmetic
+    }
+
+    /// The hiding as one page script, for a profile the extension does not run in: the style sheets its content scripts
+    /// put in, on the same sites. Nil when there is nothing to hide.
+    static func hidingScript(_ lists: [CompiledBlockingList], allowlist: [String]) -> String? {
+        let cosmetic = merged(lists)
+        let hosts = allowlist.map { $0.lowercased() }.filter { !$0.isEmpty }
+        let quiet = Array(Set(hosts + cosmetic.hideNothing)).sorted()
+        let noGeneric = Array(Set(quiet + cosmetic.genericHide)).sorted()
+        let generic = Set(cosmetic.generic)
+        let undo = cosmetic.exceptions.mapValues { $0.filter(generic.contains) }.filter { !$0.value.isEmpty }
+        guard !generic.isEmpty || !cosmetic.specific.isEmpty || !undo.isEmpty else { return nil }
+        let data: [String: Any] = ["specific": cosmetic.specific, "exceptions": cosmetic.exceptions, "undo": undo]
+        guard let hiding = try? JSONSerialization.data(withJSONObject: data, options: [.sortedKeys]),
+              let quietJSON = try? JSONSerialization.data(withJSONObject: quiet), let noGenericJSON = try? JSONSerialization.data(withJSONObject: noGeneric)
+        else { return nil }
+        let css = generic.isEmpty ? "" : styleSheet(generic.sorted())
+        return """
+        (function () {
+          const host = location.hostname.toLowerCase();
+          const under = (list) => list.some(d => host === d || host.endsWith('.' + d));
+          if (under(\(String(decoding: quietJSON, as: UTF8.self)))) return;
+          // A script that runs as the document starts can come before its root element.
+          const whenRoot = (f) => {
+            if (document.documentElement) { f(); return; }
+            new MutationObserver((m, o) => { if (document.documentElement) { o.disconnect(); f(); } }).observe(document, { childList: true });
+          };
+          const generic = \(ChromiumResources.jsString(css));
+          if (generic && !under(\(String(decoding: noGenericJSON, as: UTF8.self)))) whenRoot(() => {
+            const style = document.createElement('style');
+            style.textContent = generic;
+            (document.head || document.documentElement).appendChild(style);
+          });
+          const COSMOS_HIDING = \(String(decoding: hiding, as: UTF8.self));
+          whenRoot(() => { \(siteScript) });
+        })();
+        """
     }
 
     /// A ruleset file: the list's rules with ids.

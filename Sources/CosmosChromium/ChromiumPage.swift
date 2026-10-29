@@ -20,7 +20,9 @@ final class ChromiumPage: EnginePage {
     private(set) var isClosed = false
     /// Hears the address of every document the page asks for, redirects included (an extension's sign-in page, which
     /// ends at an address of the extension's).
-    var onDocumentRequest: ((URL) -> Void)? { didSet { if onDocumentRequest != nil { command("Network.enable") } } }
+    /// Each address the page is about to go to (a redirect too), before anything is asked of the site: true takes it,
+    /// and the page does not go there.
+    var onNavigation: ((URL) -> Bool)?
     /// The page is gone: closed by Cosmos or by Chromium.
     var onClose: (() -> Void)?
     /// The video in Picture in Picture: its view, the script context (of the page or a frame) that watches it, and where
@@ -35,7 +37,11 @@ final class ChromiumPage: EnginePage {
     /// its session as well as its id: a frame from another site has a session (and ids) of its own.
     struct Context: Hashable { let session: String; let id: Int }
     private var agentContextID: Int?
-    private var contexts: [Context: (frameID: String, isAgent: Bool, isDefault: Bool)] = [:]
+    private var contexts: [Context: (frameID: String, isAgent: Bool, isDefault: Bool, origin: String)] = [:]
+    /// The address of each of the page's frames, by Chromium's frame id.
+    private var frameURLs: [String: URL] = [:]
+    /// Each frame's origin, which for a document without an address of its own (about:blank, srcdoc) is its creator's.
+    private var frameOrigins: [String: URL] = [:]
     /// The scripts installed in each session (the page's and its frames'), and how often they have been replaced.
     private var scriptIDs: [String: [String]] = [:]
     private var scriptGeneration: [String: Int] = [:]
@@ -205,6 +211,8 @@ final class ChromiumPage: EnginePage {
             contextEvent(event.method, p, session: session)
         case "Runtime.bindingCalled":
             binding(p, session: session)
+        case "Page.frameNavigated":
+            noteFrame(p)
         case "Fetch.requestPaused":
             documentPaused(p, session: session)
         case "Fetch.authRequired":
@@ -214,14 +222,28 @@ final class ChromiumPage: EnginePage {
         }
     }
 
+    /// A frame of the page, or of a frame from another site, went to an address.
+    private func noteFrame(_ p: [String: Any]) {
+        guard let frame = p["frame"] as? [String: Any], let id = frame["id"] as? String,
+              let url = (frame["url"] as? String).flatMap(URL.init(string:)) else { return }
+        frameURLs[id] = url
+        frameOrigins[id] = (frame["securityOrigin"] as? String).flatMap(URL.init(string:))
+        browser?.sawSite(url)
+    }
+
     private func contextEvent(_ method: String, _ p: [String: Any], session: String) {
         switch method {
         case "Runtime.executionContextCreated":
             guard let context = p["context"] as? [String: Any], let id = context["id"] as? Int,
                   let aux = context["auxData"] as? [String: Any], let frameID = aux["frameId"] as? String else { return }
             let isAgent = (context["name"] as? String) == ChromiumProfile.agentWorld
-            contexts[Context(session: session, id: id)] = (frameID, isAgent, aux["isDefault"] as? Bool ?? false)
+            let origin = context["origin"] as? String ?? ""
+            contexts[Context(session: session, id: id)] = (frameID, isAgent, aux["isDefault"] as? Bool ?? false, origin)
             if isAgent && frameID == mainFrameID && session == sessionID { agentContextID = id }
+            // An extension's content scripts are about to run here: it is told which tab this is.
+            if aux["type"] as? String == "isolated", origin.hasPrefix("chrome-extension://"), let extensionID = URL(string: origin)?.host {
+                browser?.extensionHost.contentWorldCreated(in: self, extensionID: extensionID, session: session, contextID: id, frameID: frameID)
+            }
         case "Runtime.executionContextDestroyed":
             guard let id = p["executionContextId"] as? Int else { return }
             contexts[Context(session: session, id: id)] = nil
@@ -302,7 +324,7 @@ final class ChromiumPage: EnginePage {
             delegate?.pageDidStartNavigation(self)
             changed()
         case "Page.frameNavigated":
-            if let url = ((p["frame"] as? [String: Any])?["url"] as? String).flatMap(URL.init(string:)) { browser?.sawSite(url) }
+            noteFrame(p)
             guard let frame = p["frame"] as? [String: Any], frame["parentId"] == nil else { return }
             mainFrameID = frame["id"] as? String
             agentContextID = nil
@@ -341,10 +363,6 @@ final class ChromiumPage: EnginePage {
             if let sessionID { documentPaused(p, session: sessionID) }
         case "Fetch.authRequired":
             if let sessionID { authRequired(p, session: sessionID) }
-        case "Network.requestWillBeSent":
-            if (p["type"] as? String) == "Document", let url = ((p["request"] as? [String: Any])?["url"] as? String).flatMap(URL.init(string:)) {
-                onDocumentRequest?(url)
-            }
         case "Page.fileChooserOpened":
             chooseFiles(p)
         case "Page.windowOpen":
@@ -393,7 +411,10 @@ final class ChromiumPage: EnginePage {
         return id == mainFrameID
     }
 
-    private func changed() { delegate?.pageStateDidChange(self) }
+    private func changed() {
+        delegate?.pageStateDidChange(self)
+        browser?.extensionHost.pageChanged(self)
+    }
 
     private func refreshHistory() {
         Task {
@@ -529,6 +550,7 @@ final class ChromiumPage: EnginePage {
     /// CEF asks before every navigation of the page and its frames. One to a dangerous site is stopped before anything is
     /// sent to it, and for the page itself Cosmos says why; a frame is left out quietly. False stops it.
     func allowsNavigation(to url: URL, mainFrame: Bool) -> Bool {
+        if mainFrame, onNavigation?(url) == true { return false }
         guard let danger = delegate?.page(self, dangerAt: url) else { return true }
         if mainFrame {
             stoppedDanger = (url, danger)
@@ -643,6 +665,26 @@ final class ChromiumPage: EnginePage {
     }
 
     func leavePictureInPicture() { endPictureInPicture() }
+
+    /// The worlds an extension's content scripts run in, in the page and its frames.
+    func extensionWorlds(of extensionID: String) -> [(session: String, id: Int, frameID: String)] {
+        contexts.filter { !$0.value.isDefault && $0.value.origin == "chrome-extension://\(extensionID)" }
+            .map { ($0.key.session, $0.key.id, $0.value.frameID) }
+    }
+
+    /// The page's own world in each of its frames, the main frame's first.
+    var frameWorlds: [(session: String, id: Int, frameID: String)] {
+        contexts.filter { $0.value.isDefault }.map { ($0.key.session, $0.key.id, $0.value.frameID) }
+            .sorted { a, _ in a.frameID == mainFrameID }
+    }
+
+    var mainFrame: String? { mainFrameID }
+    /// The address a frame is judged by (what an extension may reach there): its own, or for a document without one
+    /// (about:blank, srcdoc, blob:) the origin it runs with.
+    func url(ofFrame frame: String) -> URL? {
+        guard let url = frameURLs[frame] else { return frame == mainFrame ? state.url : nil }
+        return url.scheme == "http" || url.scheme == "https" ? url : frameOrigins[frame]
+    }
 
     /// The page's own world of the frame that `context` (Cosmos's world) is in.
     private func pageWorld(of context: Context, frameID: String) -> Context? {

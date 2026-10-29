@@ -44,6 +44,8 @@ public final class CDPConnection: @unchecked Sendable {
     private let lock = NSLock()
     private var nextID = 0
     private var waiting: [Int: (Result<[String: Any], Error>) -> Void] = [:]
+    /// The session each waiting command went to: when the session goes, so do they.
+    private var waitingSession: [Int: String] = [:]
     private var isClosed = false
     private let writeQueue = DispatchQueue(label: "cosmos.cdp.write")
 
@@ -82,6 +84,7 @@ public final class CDPConnection: @unchecked Sendable {
         if let id = object["id"] as? Int {
             lock.lock()
             let answer = waiting.removeValue(forKey: id)
+            waitingSession[id] = nil
             lock.unlock()
             if let error = object["error"] as? [String: Any] {
                 answer?(.failure(CDPError(code: error["code"] as? Int ?? 0, message: error["message"] as? String ?? "")))
@@ -90,6 +93,8 @@ public final class CDPConnection: @unchecked Sendable {
             }
         } else if let method = object["method"] as? String {
             let event = CDPEvent(method: method, params: object["params"] as? [String: Any] ?? [:], sessionID: object["sessionId"] as? String)
+            // Chromium answers nothing more of a session that went (a closed tab, a worker that stopped).
+            if method == "Target.detachedFromTarget", let session = event.params["sessionId"] as? String { failCommands(of: session) }
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated { self?.onEvent?(event) }
             }
@@ -121,9 +126,10 @@ public final class CDPConnection: @unchecked Sendable {
         nextID += 1
         let id = nextID
         waiting[id] = answer
+        if let session { waitingSession[id] = session }
         lock.unlock()
         guard let data = CDPFraming.encode(id: id, method: method, params: params, sessionID: session) else {
-            lock.lock(); let a = waiting.removeValue(forKey: id); lock.unlock()
+            lock.lock(); let a = waiting.removeValue(forKey: id); waitingSession[id] = nil; lock.unlock()
             a?(.failure(CDPError(code: -2, message: "Could not encode \(method)")))
             return
         }
@@ -147,12 +153,22 @@ public final class CDPConnection: @unchecked Sendable {
         }
     }
 
+    private func failCommands(of session: String) {
+        lock.lock()
+        let ids = waitingSession.filter { $0.value == session }.map(\.key)
+        let answers = ids.compactMap { waiting.removeValue(forKey: $0) }
+        for id in ids { waitingSession[id] = nil }
+        lock.unlock()
+        for answer in answers { answer(.failure(CDPError(code: -32001, message: "The page closed."))) }
+    }
+
     public func close() {
         lock.lock()
         guard !isClosed else { lock.unlock(); return }
         isClosed = true
         let pending = waiting
         waiting.removeAll()
+        waitingSession.removeAll()
         lock.unlock()
         for answer in pending.values { answer(.failure(CDPError.closed)) }
         try? writer.close()

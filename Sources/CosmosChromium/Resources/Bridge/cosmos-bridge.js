@@ -1,11 +1,6 @@
 // The few things only an extension can do for Cosmos, in the default profile: clear site data and forget what Chromium's
 // own history holds.
 
-const tabFor = async (targetId) => {
-  const target = (await chrome.debugger.getTargets()).find(t => t.id === targetId);
-  return target && target.tabId !== undefined ? target.tabId : null;
-};
-
 self.cosmosClearData = async () => {
   await chrome.browsingData.remove({}, {
     appcache: true, cache: true, cacheStorage: true, cookies: true, fileSystems: true, indexedDB: true,
@@ -27,6 +22,3 @@ self.cosmosDeleteHistory = async (url) => {
   for (const item of all) if (item.url.split('#')[0] === page) await chrome.history.deleteUrl({ url: item.url });
   return true;
 };
-
-// The chrome.tabs id of a page target, for extension events that name a tab.
-self.cosmosTabID = async (targetId) => tabFor(targetId);

@@ -115,8 +115,15 @@ enum TestIcon {
         let (store, _) = makeStore()
         let url = URL(string: "http://127.0.0.1:\(server.port)/")
         store.ensure(url: url)
-        try await Task.sleep(for: .milliseconds(700))
-        let first = server.requests.count
+        // The first look (the page, then the places a logo can be) is over once nothing more is asked for a while; on a
+        // busy Mac that takes longer than on a quiet one.
+        var first = 0
+        for _ in 0..<50 {
+            try await Task.sleep(for: .milliseconds(300))
+            let now = server.requests.count
+            if now > 0, now == first { break }
+            first = now
+        }
         #expect(first > 0)
         #expect(store.image(forHost: "127.0.0.1") == nil)
         store.ensure(url: url)

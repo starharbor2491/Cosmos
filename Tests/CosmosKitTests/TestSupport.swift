@@ -180,7 +180,10 @@ final class FakeExtensions: EngineExtensions {
     func performAction(_ extensionID: String, on page: EnginePage) async -> EnginePage? { performed.append(extensionID); return nil }
     func menuItems(for page: EnginePage?) -> [ExtensionMenuItem] { items }
     func performMenuItem(_ item: ExtensionMenuItem, context: ExtensionClickContext, on page: EnginePage) async { clicked.append((item, context)) }
-    func performCommand(_ command: ExtensionCommand, on page: EnginePage?) async { performed.append(command.name) }
+    func performCommand(_ command: ExtensionCommand, on page: EnginePage?) async -> EnginePage? { performed.append(command.name); return nil }
+    var tabsHost: ExtensionTabsHost?
+    private(set) var tabChanges = 0
+    func tabsDidChange() { tabChanges += 1 }
     var onSidePanelRequest: ((String, EnginePage?) -> Void)?
     private(set) var sidePanelsOpened: [String] = []
     func openSidePanel(_ extensionID: String, for page: EnginePage?) async -> EnginePage? { sidePanelsOpened.append(extensionID); return FakePage() }
@@ -253,6 +256,8 @@ final class SiteServer: @unchecked Sendable {
         var basicAuth: String? = nil
         /// More lines for the answer's head ("Set-Cookie: a=b").
         var headers: [String] = []
+        /// The answer's status, when it is not "200 OK" ("302 Found", with a Location header).
+        var status: String? = nil
     }
 
     private final class Recorder: @unchecked Sendable {
@@ -284,7 +289,7 @@ final class SiteServer: @unchecked Sendable {
                 let credentials = route?.basicAuth.map { "authorization: basic " + Data($0.utf8).base64EncodedString().lowercased() }
                 let refused = credentials.map { c in !lines.contains { $0.lowercased() == c } } ?? false
                 let body = refused ? Data("<body>sign in</body>".utf8) : route?.body ?? Data()
-                let status = route == nil ? "404 Not Found" : refused ? "401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"Cosmos test\"" : "200 OK"
+                let status = route == nil ? "404 Not Found" : refused ? "401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"Cosmos test\"" : route?.status ?? "200 OK"
                 let extra = (route?.headers ?? []).map { $0 + "\r\n" }.joined()
                 let head = "HTTP/1.1 \(status)\r\nContent-Type: \(refused ? "text/html" : route?.type ?? "text/plain")\r\nContent-Length: \(body.count)\r\n\(extra)Connection: close\r\n\r\n"
                 let send = { connection.send(content: Data(head.utf8) + body, completion: .contentProcessed { _ in connection.cancel() }) }

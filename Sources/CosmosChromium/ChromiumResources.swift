@@ -4,6 +4,9 @@ import Foundation
 /// the page's world.
 enum ChromiumResources {
     static var bridgeExtension: URL? { Bundle.module.url(forResource: "Bridge", withExtension: nil) }
+    /// The bridge's id, which the `key` in its manifest fixes: its worker is known by it, not by anything an extension
+    /// could copy (a file name).
+    static let bridgeExtensionID = "pbkfjgepnjdbbaajkbdcjeoplapljeme"
 
     static let engineHelper: String? = {
         guard let url = Bundle.module.url(forResource: "engine-helper", withExtension: "js") else { return nil }

@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import SQLite3
 import Testing
+import CosmosBlocking
 import CosmosCEF
 import CosmosCore
 import CosmosEngine
@@ -27,8 +28,27 @@ enum CEFTestRuntime {
     static func start() async -> String? {
         if let failure { return failure }
         let runtime = ChromiumRuntime.shared
-        return await runtime.start(settings: EngineSettings()) ? nil : (runtime.failure ?? "Chromium did not start")
+        guard await runtime.start(settings: EngineSettings()) else { return runtime.failure ?? "Chromium did not start" }
+        _ = stopsBeforeExit
+        return nil
     }
+
+    /// Swift Testing ends the process with exit() from a thread of its own, while the main thread may still be closing the
+    /// last test's pages; exit() then takes the framework's globals away under Chromium. So Chromium is stopped first:
+    /// exit runs the handlers registered last first, and this one is registered after the framework was loaded.
+    private static let stopsBeforeExit: Void = {
+        atexit {
+            let stopped = DispatchSemaphore(value: 0)
+            if Thread.isMainThread {
+                CosmosCEFRuntime.shutdown { _ in stopped.signal() }
+                let deadline = Date().addingTimeInterval(10)
+                while stopped.wait(timeout: .now()) == .timedOut, Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+            } else {
+                DispatchQueue.main.async { CosmosCEFRuntime.shutdown { _ in stopped.signal() } }
+                _ = stopped.wait(timeout: .now() + 10)
+            }
+        }
+    }()
 
     /// Makes `id`'s profile the default one (the one extensions run in, whose data is CEF's global context's), for the
     /// profiles made from now on.
@@ -264,6 +284,84 @@ struct CEFRuntimeTests {
         #expect(try await visit() == "kept c=kept", "the site's storage and cookie are there before clearing")
         await profile.clearSiteData()
         #expect(try await visit() == "none nocookie")
+    }
+
+    /// A profile other than the default one has no blocker extension (Chromium loads extensions into the default one
+    /// only): it blocks on its own. A request a rule stops never reaches the site, an element a rule hides is hidden, and
+    /// a site the user allowed gets both.
+    @Test func anotherProfileBlocksAndHidesOnItsOwn() async throws {
+        if let failure = await CEFTestRuntime.start() { Issue.record(Comment(rawValue: failure)); return }
+        let engine = ChromiumEngine()
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-cef-block-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let profile = try #require(engine.makeProfile(id: UUID(), directory: folder) as? ChromiumProfile)
+        defer { profile.close() }
+        #expect(!profile.isDefault)
+        let lists = ContentBlocker.compile(name: "t", text: "/ad.js$script\n##.cosmos-test-ad\n").lists
+            .map { CompiledBlockingList(name: $0.name, json: $0.json, kind: $0.kind == .network ? .network : .cosmetic, digest: $0.digest) }
+        profile.setContentBlocking(lists, allowlist: [])
+        profile.setPageScripts([])
+        let server = try await SiteServer(routes: [
+            "/": .init(type: "text/html", body: Data("<title>Ads</title><div class='cosmos-test-ad'>ad</div><script src='/ad.js'></script>".utf8)),
+            "/ad.js": .init(type: "text/javascript", body: Data("window.adRan = true".utf8)),
+        ])
+        func visit() async throws -> (ran: Bool, display: String?) {
+            let page = try #require(profile.makePage() as? ChromiumPage)
+            defer { page.close() }
+            page.load(try #require(URL(string: "http://127.0.0.1:\(server.port)/")))
+            try await waitFor { page.state.title == "Ads" && !page.state.isLoading }
+            try await Task.sleep(for: .milliseconds(300))
+            let ran = await page.evaluate("window.adRan === true", in: .page) as? Bool ?? false
+            let display = await page.evaluate("getComputedStyle(document.querySelector('.cosmos-test-ad')).display", in: .page) as? String
+            return (ran, display)
+        }
+        let blocked = try await visit()
+        #expect(!blocked.ran)
+        #expect(!server.requests.contains("/ad.js"), "the request never left")
+        #expect(blocked.display == "none")
+        profile.setContentBlocking(lists, allowlist: ["127.0.0.1"])
+        try await Task.sleep(for: .milliseconds(500))
+        let allowed = try await visit()
+        #expect(allowed.ran)
+        #expect(allowed.display == "block")
+    }
+
+    /// Chrome's blocker judges each hop of a redirect, and each page by its own site: a request that a page's script makes
+    /// and that is sent on to a blocked address is stopped, and a tab that goes from a site the user allowed to one they
+    /// did not is blocked again from its first request.
+    @Test func anotherProfileBlocksRedirectsAndTheNextSiteInATab() async throws {
+        if let failure = await CEFTestRuntime.start() { Issue.record(Comment(rawValue: failure)); return }
+        let engine = ChromiumEngine()
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-cef-block-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let profile = try #require(engine.makeProfile(id: UUID(), directory: folder) as? ChromiumProfile)
+        defer { profile.close() }
+        let lists = ContentBlocker.compile(name: "t", text: "/ad.js$script\n").lists
+            .map { CompiledBlockingList(name: $0.name, json: $0.json, kind: $0.kind == .network ? .network : .cosmetic, digest: $0.digest) }
+        profile.setContentBlocking(lists, allowlist: ["localhost"])
+        profile.setPageScripts([])
+        let server = try await SiteServer(routes: [
+            "/": .init(type: "text/html", body: Data("<title>Ads</title><script src='/ad.js'></script>".utf8)),
+            "/sent-on": .init(type: "text/html", body: Data("<title>Sent on</title><script src='/out.js'></script>".utf8)),
+            "/out.js": .init(type: "text/plain", body: Data(), headers: ["Location: /ad.js?via=redirect"], status: "302 Found"),
+            "/ad.js": .init(type: "text/javascript", body: Data("window.adRan = true".utf8)),
+        ])
+        let page = try #require(profile.makePage() as? ChromiumPage)
+        defer { page.close() }
+        func visit(_ address: String, title: String) async throws -> Bool {
+            page.load(try #require(URL(string: address)))
+            try await waitFor { page.state.title == title && !page.state.isLoading }
+            try await Task.sleep(for: .milliseconds(300))
+            return await page.evaluate("window.adRan === true", in: .page) as? Bool ?? false
+        }
+        #expect(try await visit("http://127.0.0.1:\(server.port)/sent-on", title: "Sent on") == false)
+        #expect(server.requests.contains("/out.js"))
+        #expect(!server.requests.contains { $0.hasPrefix("/ad.js") }, "the hop to the blocked address never left: \(server.requests)")
+
+        #expect(try await visit("http://localhost:\(server.port)/", title: "Ads") == true, "the site the user allowed")
+        let before = server.requests.filter { $0.hasPrefix("/ad.js") }.count
+        #expect(try await visit("http://127.0.0.1:\(server.port)/", title: "Ads") == false, "the next site, in the same tab")
+        #expect(server.requests.filter { $0.hasPrefix("/ad.js") }.count == before)
     }
 
     final class Downloads: EngineProfileDelegate {

@@ -21,6 +21,7 @@
 #include "include/cef_permission_handler.h"
 #include "include/cef_preference.h"
 #include "include/cef_request_handler.h"
+#include "include/cef_resource_request_handler.h"
 #include "include/cef_request_context.h"
 #include "include/cef_version.h"
 #include "include/wrapper/cef_closure_task.h"
@@ -394,6 +395,8 @@ static NSString *String(const CefString &s) { return [NSString stringWithUTF8Str
 - (void)browserClosed;
 - (void)targetFound:(NSString *)targetID;
 - (void)targetNotFound;
+// The profile the page is in (a popup is in its opener's).
+@property (nonatomic, strong, nullable) CosmosCEFContext *context;
 // A popup's key in gPopupsBeingMade, until CEF has made it.
 @property (nonatomic, copy, nullable) NSString *popupKey;
 @end
@@ -471,6 +474,55 @@ class TargetLookup : public CefDevToolsMessageObserver {
   IMPLEMENT_REFCOUNTING(TargetLookup);
 };
 
+// DevTools' own window: CEF's defaults, none of a page's handling.
+class DevToolsClient : public CefClient {
+  IMPLEMENT_REFCOUNTING(DevToolsClient);
+};
+
+// The kind of a request, as declarativeNetRequest names it.
+static NSString *RequestType(cef_resource_type_t type) {
+  switch (type) {
+    case RT_MAIN_FRAME: return @"main_frame";
+    case RT_SUB_FRAME: return @"sub_frame";
+    case RT_STYLESHEET: return @"stylesheet";
+    case RT_SCRIPT: return @"script";
+    case RT_IMAGE: case RT_FAVICON: return @"image";
+    case RT_FONT_RESOURCE: return @"font";
+    case RT_OBJECT: case RT_PLUGIN_RESOURCE: return @"object";
+    case RT_MEDIA: return @"media";
+    case RT_XHR: return @"xmlhttprequest";
+    case RT_PING: return @"ping";
+    case RT_CSP_REPORT: return @"csp_report";
+    default: return @"other";
+  }
+}
+
+// A profile's own request check (CosmosCEFContext.blocksRequest), on the network thread.
+class RequestCheck : public CefResourceRequestHandler {
+ public:
+  RequestCheck(BOOL (^blocks)(NSString *, NSString *, NSString *, NSArray<NSString *> *), NSString *initiator)
+      : blocks_([blocks copy]), initiator_(initiator) {}
+
+  ReturnValue OnBeforeResourceLoad(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, CefRefPtr<CefRequest> request,
+                                   CefRefPtr<CefCallback>) override {
+    // The network thread has no autorelease pool of its own.
+    @autoreleasepool {
+      cef_resource_type_t type = request->GetResourceType();
+      // The documents the request is for: a frame's own navigation is for the documents above it.
+      NSMutableArray<NSString *> *documents = [NSMutableArray array];
+      CefRefPtr<CefFrame> f = (type == RT_MAIN_FRAME || type == RT_SUB_FRAME) && frame ? frame->GetParent() : frame;
+      if (type == RT_MAIN_FRAME) f = nullptr;
+      for (; f; f = f->GetParent()) [documents addObject:String(f->GetURL())];
+      return blocks_(String(request->GetURL()), RequestType(type), initiator_, documents) ? RV_CANCEL : RV_CONTINUE;
+    }
+  }
+
+ private:
+  BOOL (^blocks_)(NSString *, NSString *, NSString *, NSArray<NSString *> *);
+  NSString *initiator_;
+  IMPLEMENT_REFCOUNTING(RequestCheck);
+};
+
 // What CEF tells one browser, and asks of it. Everything else goes through the DevTools protocol.
 class CosmosBrowserClient : public CefClient,
                             public CefLifeSpanHandler,
@@ -480,13 +532,24 @@ class CosmosBrowserClient : public CefClient,
                             public CefPermissionHandler,
                             public CefRequestHandler {
  public:
-  explicit CosmosBrowserClient(CosmosCEFBrowser *owner) : owner_(owner) {}
+  CosmosBrowserClient(CosmosCEFBrowser *owner, CosmosCEFContext *context) : owner_(owner), context_(context) {}
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override { return this; }
   CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
   CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override { return this; }
   CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
   CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
+
+  // A profile that matches its requests itself (CosmosCEFContext.blocksRequest) is asked about each, on the network thread.
+  // The client keeps the profile itself: the page, which lives on the main thread, is not touched here.
+  CefRefPtr<CefResourceRequestHandler> GetResourceRequestHandler(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, CefRefPtr<CefRequest>, bool,
+                                                                 bool, const CefString &initiator, bool &) override {
+    @autoreleasepool {
+      BOOL (^blocks)(NSString *, NSString *, NSString *, NSArray<NSString *> *) = context_.blocksRequest;
+      if (!blocks) return nullptr;
+      return new RequestCheck(blocks, initiator.empty() ? nil : String(initiator));
+    }
+  }
 
   // Before anything is asked of the site: Cosmos stops pages and frames from dangerous sites here, so it covers the
   // first page of a popup too, which runs before Cosmos is attached to it.
@@ -510,6 +573,14 @@ class CosmosBrowserClient : public CefClient,
   }
 
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) override {
+    // Popups it was making that CEF will not say more of (it tells an opener that is gone nothing).
+    NSString *prefix = [NSString stringWithFormat:@"%d/", browser->GetIdentifier()];
+    for (NSString *key in gPopupsBeingMade().allKeys) {
+      if (![key hasPrefix:prefix]) continue;
+      [gPopupsBeingMade()[key] browserClosed];
+      [gPopupsBeingMade() removeObjectForKey:key];
+      gBeingMade--;
+    }
     gOpenBrowsers.erase(std::remove_if(gOpenBrowsers.begin(), gOpenBrowsers.end(),
                                        [&](const CefRefPtr<CefBrowser> &b) { return b->IsSame(browser); }),
                         gOpenBrowsers.end());
@@ -621,7 +692,7 @@ class CosmosBrowserClient : public CefClient,
     NSRect bounds = holder.bounds;
     info.SetAsChild((__bridge CefWindowHandle)holder, CefRect(0, 0, (int)bounds.size.width, (int)bounds.size.height));
     info.runtime_style = CEF_RUNTIME_STYLE_ALLOY;
-    client = new CosmosBrowserClient(popup);
+    client = new CosmosBrowserClient(popup, context_);
     return false;
   }
 
@@ -651,6 +722,7 @@ class CosmosBrowserClient : public CefClient,
   }
 
   __weak CosmosCEFBrowser *owner_;
+  CosmosCEFContext *context_;
   IMPLEMENT_REFCOUNTING(CosmosBrowserClient);
 };
 
@@ -665,6 +737,7 @@ class CosmosBrowserClient : public CefClient,
 - (instancetype)initPopupInView:(NSView *)holder opener:(CosmosCEFBrowser *)opener {
   if ((self = [super init])) {
     _parent = holder;
+    _context = opener.context;
     _opener = opener;
     _zoomFactor = 1;
     _waitingForTarget = [NSMutableArray array];
@@ -675,11 +748,12 @@ class CosmosBrowserClient : public CefClient,
 - (instancetype)initInView:(NSView *)parent context:(CosmosCEFContext *)context url:(NSString *)url {
   if ((self = [super init])) {
     _parent = parent;
+    _context = context;
     _zoomFactor = 1;
     _waitingForTarget = [NSMutableArray array];
     std::string address = url.UTF8String;
     CefRefPtr<CefRequestContext> requestContext = context->_context;
-    CefRefPtr<CosmosBrowserClient> client = new CosmosBrowserClient(self);
+    CefRefPtr<CosmosBrowserClient> client = new CosmosBrowserClient(self, context);
     NSRect bounds = parent.bounds;
     __weak NSView *weakParent = parent;
     WhenReady(^{
@@ -783,7 +857,7 @@ static void (^gTargetKnown)(CosmosCEFBrowser *) = nil;
   if (!_browser) return;
   CefWindowInfo info;
   CefBrowserSettings settings;
-  _browser->GetHost()->ShowDevTools(info, nullptr, settings, CefPoint());
+  _browser->GetHost()->ShowDevTools(info, new DevToolsClient(), settings, CefPoint());
 }
 
 - (BOOL)hasDevTools {

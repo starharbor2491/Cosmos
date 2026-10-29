@@ -5,8 +5,11 @@ Manifest V3 ad blockers use. Chromium matches every request against them in its 
 involved and pages cannot detect or bypass them. The compiler is `CosmosBlocking`, pure Foundation with no engine code;
 `CosmosChromium/BlockerExtension.swift` packages its output as a small extension ("Cosmos Blocker") that Cosmos writes
 into the default profile and loads over the debugging pipe. Private windows, which are in-memory profiles made from that
-one, get it too; other profiles get no blocking yet (Chromium loads extensions into the default profile only, see
-[cef-engine.md](cef-engine.md)).
+one, get it too. Chromium loads extensions into the default profile only, so the other profiles block on their own:
+Cosmos matches each request against the same rules itself (`RequestRules`, asked by CEF on its network thread before
+the request leaves, and again for each hop of a redirect), and the same hiding is a page script in Cosmos's own world
+(`BlockerExtension.hidingScript`). CEF does not show Cosmos a WebSocket's opening, so `websocket` rules work in the
+default profile and in private windows only.
 
 Arc ships EasyList, EasyPrivacy, AdGuard, uBlock and cookie-banner lists inside Chromium (see
 `arc-teardown/web-behaviors-and-boosts.md`). Cosmos offers the same coverage by compiling the same public lists.
@@ -206,5 +209,6 @@ scripts/test.sh --filter PageAgentTests                            # + live Chro
   rely on a stub (`$redirect=noop.js`) keep working only because those filters are skipped rather than turned into
   plain blocks.
 - `$popup` filters are skipped.
+- In profiles other than the default one, WebSockets are not blocked (CEF does not ask about them).
 - `$badfilter` and hide exemptions work within one list, not across lists.
 - `site.*` filters are not expanded to every TLD; they are dropped.

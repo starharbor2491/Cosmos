@@ -41,6 +41,9 @@ public final class BrowserStore: TabHost {
     // MARK: Runtime state
 
     @ObservationIgnored var runtimes: [RuntimeKey: TabRuntime] = [:]
+    /// Each window's number for extensions (`ExtensionTabs`).
+    @ObservationIgnored var extensionWindowNumbers = NSMapTable<WindowState, NSNumber>.weakToStrongObjects()
+    @ObservationIgnored var nextExtensionWindowNumber = 0
     @ObservationIgnored var environments: [UUID: ProfileEnvironment] = [:]
     @ObservationIgnored var incognitoEnvironment: ProfileEnvironment?
     /// The sidebar item being dragged right now, in any window (drop targets read it; nil when no drag is in flight).
@@ -382,6 +385,9 @@ public final class BrowserStore: TabHost {
         e.engineProfile.setPermissionDecisions(permissionDecisionList)
         e.installBoosts(boosts)
         if let blocker { blocker.attach(to: e) }
+        if let extensions = e.engineProfile.extensions {
+            extensions.tabsHost = ExtensionTabs(store: self, profileID: profile.id, extensions: extensions)
+        }
         environments[pid] = e
         extensionCenter?.environmentCreated(e)
         return e
