@@ -35,6 +35,28 @@ final class Rig {
         #expect(rig.store.workspace.problems().isEmpty)
     }
 
+    /// The engine keeps a history of its own in each profile: forgetting a page, or a range, reaches every profile's,
+    /// including one where no page has been opened.
+    @Test func forgettingHistoryReachesTheEnginesOwnInEveryProfile() async throws {
+        let engine = FakeEngine()
+        let rig = Rig(engine: engine)
+        let work = rig.store.addProfile(named: "Work")
+        let url = URL(string: "https://example.com/a#part")!
+        let since = Date().addingTimeInterval(-3600)
+        rig.store.deleteHistoryEntry(url)
+        rig.store.clearHistory(since: since)
+        rig.store.clearHistory()
+        let ids = rig.store.workspace.profiles.map(\.id)
+        #expect(ids.count == 2 && ids.contains(work))
+        func engineProfile(_ id: UUID) -> FakeProfile? { engine.profiles.first { $0.id == id } }
+        for _ in 0..<100 where ids.contains(where: { (engineProfile($0)?.clearedHistory.count ?? 0) < 2 }) { try await Task.sleep(for: .milliseconds(10)) }
+        for id in ids {
+            let profile = try #require(engineProfile(id))
+            #expect(profile.deletedHistory == [url])
+            #expect(profile.clearedHistory.count == 2 && profile.clearedHistory.contains(since) && profile.clearedHistory.contains(nil))
+        }
+    }
+
     @Test func closingATodayTabArchivesItAndReopenRestoresIt() throws {
         let rig = Rig()
         let id = try #require(rig.store.newTab(url: URL(string: "https://example.com/page"), in: rig.window))

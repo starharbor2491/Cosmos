@@ -235,7 +235,7 @@ final class ChromiumAccessibility {
 
     init(page: ChromiumPage) {
         self.page = page
-        if let session = page.sessionID { page.browser.connection?.post("Accessibility.enable", session: session) }
+        if let session = page.sessionID { page.browser?.connection?.post("Accessibility.enable", session: session) }
     }
 
     // MARK: Reading
@@ -283,7 +283,7 @@ final class ChromiumAccessibility {
     }
 
     private func send(_ method: String, _ params: [String: Any] = [:], _ session: String) async -> [String: Any]? {
-        try? await page?.browser.connection?.send(method, params, session: session)
+        try? await page?.browser?.connection?.send(method, params, session: session)
     }
 
     /// The tree of one document: the page's (`frame` nil) or a frame's, `offset` from the page's top left.

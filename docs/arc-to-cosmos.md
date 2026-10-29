@@ -22,7 +22,7 @@ If you used Arc every day, this is the page to keep open for the first week. **�
 | Site Control Center | Site Controls | Click the lock in the address pill: blocking for this site, zoom, Boosts, sound, permissions. |
 | Ad blocking (uBlock Origin built in) | Blocking | Settings ▸ Blocking. Per-site switch in Site Controls. |
 | Chrome extensions | Extensions | Cosmos ▸ Extensions…. See [extensions.md](extensions.md). |
-| Auto Picture in Picture | Auto Picture in Picture | Settings ▸ General. Does nothing yet on Chromium, which runs headless and has no Picture in Picture window. |
+| Auto Picture in Picture | Auto Picture in Picture | Settings ▸ General. A video playing in the tab you leave goes into Cosmos's Picture in Picture window. |
 | Link routing ("open links in…") | Link routing | Settings ▸ Links. |
 | Hover cards, Tidy Tabs (AI), Ask on page, Easels, Notes, Live Folders, Sync, Max | — | Not in Cosmos. |
 
@@ -62,7 +62,7 @@ Cosmos uses Arc's keys wherever the feature exists. Like Arc, its shortcuts win 
 | ⌘+ / ⌘- / ⌘0 | Zoom in / out / actual size |
 | ⇧⌘C | Copy the page address |
 | ⌥⇧⌘C | Copy the address as a Markdown link |
-| ⌥⌘P | Picture in Picture (not working yet on Chromium) |
+| ⌥⌘P | Picture in Picture |
 | ⌘P | Print |
 | **Panels** | |
 | ⌘Y | History |
@@ -80,8 +80,8 @@ Cosmos uses Arc's keys wherever the feature exists. Like Arc, its shortcuts win 
 | Gesture | Does |
 |---|---|
 | Two-finger swipe sideways anywhere over the sidebar | Changes space. The list follows your fingers, resists at the first and last space, ticks when the swipe has gone far enough, and springs back if you let go early |
-| Two-finger swipe sideways over a page | Back and forward |
-| Pinch, or two-finger double-tap, on a page | Zoom (smart zoom) |
+| Two-finger swipe sideways over a page | Back and forward. Not yet on Chromium: use ⌘[ and ⌘] |
+| Pinch, or two-finger double-tap, on a page | Zoom (smart zoom). Not yet on Chromium: use ⌘+ and ⌘− |
 | Press hard on a link (Force Touch) | Opens it in Peek, like ⇧-click. Hard presses a page fakes for itself are ignored |
 | Drag a tab, folder or Favorite | A small card with its icon and name follows the pointer, a marker shows where it will land, and the trackpad ticks each time the marker moves to a new place. Dropped on anything outside Cosmos, a tab arrives as its web address and nothing else |
 
@@ -89,7 +89,7 @@ Haptics (Settings ▸ General ▸ Trackpad haptics) are used sparingly: a tap wh
 
 ## Moving over, in order
 
-1. Open Cosmos and choose **Import from Arc**. Your spaces, Favorites, pinned tabs, folders, split views and archive come across. Add Arc's history and bookmarks from the same screen.
+1. Open Cosmos and choose **Import from Arc or Another Browser…** in the Cosmos menu. Your spaces, Favorites, pinned tabs, folders, split views and archive come across. Add Arc's history and bookmarks from the same screen.
 2. **Cosmos ▸ Extensions… ▸ Find in Arc and Other Browsers** brings your extensions.
 3. Pick a few Boosts you miss and recreate them (Site Controls ▸ Boost this site). Colour filters and zapping are quick.
 4. Settings ▸ General ▸ **Set as default browser**, and Settings ▸ Links if you used Little Arc for links from other apps.

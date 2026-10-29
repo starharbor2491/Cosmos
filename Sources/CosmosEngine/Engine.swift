@@ -68,6 +68,10 @@ public protocol EngineProfile: AnyObject {
     var extensions: EngineExtensions? { get }
     /// Forgets cookies, site storage and the page cache.
     func clearSiteData() async
+    /// Forgets the engine's own history of the pages visited since `date` (all of it for nil).
+    func clearHistory(since date: Date?) async
+    /// Forgets the engine's own history of a page, with or without a fragment.
+    func deleteHistory(of url: URL) async
     /// The engine's own processes for this profile, for the Resources view.
     func processIDs() async -> [Int32]
     /// Stops the profile's engine and starts it again with the current settings; its pages come back through

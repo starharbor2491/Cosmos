@@ -58,7 +58,7 @@ Arc had and where to add them.
   interactive flow opens as a window, and ends when the site sends it to the extension's `chromiumapp.org` address.
 - **Chromium's own stores, not Cosmos's.** `chrome.bookmarks` sees Chromium's bookmark store, which is empty (Cosmos's
   pinned tabs and Favorites are not Chromium bookmarks); `chrome.history` sees the history Chromium keeps for the
-  profile, not Cosmos's History; `chrome.windows` sees Chromium's invisible windows, not Cosmos's.
+  profile, not Cosmos's History (Clear History and deleting a page from History empty it too); `chrome.windows` sees Chromium's invisible windows, not Cosmos's.
 - The `frame` context for menu items is not offered (Cosmos does not report which frame a right click was in).
 - Extensions that need a companion app (native messaging) were not tested; companion apps register in Chrome's own
   folders, which Cosmos's Chromium does not read, so they will most likely not find it.
@@ -102,4 +102,4 @@ Arc had and where to add them.
 | `CosmosEngine/Engine.swift` (`EngineExtensions`) | what the browser asks of an engine's extensions: load, unload, buttons, menu items, commands |
 | `CosmosChromium/ChromiumExtensionHost.swift` | loads extensions over the pipe (`Extensions.loadUnpacked`), attaches to their service workers, mirrors their UI, delivers clicks (`Extensions.triggerAction` for buttons) |
 | `CosmosChromium/Resources/extension-shim.js` | runs in each extension worker before its own code: reports badge, icon, popup, menu, notification, side panel and sign-in calls to Cosmos, and fires `contextMenus.onClicked`, `commands.onCommand`, the notification events and the end of a sign-in flow when Cosmos says so |
-| `CosmosChromium/Resources/Bridge/` | Cosmos's own small extension in every profile: tab ids for extension events, page zoom, clearing site data |
+| `CosmosChromium/Resources/Bridge/` | Cosmos's own small extension in every profile: tab ids for extension events, page zoom, clearing site data and Chromium's own history |

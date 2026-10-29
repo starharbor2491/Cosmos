@@ -24,6 +24,8 @@ final class ChromiumProcess {
             "--use-mock-keychain",
             "--password-store=basic",
             "--disable-features=Translate,MediaRouter,DialMediaRouteProvider",
+            // `--headless` and the pipe each make `navigator.webdriver` true, which sites such as Google's sign-in refuse.
+            "--disable-blink-features=AutomationControlled",
             "--window-size=1280,800",
         ] + extraFlags + ["about:blank"]
     }

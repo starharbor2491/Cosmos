@@ -7,7 +7,8 @@ import CosmosEngine
 /// mirrored here so Cosmos can draw it, and Cosmos's clicks go back to the extension.
 @MainActor
 final class ChromiumExtensionHost: EngineExtensions {
-    unowned let profile: ChromiumProfile
+    /// Weak: Cosmos keeps the extensions (`EngineProfile.extensions`) and their tasks, which can outlast the profile.
+    private(set) weak var profile: ChromiumProfile?
     var onChange: (() -> Void)?
     var onNotification: ((String, EngineNotification) -> Void)?
     var onNotificationClosed: ((String, String) -> Void)?
@@ -72,12 +73,12 @@ final class ChromiumExtensionHost: EngineExtensions {
 
     func load(folder: URL) async throws -> String {
         if !folders.contains(folder) { folders.append(folder) }
-        guard await profile.start() else { throw CDPError(code: -3, message: "Chromium is not running") }
+        guard let profile, await profile.start() else { throw CDPError(code: -3, message: "Chromium is not running") }
         return try await loadIntoChromium(folder)
     }
 
     private func loadIntoChromium(_ folder: URL) async throws -> String {
-        guard let c = profile.connection else { throw CDPError.closed }
+        guard let c = profile?.connection else { throw CDPError.closed }
         let r = try await c.send("Extensions.loadUnpacked", ["path": folder.path])
         guard let id = r["id"] as? String else { throw CDPError(code: -4, message: "Chromium did not load the extension") }
         let manifest = Self.manifest(folder)
@@ -97,7 +98,7 @@ final class ChromiumExtensionHost: EngineExtensions {
 
     func unload(id: String) async {
         if let item = loaded.removeValue(forKey: id) { folders.removeAll { $0 == item.folder } }
-        _ = try? await profile.connection?.send("Extensions.uninstall", ["id": id])
+        _ = try? await profile?.connection?.send("Extensions.uninstall", ["id": id])
         onChange?()
     }
 
@@ -134,7 +135,7 @@ final class ChromiumExtensionHost: EngineExtensions {
     // MARK: Service workers
 
     func serviceWorkerAttached(target: String, session: String, url: String) {
-        guard let c = profile.connection else { return }
+        guard let c = profile?.connection else { return }
         let id = URL(string: url)?.host ?? ""
         guard loaded[id] != nil, let shim = Self.shim else {
             c.post("Runtime.runIfWaitingForDebugger", session: session)
@@ -162,11 +163,11 @@ final class ChromiumExtensionHost: EngineExtensions {
             if let child = (event.params["targetInfo"] as? [String: Any])?["targetId"] as? String,
                let childSession = event.params["sessionId"] as? String {
                 tabTargets[child] = tab
-                profile.connection?.post("Target.detachFromTarget", ["sessionId": childSession], session: session)
+                profile?.connection?.post("Target.detachFromTarget", ["sessionId": childSession], session: session)
             }
             return
         }
-        guard let id = workers[session], let c = profile.connection else { return }
+        guard let id = workers[session], let c = profile?.connection else { return }
         switch event.method {
         case "Debugger.paused":
             if !shimmed.contains(session), let shim = Self.shim {
@@ -268,7 +269,7 @@ final class ChromiumExtensionHost: EngineExtensions {
     private func tabID(of page: ChromiumPage) async -> Int? {
         guard let target = page.targetID else { return nil }
         if let known = tabIDs[target] { return known }
-        let id = await profile.bridgeEvaluate("cosmosTabID(\(ChromiumResources.jsString(target)))") as? Int
+        let id = await profile?.bridgeEvaluate("cosmosTabID(\(ChromiumResources.jsString(target)))") as? Int
         if let id { tabIDs[target] = id }
         return id
     }
@@ -277,7 +278,7 @@ final class ChromiumExtensionHost: EngineExtensions {
     /// holds until one says this one. Chromium names the page before it answers, so its answer, however late, ends the
     /// wait: a busy Chromium does not lose the click.
     private func tabTarget(of page: ChromiumPage) async -> String? {
-        guard let target = page.targetID, let c = profile.connection else { return nil }
+        guard let target = page.targetID, let c = profile?.connection else { return nil }
         if let known = tabTargets[target] { return known }
         let tabs = ((try? await c.send("Target.getTargets", ["filter": [["type": "tab"]]]))?["targetInfos"] as? [[String: Any]] ?? [])
             .compactMap { $0["targetId"] as? String }
@@ -311,7 +312,7 @@ final class ChromiumExtensionHost: EngineExtensions {
             onSidePanelRequest?(extensionID, page)
             return nil
         }
-        guard let page = page as? ChromiumPage, let c = profile.connection else { return nil }
+        guard let page = page as? ChromiumPage, let c = profile?.connection else { return nil }
         _ = await tabID(of: page)
         guard let tab = await tabTarget(of: page) else { return nil }
         awaitingPopup?.continuation.resume(returning: nil)
@@ -378,12 +379,12 @@ final class ChromiumExtensionHost: EngineExtensions {
         let path = tab.flatMap { item.sidePanelPath[$0] } ?? item.sidePanelPath[Loaded.everyTab]
         let enabled = tab.flatMap { item.sidePanelEnabled[$0] } ?? item.sidePanelEnabled[Loaded.everyTab] ?? true
         guard enabled, let path, let url = URL(string: "chrome-extension://\(extensionID)/\(path.hasPrefix("/") ? String(path.dropFirst()) : path)") else { return nil }
-        return profile.openPage(url)
+        return profile?.openPage(url)
     }
 
     /// The page of a `chrome.tabs` id, among the pages Cosmos has asked about.
     private func page(forTab tab: Int) -> ChromiumPage? {
-        tabIDs.first { $0.value == tab }.flatMap { profile.page(forTarget: $0.key) }
+        tabIDs.first { $0.value == tab }.flatMap { profile?.page(forTarget: $0.key) }
     }
 
     // MARK: Signing in
@@ -401,7 +402,7 @@ final class ChromiumExtensionHost: EngineExtensions {
         }
         let state = AuthFlow()
         let request = NewPageRequest(url: url, features: ["width=520", "height=680"], fromExtension: true)
-        guard let page = profile.openPage(url, request: request) else {
+        guard let page = profile?.openPage(url, request: request) else {
             Task { await finishAuthFlow(flow, of: id, url: nil, error: "Authorization page could not be loaded.") }
             return
         }
@@ -439,7 +440,7 @@ final class ChromiumExtensionHost: EngineExtensions {
     /// cannot (Chromium replaced it, and it lingers because Cosmos is attached) answers 'dead' and is let go; one that
     /// answers false is alive but not the one; the next is asked either way.
     private func fire(_ expression: String, in extensionID: String) async {
-        guard let c = profile.connection else { return }
+        guard let c = profile?.connection else { return }
         for session in workers.filter({ $0.value == extensionID }).map(\.key) {
             let r = try? await c.send("Runtime.evaluate", ["expression": expression, "awaitPromise": true, "returnByValue": true, "userGesture": true],
                                       session: session)

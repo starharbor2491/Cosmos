@@ -37,7 +37,7 @@ public enum ChromeWebStore {
     }
 
     /// The zip inside a CRX2 or CRX3 file (a plain zip passes through unchanged). The signature is not checked: the
-    /// package comes straight from the publisher's channel over HTTPS, and Cosmos runs it with WebKit's extension sandbox.
+    /// package comes straight from the Web Store over HTTPS, and Cosmos loads it into Chromium unpacked.
     public static func zipPayload(fromCRX data: Data) throws -> Data {
         func u32(_ offset: Int) -> UInt32? {
             guard data.count >= offset + 4 else { return nil }

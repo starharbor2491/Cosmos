@@ -14,7 +14,8 @@
   const waiting = new Map();
   window.addEventListener('message', e => {
     const d = e.data;
-    if (!d || typeof d.__cosmosAnswer !== 'number') return;
+    // Only Cosmos's answer, which comes from this window (engine-helper.js); another frame could post the same shape.
+    if (e.source !== window || !d || typeof d.__cosmosAnswer !== 'number') return;
     const done = waiting.get(d.__cosmosAnswer);
     if (done) { waiting.delete(d.__cosmosAnswer); done(d.value); }
   });

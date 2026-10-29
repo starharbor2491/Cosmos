@@ -43,6 +43,8 @@ final class FakeProfile: EngineProfile {
     private(set) var pages: [FakePage] = []
     private(set) var restarts = 0
     private(set) var clearedSiteData = 0
+    private(set) var clearedHistory: [Date?] = []
+    private(set) var deletedHistory: [URL] = []
     private(set) var isClosed = false
     var processes: [Int32] = []
 
@@ -65,6 +67,8 @@ final class FakeProfile: EngineProfile {
     func setContentBlocking(_ lists: [CompiledBlockingList]?, allowlist: [String]) { blocking = (lists, allowlist) }
     func setPermissionDecisions(_ decisions: [PermissionDecision]) { permissionDecisions = decisions }
     func clearSiteData() async { clearedSiteData += 1 }
+    func clearHistory(since date: Date?) async { clearedHistory.append(date) }
+    func deleteHistory(of url: URL) async { deletedHistory.append(url) }
     func processIDs() async -> [Int32] { processes }
     func restart() { restarts += 1; delegate?.profileDidRestart(self) }
     func close() { isClosed = true }

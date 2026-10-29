@@ -221,6 +221,7 @@ public final class BrowserStore: TabHost {
         settings.menuBar.lastAddress = nil
         forgetInSavedFiles()
         onHistoryCleared?()
+        forEachEngineProfile { await $0.clearHistory(since: date) }
     }
 
     /// Forgets one page of the history: its row, what the Command Bar learned from picking or typing it, its logo when no
@@ -236,6 +237,18 @@ public final class BrowserStore: TabHost {
         if panelIsOnIt { settings.menuBar.lastAddress = nil }
         forgetInSavedFiles()
         if panelIsOnIt { onHistoryCleared?() }
+        forEachEngineProfile { await $0.deleteHistory(of: url) }
+    }
+
+    /// The engine keeps a history of its own in every profile, including one with no page open now, so that profile's
+    /// engine is started for this (as for Clear Site Data). Side by side: one that does not answer holds up no other.
+    private func forEachEngineProfile(_ work: @escaping @MainActor (EngineProfile) async -> Void) {
+        let profiles = workspace.profiles.map { environment(forProfile: $0.id).engineProfile }
+        Task {
+            await withTaskGroup(of: Void.self) { group in
+                for profile in profiles { group.addTask { await work(profile) } }
+            }
+        }
     }
 
     /// The files keep dated copies of themselves, and a copy made before something was forgotten would still hold it. What

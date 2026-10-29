@@ -2,7 +2,7 @@ import Foundation
 import CosmosCore
 import CosmosImport
 
-// cosmos-cli: import, inspect and export Cosmos data from the terminal.
+// cosmos-cli: import Arc data into Cosmos from the terminal, or see what an import would bring.
 // Output is counts and fixed messages only: never a tab title, URL or other browsing data.
 
 let cliVersion = "0.1.0"

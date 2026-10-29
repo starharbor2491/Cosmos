@@ -8,7 +8,8 @@ import CosmosEngine
 final class ChromiumProfile: EngineProfile {
     static let agentWorld = "cosmos"
 
-    unowned let engine: ChromiumEngine
+    /// Weak: the profile's tasks can outlast the engine (when Cosmos, or a test, lets go of it).
+    private(set) weak var engine: ChromiumEngine?
     let id: UUID?
     /// Where Chromium keeps this profile. For a profile with no directory (incognito) it is a temporary folder that goes
     /// when the profile closes.
@@ -70,7 +71,7 @@ final class ChromiumProfile: EngineProfile {
     }
 
     private func launch() async -> Bool {
-        guard !closed, let app = await engine.readyApplication() else { return false }
+        guard !closed, let engine, let app = await engine.readyApplication() else { return false }
         try? FileManager.default.createDirectory(at: dataDirectory, withIntermediateDirectories: true)
         let version = ChromiumInstall.version(of: app) ?? ""
         userAgent = ChromiumPreferences.userAgent(chromiumVersion: version)
@@ -439,6 +440,16 @@ final class ChromiumProfile: EngineProfile {
             }
         }
         _ = await bridgeEvaluate("cosmosClearData()")
+    }
+
+    func clearHistory(since date: Date?) async {
+        guard await start() else { return }
+        _ = await bridgeEvaluate("cosmosClearHistory(\((date?.timeIntervalSince1970 ?? 0) * 1000))")
+    }
+
+    func deleteHistory(of url: URL) async {
+        guard await start() else { return }
+        _ = await bridgeEvaluate("cosmosDeleteHistory(\(ChromiumResources.jsString(url.absoluteString)))")
     }
 
     func processIDs() async -> [Int32] {

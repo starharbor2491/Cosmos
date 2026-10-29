@@ -43,6 +43,7 @@ import CosmosEngine
         #expect(!args.contains { $0.hasPrefix("--remote-debugging-port") })
         #expect(args.contains("--user-data-dir=/tmp/profile"))
         #expect(args.contains("--disable-gpu"))
+        #expect(args.contains("--disable-blink-features=AutomationControlled"), "pages would be told the browser is automated")
         #expect(args.last == "about:blank")
     }
 

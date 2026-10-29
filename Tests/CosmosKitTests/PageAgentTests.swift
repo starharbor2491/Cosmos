@@ -99,6 +99,51 @@ struct PageAgentTests {
         #expect(rig.store.workspace.item(runtime.itemID)?.tab?.pageTitle == "Second")
     }
 
+    /// Chromium run headless or over a pipe tells every page it is automated (`navigator.webdriver`), and sites such as
+    /// Google's sign-in turn such browsers away. Cosmos's pages are told what Chrome's are.
+    @Test func pagesAreNotToldTheBrowserIsAutomated() async throws {
+        defer { stop() }
+        let server = try await SiteServer(routes: ["/": html("<body>hello</body>")])
+        let runtime = try await open(URL(string: "http://127.0.0.1:\(server.port)/")!)
+        #expect(await runtime.evaluate(returning: "navigator.webdriver") as? Bool == false)
+    }
+
+    /// Chromium holds a page's workers at their start until it is told to go on, as it holds its frames. A worker in the
+    /// page, in a frame from another site, and a shared one all run.
+    @Test func aPagesWorkersRun() async throws {
+        defer { stop() }
+        let start = "new Worker(URL.createObjectURL(new Blob(['postMessage(\"ran\")']))).onmessage = e => parent.postMessage('frame ' + e.data, '*');"
+        let frame = try await SiteServer(routes: ["/frame": html("<script>\(start)</script>")])
+        let page = "<body><script>window.got = []; addEventListener('message', e => got.push(e.data));</script></body>"
+        let server = try await SiteServer(routes: ["/": html(page)])
+        let runtime = try await open(URL(string: "http://127.0.0.1:\(server.port)/")!)
+        let worker = """
+        new Promise(r => { new Worker(URL.createObjectURL(new Blob(['postMessage("ran")']))).onmessage = e => r(e.data);
+          setTimeout(() => r('no answer'), 5000); })
+        """
+        #expect(await runtime.evaluate(returning: worker) as? String == "ran")
+        let nested = """
+        new Promise(r => { const inner = URL.createObjectURL(new Blob(['postMessage("ran")']));
+          const outer = URL.createObjectURL(new Blob(['const w = new Worker(' + JSON.stringify(inner) + '); w.onmessage = e => postMessage("nested " + e.data);']));
+          new Worker(outer).onmessage = e => r(e.data); setTimeout(() => r('no answer'), 5000); })
+        """
+        #expect(await runtime.evaluate(returning: nested) as? String == "nested ran")
+        // And let go of: Cosmos stays attached to nothing it does not use.
+        let connections = rig.store.engineProfiles.compactMap { ($0 as? ChromiumProfile)?.connection }
+        let connection = try #require(connections.first)
+        let targets = (try await connection.send("Target.getTargets"))["targetInfos"] as? [[String: Any]] ?? []
+        let workers = targets.filter { $0["type"] as? String == "worker" }
+        #expect(!workers.isEmpty && workers.allSatisfy { $0["attached"] as? Bool == false }, "\(workers.map { $0["attached"] ?? "?" })")
+        let shared = """
+        new Promise(r => { const w = new SharedWorker(URL.createObjectURL(new Blob(['onconnect = e => e.ports[0].postMessage("ran")'])));
+          w.port.onmessage = e => r(e.data); setTimeout(() => r('no answer'), 5000); })
+        """
+        #expect(await runtime.evaluate(returning: shared) as? String == "ran")
+        _ = await runtime.evaluate(returning: "document.body.insertAdjacentHTML('beforeend', \"<iframe src='http://localhost:\(frame.port)/frame'></iframe>\"); 1")
+        for _ in 0..<100 where ((await runtime.evaluate(returning: "got.length") as? Int) ?? 0) < 1 { try await Task.sleep(for: .milliseconds(50)) }
+        #expect(await runtime.evaluate(returning: "got") as? [String] == ["frame ran"])
+    }
+
     /// A load that fails shows Cosmos's own page, and the address stays the one that failed.
     @Test func aRefusedConnectionShowsCosmossPage() async throws {
         defer { stop() }
@@ -135,6 +180,62 @@ struct PageAgentTests {
         #expect(await runtime.evaluate(returning: location) as? String == "48.85,2.35")
         let watch = "new Promise(r => { const id = navigator.geolocation.watchPosition(p => { navigator.geolocation.clearWatch(id); r(String(p.coords.latitude)); }, e => r('error ' + e.code)); })"
         #expect(await runtime.evaluate(returning: watch) as? String == "48.85")
+    }
+
+    /// A question still open when its profile closes (a private window closed, Cosmos quitting) is let go: the answer that
+    /// comes after has no profile left to reach. Driven on the engine alone, with the question held open by the test.
+    @Test func aQuestionAnsweredAfterItsProfileHasGoneIsLetGo() async throws {
+        defer { stop() }
+        final class HeldQuestion: EnginePageDelegate {
+            var asked: CheckedContinuation<Bool, Never>?
+            func page(_ page: EnginePage, wantsPermission request: PermissionRequest) async -> Bool {
+                await withCheckedContinuation { asked = $0 }
+            }
+            func pageStateDidChange(_ page: EnginePage) {}
+            func pageDidStartNavigation(_ page: EnginePage) {}
+            func pageDidCommitNavigation(_ page: EnginePage) {}
+            func pageDidFinishLoading(_ page: EnginePage) {}
+            func page(_ page: EnginePage, didFailLoading url: URL, error: PageLoadError) {}
+            func page(_ page: EnginePage, agentMessage: [String: Any], fromMainFrame: Bool) {}
+            func page(_ page: EnginePage, runDialog dialog: PageDialog) async -> PageDialog.Answer { PageDialog.Answer(accepted: false) }
+            func page(_ page: EnginePage, chooseFiles chooser: FileChooser) async -> [URL]? { nil }
+            func page(_ page: EnginePage, dangerAt url: URL) -> PageDanger? { nil }
+            func page(_ page: EnginePage, wantsCredentialsFor challenge: AuthChallenge) async -> PageCredentials? { nil }
+            func page(_ page: EnginePage, showNotification note: EngineNotification) {}
+            func page(_ page: EnginePage, closeNotification id: String) {}
+            func page(_ page: EnginePage, wantsPictureInPicture view: NSView) async -> Bool { false }
+            func pageDidLeavePictureInPicture(_ page: EnginePage) {}
+            func pageWantsLocation(_ page: EnginePage) async -> PageLocation? { nil }
+            func pageDidForceClick(_ page: EnginePage) {}
+            func pageRequestsClose(_ page: EnginePage) {}
+            func pageRendererDidTerminate(_ page: EnginePage) {}
+        }
+        let server = try await SiteServer(routes: ["/": html("<body>hello</body>")])
+        let question = HeldQuestion()
+        weak var gone: EngineProfile?
+        var page: ChromiumPage?
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-question-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        do {
+            let profile = engine.makeProfile(id: UUID(), directory: folder)
+            gone = profile
+            profile.setPageScripts([])
+            let made = try #require(profile.makePage() as? ChromiumPage)
+            page = made
+            made.delegate = question
+            made.view.setFrameSize(NSSize(width: 800, height: 600))
+            made.load(URL(string: "http://127.0.0.1:\(server.port)/")!)
+            try await waitFor { made.state.url?.port == Int(server.port) && !made.state.isLoading }
+            _ = await made.evaluate("Notification.requestPermission(); 1", in: .page)
+            try await waitFor(5) { question.asked != nil }
+            try #require(question.asked != nil, "the page did not ask")
+            profile.close()
+        }
+        try await waitFor(5) { gone == nil }
+        try #require(gone == nil, "the profile is still held, so this cannot show anything")
+        question.asked?.resume(returning: true)
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(page?.state.url != nil, "the page is still there, and nothing broke")
     }
 
     /// A site the user allowed is allowed from the start, without asking again; a reset takes it back.
@@ -222,6 +323,32 @@ struct PageAgentTests {
         #expect(inspector.isClosed)
     }
 
+    // MARK: History
+
+    /// Chromium keeps a history of its own for each profile, which Cosmos does not show. Deleting a page from History
+    /// (with or without a fragment) and Clear History empty it there too.
+    @Test func clearingHistoryAlsoEmptiesChromiumsOwn() async throws {
+        defer { stop() }
+        let server = try await SiteServer(routes: ["/a": html("<title>A</title>a"), "/b": html("<title>B</title>b")])
+        let a = URL(string: "http://127.0.0.1:\(server.port)/a")!, b = URL(string: "http://127.0.0.1:\(server.port)/b")!
+        let first = try await open(a)
+        _ = await first.evaluate(returning: "location.hash = 'part'; 1")
+        _ = try await open(b)
+        let profile = try #require(rig.store.engineProfiles.first as? ChromiumProfile)
+        func visited() async -> [String] {
+            (await profile.bridgeEvaluate("chrome.history.search({ text: '', startTime: 0 }).then(r => r.map(i => i.url).sort())") as? [String]) ?? ["unreadable"]
+        }
+        let all = [a.absoluteString, a.absoluteString + "#part", b.absoluteString]
+        for _ in 0..<100 where await visited() != all { try await Task.sleep(for: .milliseconds(50)) }
+        #expect(await visited() == all)
+        rig.store.deleteHistoryEntry(a)
+        for _ in 0..<100 where await visited() != [b.absoluteString] { try await Task.sleep(for: .milliseconds(50)) }
+        #expect(await visited() == [b.absoluteString])
+        rig.store.clearHistory()
+        for _ in 0..<100 where await visited() != [] { try await Task.sleep(for: .milliseconds(50)) }
+        #expect(await visited() == [])
+    }
+
     // MARK: Notifications
 
     /// A site's notification is "shown" inside Chromium where nobody sees it; Cosmos posts it to macOS, and a click
@@ -249,6 +376,56 @@ struct PageAgentTests {
         _ = await runtime.evaluate(returning: "n.close(); 1")
         try await waitFor(5) { notifier.closed.contains(shown.key) }
         #expect(notifier.closed.contains(shown.key), "the page took it back")
+    }
+
+    /// What the page bridge reports is a window message, which any script can post. Cosmos posts only what a frame shows
+    /// itself, with permission, under its own site's name: not a forged report without permission, not one naming another
+    /// site, and not one a frame from another site sends to the page.
+    @Test func aPageOrFrameCannotForgeANotification() async throws {
+        defer { stop() }
+        let forge = "{ __cosmosTell: 'notification', note: { id: 'forged', title: 'Forged', body: '', origin: 'bank.example' } }"
+        let frame = try await SiteServer(routes: ["/frame": html("<script>parent.postMessage(\(forge), '*'); parent.postMessage('sent', '*');</script>")])
+        let server = try await SiteServer(routes: ["/": html("<body><script>window.got = []; addEventListener('message', e => got.push(e.data));</script></body>")])
+        let notifier = FakeNotifier()
+        rig.store.notifier = notifier
+        let runtime = try await open(URL(string: "http://127.0.0.1:\(server.port)/")!)
+
+        _ = await runtime.evaluate(returning: "postMessage(\(forge), '*'); 1")
+        try await Task.sleep(for: .milliseconds(800))
+        #expect(notifier.shown.isEmpty, "posted without permission")
+
+        rig.store.settings.permissionDecisions["127.0.0.1|notifications"] = true
+        for _ in 0..<100 where (await runtime.evaluate(returning: "Notification.permission") as? String) != "granted" { try await Task.sleep(for: .milliseconds(50)) }
+        _ = await runtime.evaluate(returning: "postMessage(\(forge), '*'); 1")
+        try await waitFor(5) { !notifier.shown.isEmpty }
+        #expect(notifier.shown.map(\.note.source) == ["127.0.0.1"], "posted under another site's name")
+
+        _ = await runtime.evaluate(returning: "document.body.insertAdjacentHTML('beforeend', \"<iframe src='http://localhost:\(frame.port)/frame'></iframe>\"); 1")
+        for _ in 0..<100 where !((await runtime.evaluate(returning: "got.includes('sent')") as? Bool) ?? false) { try await Task.sleep(for: .milliseconds(50)) }
+        try await Task.sleep(for: .milliseconds(800))
+        #expect(notifier.shown.count == 1, "a frame posted one in the page's name")
+    }
+
+    /// The page bridge's questions and Cosmos's answers are window messages too. A frame from another site posting them to
+    /// the page neither asks a question in the page's name nor answers one the page is waiting on.
+    @Test func aFrameCannotAskOrAnswerInThePagesName() async throws {
+        defer { stop() }
+        let forge = """
+        for (let id = 1; id <= 20; id++) parent.postMessage({ __cosmosAnswer: id, value: true }, '*');
+        parent.postMessage({ __cosmosAsk: 'permission', id: 999, kind: 'camera' }, '*'); parent.postMessage('sent', '*');
+        """
+        let frame = try await SiteServer(routes: ["/frame": html("<script>\(forge)</script>")])
+        let page = "<body><script>window.got = []; addEventListener('message', e => got.push(e.data && e.data.__cosmosAnswer !== undefined ? 'answer ' + e.data.__cosmosAnswer : e.data));</script></body>"
+        let server = try await SiteServer(routes: ["/": html(page)])
+        // A camera question would be answered at once from this, without a sheet; a notification one waits (no window here).
+        rig.store.settings.permissionDecisions["127.0.0.1|camera"] = false
+        let runtime = try await open(URL(string: "http://127.0.0.1:\(server.port)/")!)
+        _ = await runtime.evaluate(returning: "window.answered = 'waiting'; Notification.requestPermission().then(r => answered = r); 1")
+        _ = await runtime.evaluate(returning: "document.body.insertAdjacentHTML('beforeend', \"<iframe src='http://localhost:\(frame.port)/frame'></iframe>\"); 1")
+        for _ in 0..<100 where !((await runtime.evaluate(returning: "got.includes('sent')") as? Bool) ?? false) { try await Task.sleep(for: .milliseconds(50)) }
+        try await Task.sleep(for: .milliseconds(800))
+        #expect(await runtime.evaluate(returning: "answered") as? String == "waiting", "a frame answered the page's question")
+        #expect(await runtime.evaluate(returning: "got.includes('answer 999')") as? Bool == false, "a frame asked in the page's name")
     }
 
     /// An extension's `chrome.notifications` too: Cosmos posts it with the extension's icon, and a click reaches the

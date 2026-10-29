@@ -77,18 +77,25 @@
   };
 
   // Questions from the page's own world (page-bridge.js: permissions, Picture in Picture) go to Cosmos, and Cosmos's answer
-  // goes back.
+  // goes back. Only this frame's own: another frame (an ad, say) can post the same shape to this window.
   window.addEventListener('message', e => {
     const d = e.data;
-    if (!d || typeof d.__cosmosAsk !== 'string' || typeof d.id !== 'number' || typeof d.kind !== 'string') return;
+    if (e.source !== window || !d || typeof d.__cosmosAsk !== 'string' || typeof d.id !== 'number' || typeof d.kind !== 'string') return;
     post({ type: '__ask', what: d.__cosmosAsk, id: d.id, kind: d.kind });
   });
   window.__cosmosAnswer = (id, value) => window.postMessage({ __cosmosAnswer: id, value }, '*');
-  // What the page's own world reports without a question (a notification shown, one taken back).
+  // What the page's own world reports without a question (a notification shown, one taken back). Any script in the frame
+  // can post that shape too, so a notification goes on only with the site's permission and under this frame's own site,
+  // both read here, where the page cannot change them.
   window.addEventListener('message', e => {
     const d = e.data;
-    if (!d || typeof d.__cosmosTell !== 'string' || !d.note || typeof d.note.id !== 'string') return;
-    post({ type: '__tell', what: d.__cosmosTell, note: d.note });
+    if (e.source !== window || !d || typeof d.__cosmosTell !== 'string' || !d.note || typeof d.note.id !== 'string') return;
+    if (d.__cosmosTell === 'notification') {
+      if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+      post({ type: '__tell', what: 'notification', note: { id: d.note.id, title: String(d.note.title || ''), body: String(d.note.body || ''), origin: location.hostname } });
+    } else {
+      post({ type: '__tell', what: d.__cosmosTell, note: { id: d.note.id } });
+    }
   });
 
   // The video in Picture in Picture: where it is in the frame (Cosmos's window shows that part of the page), until it goes.
