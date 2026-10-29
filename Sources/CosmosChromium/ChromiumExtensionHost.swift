@@ -45,8 +45,11 @@ final class ChromiumExtensionHost: EngineExtensions {
     /// Chromium's tab ids of Cosmos's pages, and the tab targets `Extensions.triggerAction` wants.
     private var tabIDs: [String: Int] = [:]
     private var tabTargets: [String: String] = [:]
-    private var awaitingTabTarget: [String: (tab: String, continuation: CheckedContinuation<Void, Never>)] = [:]
+    /// Tab targets being asked which page they hold: session → tab target.
+    private var askingTab: [String: String] = [:]
     private var awaitingPopup: (extensionID: String, continuation: CheckedContinuation<EnginePage?, Never>)?
+    /// For tests: called just before a tab target is asked which page it holds.
+    var willAskTab: (() -> Void)?
 
     init(profile: ChromiumProfile) { self.profile = profile }
 
@@ -154,14 +157,12 @@ final class ChromiumExtensionHost: EngineExtensions {
 
     func handle(_ event: CDPEvent) {
         guard let session = event.sessionID else { return }
-        if event.method == "Target.attachedToTarget", let tab = awaitingTabTarget.first(where: { $0.value.tab == session })?.key {
+        if event.method == "Target.attachedToTarget", let tab = askingTab[session] {
             // A tab target told us which page it holds.
             if let child = (event.params["targetInfo"] as? [String: Any])?["targetId"] as? String,
-               let childSession = event.params["sessionId"] as? String, let waiting = awaitingTabTarget.removeValue(forKey: tab) {
+               let childSession = event.params["sessionId"] as? String {
                 tabTargets[child] = tab
                 profile.connection?.post("Target.detachFromTarget", ["sessionId": childSession], session: session)
-                profile.connection?.post("Target.detachFromTarget", ["sessionId": session])
-                waiting.continuation.resume()
             }
             return
         }
@@ -273,7 +274,8 @@ final class ChromiumExtensionHost: EngineExtensions {
     }
 
     /// The tab target holding `page` (what `Extensions.triggerAction` wants): each tab target is asked which page it
-    /// holds until one says this one.
+    /// holds until one says this one. Chromium names the page before it answers, so its answer, however late, ends the
+    /// wait: a busy Chromium does not lose the click.
     private func tabTarget(of page: ChromiumPage) async -> String? {
         guard let target = page.targetID, let c = profile.connection else { return nil }
         if let known = tabTargets[target] { return known }
@@ -281,14 +283,11 @@ final class ChromiumExtensionHost: EngineExtensions {
             .compactMap { $0["targetId"] as? String }
         for tab in tabs where !tabTargets.values.contains(tab) {
             guard let session = (try? await c.send("Target.attachToTarget", ["targetId": tab, "flatten": true]))?["sessionId"] as? String else { continue }
-            await withCheckedContinuation { continuation in
-                awaitingTabTarget[tab] = (session, continuation)
-                c.post("Target.setAutoAttach", ["autoAttach": true, "waitForDebuggerOnStart": false, "flatten": true], session: session)
-                Task {
-                    try? await Task.sleep(nanoseconds: 1_500_000_000)
-                    if let waiting = self.awaitingTabTarget.removeValue(forKey: tab) { waiting.continuation.resume() }
-                }
-            }
+            askingTab[session] = tab
+            willAskTab?()
+            _ = try? await c.send("Target.setAutoAttach", ["autoAttach": true, "waitForDebuggerOnStart": false, "flatten": true], session: session)
+            askingTab[session] = nil
+            c.post("Target.detachFromTarget", ["sessionId": session])
             if let found = tabTargets[target] { return found }
         }
         return tabTargets[target]

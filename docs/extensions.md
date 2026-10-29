@@ -72,7 +72,11 @@ Arc had and where to add them.
   profile. The content script runs on a page; the badge the worker sets reaches Cosmos's button; clicking the button,
   the menu item and the shortcut each reach the worker, which messages the right tab. This test found that an
   extension can have a second, dead worker that Chromium has replaced: Cosmos now delivers to the worker that can
-  still reach the extension's APIs and lets go of the other.
+  still reach the extension's APIs and lets go of the other. A later one found that the first click in a tab opened a
+  stray page a second later: to find the tab target `Extensions.triggerAction` wants, Cosmos looks into Chromium's
+  tabs, and the profile took each tab for a new page. Tabs are now left alone, and the lookup ends on Chromium's
+  answer rather than a timer, so a slow Chromium (paused for two seconds in
+  `anExtensionsButtonStillWorksWhenChromiumIsSlowToSayWhichTabThePageIsIn`) no longer loses the click.
 - **Live, too:** an extension's notification is posted and its click and button reach the extension
   (`anExtensionsNotificationIsPostedAndItsClickReachesTheExtension`); its side panel opens as a page with the
   extension's APIs (`anExtensionsSidePanelOpensAsAPageCosmosShows`); an interactive `launchWebAuthFlow` opens a window

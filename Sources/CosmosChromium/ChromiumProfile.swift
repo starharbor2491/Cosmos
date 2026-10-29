@@ -251,6 +251,8 @@ final class ChromiumProfile: EngineProfile {
             }
             return
         }
+        // A tab is only looked into, for the page it holds (`ChromiumExtensionHost.tabTarget(of:)`): it is not a page.
+        if type == "tab" { return }
         if let claim = claims.removeValue(forKey: target) {
             claim.resume(returning: session)
             return

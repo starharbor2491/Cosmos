@@ -646,6 +646,46 @@ struct PageAgentTests {
 
     /// An extension runs inside Chromium with Chromium's own `chrome.*` APIs. What Chrome would draw for it (the button
     /// and its badge, a menu item, a shortcut) reaches Cosmos, and Cosmos's clicks reach the extension with the right tab.
+    /// A click on an extension's button goes to the tab the page is in, which Cosmos first asks Chromium about. A Chromium
+    /// slow to answer (a busy Mac) must not lose the click: here it is paused for two seconds at that moment.
+    @Test func anExtensionsButtonStillWorksWhenChromiumIsSlowToSayWhichTabThePageIsIn() async throws {
+        defer { stop() }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-test-slow-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let files = [
+            "manifest.json": """
+            {"manifest_version": 3, "name": "Cosmos Slow", "version": "1.0", "background": {"service_worker": "worker.js"},
+             "action": {"default_title": "Slow"}, "content_scripts": [{"matches": ["http://127.0.0.1/*"], "js": ["content.js"]}]}
+            """,
+            "worker.js": "chrome.action.onClicked.addListener(tab => chrome.tabs.sendMessage(tab.id, 'action'));",
+            "content.js": "chrome.runtime.onMessage.addListener(m => document.documentElement.setAttribute('data-got-' + m, '1'));",
+        ]
+        for (name, text) in files { try Data(text.utf8).write(to: folder.appendingPathComponent(name)) }
+        let profile = try #require(rig.store.environment(forProfile: rig.space.profileID).engineProfile as? ChromiumProfile)
+        let host = try #require(profile.extensions as? ChromiumExtensionHost)
+        let id = try await host.load(folder: folder)
+        let server = try await SiteServer(routes: ["/": html("<body>hello</body>")])
+        let runtime = try await open(URL(string: "http://127.0.0.1:\(server.port)/")!)
+        try await waitFor { host.actions(for: runtime.page).contains { $0.extensionID == id } }
+        let browser = try #require(await profile.processIDs().first)
+        defer { kill(browser, SIGCONT) }
+        host.willAskTab = {
+            kill(browser, SIGSTOP)
+            DispatchQueue.global().asyncAfter(deadline: .now() + 2) { kill(browser, SIGCONT) }
+        }
+        var popups = 0
+        rig.store.onPopupWindow = { _, _, _ in popups += 1 }
+        let tabs = rig.store.workspace.unpinned(in: rig.space).count
+        _ = await host.performAction(id, on: runtime.page)
+        host.willAskTab = nil
+        for _ in 0..<100 where (await runtime.evaluate(returning: "document.documentElement.getAttribute('data-got-action')") as? String) == nil {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(await runtime.evaluate(returning: "document.documentElement.getAttribute('data-got-action')") as? String == "1")
+        #expect(rig.store.workspace.unpinned(in: rig.space).count == tabs && popups == 0, "the click opened nothing else")
+    }
+
     @Test func anExtensionRunsAndItsButtonMenuAndShortcutWork() async throws {
         defer { stop() }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-test-extension-\(UUID().uuidString)")
@@ -689,8 +729,14 @@ struct PageAgentTests {
         let button = try #require(extensions.actions(for: runtime.page).first { $0.extensionID == id })
         #expect(button.title == "Cosmos Test")
         #expect(button.badgeText == "7")
+        var popups = 0
+        rig.store.onPopupWindow = { _, _, _ in popups += 1 }
+        let tabs = rig.store.workspace.unpinned(in: rig.space).count
         #expect(await extensions.performAction(id, on: runtime.page) == nil, "no popup: the click goes to the worker")
         #expect(try await waitForAttribute("data-got-action") == "1")
+        // Finding the tab the page is in means looking into Chromium's tabs, which are not pages to open.
+        try await Task.sleep(for: .milliseconds(1200))
+        #expect(rig.store.workspace.unpinned(in: rig.space).count == tabs && popups == 0, "the click opened nothing else")
 
         try await waitFor { extensions.menuItems(for: runtime.page).contains { $0.extensionID == id } }
         let item = try #require(extensions.menuItems(for: runtime.page).first { $0.extensionID == id })
