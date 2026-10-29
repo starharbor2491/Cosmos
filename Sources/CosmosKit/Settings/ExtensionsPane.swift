@@ -41,19 +41,33 @@ struct ExtensionsPane: View {
                 SettingRow(title: "No extensions yet", detail: "Add one below.", symbol: "puzzlepiece.extension") { EmptyView() }
             } else {
                 DividedRows(center.items) { item in
-                    SettingRow(title: item.name, detail: ["Version \(item.version) · from \(item.origin)", center.loadErrors[item.id]].compactMap { $0 }.joined(separator: "\n")) {
+                    let waiting = center.updatesWaiting[item.id].map { "Version \($0) is ready, and asks for more than this one." }
+                    SettingRow(title: item.name, detail: ["Version \(item.version) · from \(item.origin)", waiting, center.loadErrors[item.id]].compactMap { $0 }.joined(separator: "\n")) {
                         HStack(spacing: Metrics.Space.m) {
+                            if waiting != nil {
+                                ActionButton(title: "Update…", kind: .secondary, enabled: !center.busy) { update(item, in: center) }
+                            }
                             ActionButton(title: "Remove", kind: .quiet) { confirmRemove(item, from: center) }
                             SwitchControl(isOn: Binding(get: { item.enabled }, set: { center.setEnabled(item.id, $0) }), label: item.name)
                         }
                     }
                 }
             }
-            if center.busy || center.message != nil {
+            if center.items.contains(where: { $0.webStoreID != nil }) {
                 Hairline()
                 HStack(spacing: Metrics.Space.s) {
-                    if center.busy { OrbitSpinner(size: 13, color: palette.secondary) }
-                    Text(center.busy ? "Working…" : (center.message ?? "")).font(.system(size: 12)).foregroundStyle(palette.secondary)
+                    Text("Extensions from the Web Store are updated once a day. A new version that asks for more waits for your OK.")
+                        .font(.system(size: 12)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    ActionButton(title: "Check Now", kind: .quiet, enabled: !center.busy && !center.checking) { Task { await center.checkForUpdates() } }
+                }
+                .cardInset()
+            }
+            if center.busy || center.checking || center.message != nil {
+                Hairline()
+                HStack(spacing: Metrics.Space.s) {
+                    if center.busy || center.checking { OrbitSpinner(size: 13, color: palette.secondary) }
+                    Text(center.busy || center.checking ? "Working…" : (center.message ?? "")).font(.system(size: 12)).foregroundStyle(palette.secondary)
                     Spacer(minLength: 0)
                 }
                 .padding(.horizontal, Metrics.Space.l).padding(.vertical, Metrics.Space.m)
@@ -112,6 +126,16 @@ struct ExtensionsPane: View {
         else { message += " It will be able to:" }
         return await model.confirm(.init(title: "Add “\(summary.name)”?", message: message, bullets: summary.lines + summary.problems.prefix(3),
                                          confirmTitle: "Add Extension"))
+    }
+
+    /// A newer version that asks for more: the user sees what, as when adding one.
+    private func update(_ item: InstalledExtension, in center: ExtensionCenter) {
+        problem = nil
+        Task {
+            do { try await center.update(item.id, confirm: confirm) }
+            catch ExtensionError.declined {}
+            catch { problem = error.localizedDescription }
+        }
     }
 
     /// Removing deletes the extension's copy inside Cosmos, so it is asked about first.

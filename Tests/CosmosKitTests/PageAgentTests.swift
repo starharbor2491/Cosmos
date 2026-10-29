@@ -6,6 +6,7 @@ import CosmosEngine
 @testable import CosmosChromium
 @testable import CosmosKit
 @testable import CosmosCore
+import CosmosImport
 
 /// Cosmos on the real engine: the page agent in Chromium pages, and what Cosmos makes of what it reports. Chromium runs
 /// in the test process (`CEFTestRuntime`), in views that are in no window; each test has profiles of its own, and its
@@ -980,6 +981,42 @@ struct PageAgentTests {
         let expected = "popup for \(host.tabNumber(of: try #require(here.page as? ChromiumPage))) http://127.0.0.1:\(server.port)/"
         try await waitFor { popup.state.title == expected }
         #expect(popup.state.title == expected, "the click gave it the tab (activeTab), address and all")
+    }
+
+    /// A newer copy of an extension, in another folder but with the same key (as Cosmos writes the Web Store's into it),
+    /// takes the older one's place in Chromium under the same id, and finds what the older one stored.
+    @Test func aNewerCopyOfAnExtensionKeepsItsIDAndItsData() async throws {
+        defer { stop() }
+        let key = Data(try WebStorePackages.Developer().key).base64EncodedString()
+        func copy(_ version: String, _ worker: String) throws -> URL {
+            try extensionFolder([
+                "manifest.json": """
+                {"manifest_version": 3, "name": "Cosmos Kept", "version": "\(version)", "key": "\(key)", "permissions": ["storage", "scripting"],
+                 "host_permissions": ["http://127.0.0.1/*"], "background": {"service_worker": "worker.js"}, "action": {"default_title": "Kept"}}
+                """,
+                "worker.js": worker,
+            ])
+        }
+        let mark = "(tab, text) => chrome.scripting.executeScript({ target: { tabId: tab.id }, args: [text], func: (t) => { document.documentElement.dataset.kept = t; } })"
+        let first = try copy("1.0", "const mark = \(mark); chrome.action.onClicked.addListener(tab => chrome.storage.local.set({ kept: 'from 1.0' }).then(() => mark(tab, 'stored')));")
+        let second = try copy("1.1", "const mark = \(mark); chrome.action.onClicked.addListener(tab => chrome.storage.local.get('kept').then(v => mark(tab, v.kept + ' in ' + chrome.runtime.getManifest().version)));")
+        defer { for f in [first, second] { try? FileManager.default.removeItem(at: f) } }
+        let server = try await SiteServer(routes: ["/": html("<title>Here</title>here")])
+        let profile = try #require(rig.store.environment(forProfile: rig.space.profileID).engineProfile as? ChromiumProfile)
+        let host = try #require(profile.extensions as? ChromiumExtensionHost)
+
+        let id = try await host.load(folder: first)
+        #expect(id == ChromeWebStore.extensionID(ofKey: try #require(Data(base64Encoded: key))), "the key's id, not the folder's")
+        let here = try await open(URL(string: "http://127.0.0.1:\(server.port)/")!)
+        _ = await host.performAction(id, on: here.page)
+        #expect(try await waitForAttribute("data-kept", in: here) == "stored")
+
+        #expect(try await host.load(folder: second) == id)
+        _ = await here.evaluate(returning: "delete document.documentElement.dataset.kept; 1")
+        _ = await host.performAction(id, on: here.page)
+        #expect(try await waitForAttribute("data-kept", in: here) == "from 1.0 in 1.1")
+        #expect(!FileManager.default.fileExists(atPath: profile.extensionStages!.appendingPathComponent(first.lastPathComponent).path),
+                "the older copy's files are gone")
     }
 
     /// `chrome.tabs` events: the extension hears of a tab Cosmos opens, of its page loading and of its closing.

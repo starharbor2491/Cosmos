@@ -86,6 +86,8 @@ final class ChromiumRuntime {
 
     private func launch(settings: EngineSettings) async -> Bool {
         guard let configuration = Self.configuration else { failure = "Cosmos has no Chromium to run"; return false }
+        // A private window's downloads that a Cosmos which quit or crashed left behind.
+        ChromiumProfile.removeAbandonedPrivateFolders()
         let defaultCache = configuration.defaultCache
         try? FileManager.default.createDirectory(at: defaultCache, withIntermediateDirectories: true)
         // What Chromium reads only as it starts: the whole browser's settings and the default profile's.

@@ -5,6 +5,7 @@ import AppKit
 import CosmosEngine
 @testable import CosmosKit
 @testable import CosmosCore
+import CosmosImport
 
 /// Stands in for Chromium, so the browser around the engine can be tested without starting one. Pages remember what
 /// they were asked to do; a test makes them report what an engine would (`navigate`, `crash`, `open`).
@@ -170,8 +171,14 @@ final class FakeExtensions: EngineExtensions {
 
     struct LoadError: LocalizedError { var errorDescription: String? }
 
-    /// The id the engine gives the extension in `folder`: like Chromium's, it follows from the folder.
-    static func id(for folder: URL) -> String { "ext-" + folder.lastPathComponent }
+    /// The id the engine gives the extension in `folder`: like Chromium's, the one its manifest's key makes, otherwise one
+    /// that follows from the folder.
+    static func id(for folder: URL) -> String {
+        if let key = (ChromiumExtensionScanner.readManifest(folder)?["key"] as? String).flatMap({ Data(base64Encoded: $0) }) {
+            return ChromeWebStore.extensionID(ofKey: key)
+        }
+        return "ext-" + folder.lastPathComponent
+    }
 
     func load(folder: URL) async throws -> String {
         if let refusal { throw LoadError(errorDescription: refusal) }

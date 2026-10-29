@@ -60,6 +60,17 @@ import CosmosEngine
 }
 
 @Suite struct ChromiumPreferencesTests {
+    /// What Chromium would ask Google for on its own and Cosmos has no use for is off: its Safe Browsing (Cosmos warns from
+    /// lists of its own), the clock check for certificate errors (shown on Chrome's error pages, which Cosmos doesn't
+    /// show), the AI Mode eligibility check and optimization hints (Chrome's address bar and page hints).
+    @Test func chromiumsOwnCallsToGoogleThatCosmosDoesNotUseAreOff() throws {
+        let p = ChromiumPreferences.preferences(EngineSettings(), keepsHistory: true, system: [])
+        #expect((p["safebrowsing"] as? [String: Any])?["enabled"] as? Bool == false)
+        let disabled = try #require(ChromiumPreferences.flags(settings: EngineSettings()).first { $0.hasPrefix("--disable-features=") })
+        let features = Set(disabled.dropFirst("--disable-features=".count).split(separator: ",").map(String.init))
+        #expect(features == ["AimServerEligibilityEnabled", "AimServerRequestOnStartupEnabled", "NetworkTimeServiceQuerying", "OptimizationHints"])
+    }
+
     @Test func cosmossSettingsBecomeChromiumsOwnPreferences() throws {
         var s = EngineSettings()
         s.cookies = .blockThirdParty
@@ -157,9 +168,9 @@ import CosmosEngine
 
     @Test func turningTheGraphicsProcessorOffIsAFlag() {
         var s = EngineSettings()
-        #expect(ChromiumPreferences.flags(settings: s).isEmpty)
+        #expect(!ChromiumPreferences.flags(settings: s).contains("--disable-gpu"))
         s.hardwareAcceleration = false
-        #expect(ChromiumPreferences.flags(settings: s) == ["--disable-gpu"])
+        #expect(ChromiumPreferences.flags(settings: s).contains("--disable-gpu"))
         #expect((ChromiumPreferences.localState(s)["hardware_acceleration_mode"] as? [String: Any])?["enabled"] as? Bool == false)
     }
 }
@@ -452,5 +463,31 @@ import CosmosEngine
         #expect(!blocks("https://tracker.test/t.js", from: "https://a.mine.test", in: ["https://a.mine.test/"]), "the user's own allowed site")
         #expect(!blocks("https://tracker.test/t.js", from: "https://x.test", in: ["https://x.test/frame", "https://mine.test/"]), "a frame in an allowed site")
         #expect(rules.count == 6)
+    }
+}
+
+/// A private window's downloads wait in a folder of the temporary directory named after the Cosmos that made it; one a
+/// Cosmos left behind (it quit or crashed before the window closed) goes when the next one starts Chromium.
+@Suite struct PrivateFolderTests {
+    @Test func foldersOfCosmosesThatEndedAreRemovedAndOnesOfLiveOnesKept() throws {
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-folders-test-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        // A process that has ended: its number is free (and not taken again this soon).
+        let ended = Process()
+        ended.executableURL = URL(fileURLWithPath: "/usr/bin/true")
+        try ended.run()
+        ended.waitUntilExit()
+        let mine = ChromiumProfile.privateFolder(in: temporary)
+        let names = [mine.lastPathComponent, "cosmos-private-\(ended.processIdentifier)-\(UUID().uuidString)",
+                     "cosmos-private-\(UUID().uuidString)", "cosmos-private-1-\(UUID().uuidString)", "cosmos-other"]
+        for name in names {
+            try FileManager.default.createDirectory(at: temporary.appendingPathComponent(name).appendingPathComponent("Cosmos Downloads"),
+                                                    withIntermediateDirectories: true)
+        }
+        #expect(mine.lastPathComponent.hasPrefix("cosmos-private-\(ProcessInfo.processInfo.processIdentifier)-"))
+        ChromiumProfile.removeAbandonedPrivateFolders(in: temporary)
+        let left = Set(try FileManager.default.contentsOfDirectory(atPath: temporary.path))
+        #expect(left == [mine.lastPathComponent, names[3], "cosmos-other"],
+                "this Cosmos's and a live process's (launchd, 1) stay; an ended one's and the old unnamed kind go")
     }
 }

@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 import Observation
 import CosmosCore
@@ -64,11 +65,19 @@ final class ExtensionCenter {
     @ObservationIgnored weak var store: BrowserStore?
     @ObservationIgnored let directory: URL
     @ObservationIgnored private let file: JSONFileStore<Library>
-    /// The engine's id of each loaded extension. It comes from the extension's folder, so it is the same in every profile.
+    /// The engine's id of each loaded extension, the same in every profile: the Web Store's for one whose manifest has its
+    /// key (as Cosmos writes it), otherwise one made from its folder.
     @ObservationIgnored private var engineIDs: [UUID: String] = [:]
+    /// Gets what is at an address (the Web Store's update service, a package), failing on anything but a 200.
+    @ObservationIgnored var fetch: (URL) async throws -> Data = ExtensionCenter.download
+    /// Newer versions of Web Store extensions that ask for more than the user agreed to: they wait for the user's OK.
+    private(set) var updatesWaiting: [UUID: String] = [:]
+    /// True while Cosmos asks the Web Store about updates.
+    private(set) var checking = false
     @ObservationIgnored private var environments: [WeakEnvironment] = []
     @ObservationIgnored private var popup: ExtensionPopup?
     @ObservationIgnored private var keyMonitor: Any?
+    @ObservationIgnored private var updating: Task<Void, Never>?
 
     private struct Library: Codable { var items: [InstalledExtension] = [] }
     private struct WeakEnvironment { weak var value: ProfileEnvironment? }
@@ -170,7 +179,10 @@ final class ExtensionCenter {
 
     private func unloadEverywhere(_ id: UUID) async {
         guard let engineID = engineIDs.removeValue(forKey: id) else { return }
-        for env in liveEnvironments { await env.engineProfile.extensions?.unload(id: engineID) }
+        // A newer copy of the same extension (the same key, so the same id) took its place in the engine: that one stays.
+        if !engineIDs.values.contains(engineID) {
+            for env in liveEnvironments { await env.engineProfile.extensions?.unload(id: engineID) }
+        }
         actionRevision += 1
     }
 
@@ -179,7 +191,7 @@ final class ExtensionCenter {
     /// Adds the unpacked extension in `source` (a folder with `manifest.json`). `confirm` is asked, with the manifest's
     /// requests spelled out in plain words, before anything is copied; return `false` to cancel.
     @discardableResult
-    func install(from source: URL, origin: String, webStoreID: String? = nil,
+    func install(from source: URL, origin: String, webStoreID: String? = nil, enabled: Bool = true,
                  confirm: (ExtensionRequestSummary) async -> Bool) async throws -> InstalledExtension {
         guard let manifest = ChromiumExtensionScanner.readManifest(source) else { throw ExtensionError.notAnExtension }
         busy = true
@@ -191,7 +203,7 @@ final class ExtensionCenter {
                                               permissions: probe.permissions, hostPatterns: probe.hostPatterns, problems: probe.problems)
         guard await confirm(summary) else { throw ExtensionError.declined }
 
-        let item = InstalledExtension(id: UUID(), name: name, version: probe.version, enabled: true, installedAt: Date(), origin: origin,
+        let item = InstalledExtension(id: UUID(), name: name, version: probe.version, enabled: enabled, installedAt: Date(), origin: origin,
                                       webStoreID: webStoreID, permissions: probe.permissions, hostPatterns: probe.hostPatterns)
         let destination = folder(for: item)
         let fm = FileManager.default
@@ -201,13 +213,18 @@ final class ExtensionCenter {
         let replaced = items.filter { $0.webStoreID != nil && $0.webStoreID == webStoreID }
         items.append(item)
         save()
-        guard await loadEverywhere(item) else {
+        // One that stays off is not loaded, so not tried either.
+        let loads = enabled ? await loadEverywhere(item) : true
+        guard loads else {
             // Not loadable after all: don't leave a dead entry behind.
             let problem = loadErrors[item.id] ?? "it would not load."
             remove(item.id)
             throw ExtensionError.invalid(problem)
         }
-        for old in replaced { remove(old.id) }
+        for old in replaced {
+            updatesWaiting[old.id] = nil
+            remove(old.id)
+        }
         message = "Added “\(name)”."
         return item
     }
@@ -215,31 +232,150 @@ final class ExtensionCenter {
     /// Installs from a Chrome Web Store id or link by downloading the package from Google's update service.
     @discardableResult
     func installFromWebStore(_ text: String, confirm: (ExtensionRequestSummary) async -> Bool) async throws -> InstalledExtension {
-        guard let id = ChromeWebStore.extensionID(from: text), let url = ChromeWebStore.downloadURL(for: id) else {
+        guard let id = ChromeWebStore.extensionID(from: text) else {
             throw ExtensionError.invalid("that isn't a Chrome Web Store link or extension id.")
+        }
+        guard let version = store?.engine.versionDescription, let url = ChromeWebStore.downloadURL(for: id, chromiumVersion: version) else {
+            throw ExtensionError.download("Chromium hasn't started yet. Try again in a moment.")
         }
         busy = true
         defer { busy = false }
+        return try await withPackage(from: url, id: id) { unpacked in
+            try await install(from: unpacked, origin: "Chrome Web Store", webStoreID: id, confirm: confirm)
+        }
+    }
+
+    /// Downloads the package at `url`, checks that it is extension `id`'s, signed by its developer (and, when the update
+    /// service gave one, that its SHA-256 is `sha256`), unpacks it with its key written into the manifest, so that it keeps
+    /// the Web Store's id, and hands the folder to `body`. The folder is gone afterwards.
+    private func withPackage<T>(from url: URL, id: String, sha256: String? = nil, _ body: (URL) async throws -> T) async throws -> T {
         let work = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-ext-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: work) }
         do {
             try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
-            var request = URLRequest(url: url, timeoutInterval: 60)
-            request.setValue("Mozilla/5.0 (Macintosh) Cosmos", forHTTPHeaderField: "User-Agent")
-            let (data, response) = try await URLSession.shared.data(for: request)
-            if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-                throw ExtensionError.download(http.statusCode == 204 ? "the Web Store doesn't offer that extension." : "the Web Store answered \(http.statusCode).")
+            let data = try await fetch(url)
+            if let sha256, SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() != sha256 {
+                throw ExtensionError.invalid("the package is not the one the Web Store described.")
             }
-            let zip = try ChromeWebStore.zipPayload(fromCRX: data)
+            let package: VerifiedPackage
+            do { package = try ChromeWebStore.verifiedPackage(data, expectedID: id) } catch {
+                throw ExtensionError.invalid("the package's signature doesn't check out, so it may not be what its developer published.")
+            }
             let zipFile = work.appendingPathComponent("package.zip")
-            try zip.write(to: zipFile)
+            try package.zip.write(to: zipFile)
             let unpacked = work.appendingPathComponent("unpacked", isDirectory: true)
             try Self.unzip(zipFile, into: unpacked)
-            return try await install(from: unpacked, origin: "Chrome Web Store", webStoreID: id, confirm: confirm)
+            try ChromeWebStore.writeKey(package.publicKey, intoManifestIn: unpacked)
+            return try await body(unpacked)
         } catch let error as ExtensionError {
             throw error
         } catch {
             throw ExtensionError.download(error.localizedDescription)
+        }
+    }
+
+    /// What the Web Store's servers answer, or an error for anything but a 200 (204: it has no such extension). Nothing is
+    /// cached: the question names every extension the user has.
+    nonisolated static func download(_ url: URL) async throws -> Data {
+        var request = URLRequest(url: url, timeoutInterval: 60)
+        request.setValue("Mozilla/5.0 (Macintosh) Cosmos", forHTTPHeaderField: "User-Agent")
+        let (data, response) = try await webStoreSession.data(for: request)
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            throw ExtensionError.download(http.statusCode == 204 ? "the Web Store doesn't offer that extension." : "the Web Store answered \(http.statusCode).")
+        }
+        return data
+    }
+
+    nonisolated private static let webStoreSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.urlCache = nil
+        // Nor are cookies, which would tie one day's question to the next.
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        return URLSession(configuration: configuration)
+    }()
+
+    // MARK: Updating
+
+    /// Asks the Web Store about every extension from it, at once, and takes each newer version that asks for nothing more
+    /// than the user agreed to; one that asks for more waits in `updatesWaiting` for the user's OK (`update(_:confirm:)`).
+    /// A package that isn't its developer's, or isn't the version announced, is not taken. One check at a time. Returns
+    /// how many were updated.
+    @discardableResult
+    func checkForUpdates() async -> Int {
+        guard !checking else { return 0 }
+        checking = true
+        defer { checking = false }
+        let fromStore = items.filter { $0.webStoreID != nil }
+        guard let url = ChromeWebStore.updateCheckURL(fromStore.map { ($0.webStoreID!, $0.version) },
+                                                      chromiumVersion: store?.engine.versionDescription ?? "") else { return 0 }
+        guard store?.engine.versionDescription != nil, let answer = try? await fetch(url) else {
+            message = "Cosmos couldn't reach the Web Store to look for updates."
+            return 0
+        }
+        var updated = 0
+        for update in ChromeWebStore.updates(fromResponse: answer) {
+            guard let found = items.first(where: { $0.webStoreID == update.id }),
+                  ChromeWebStore.isVersion(update.version, newerThan: found.version), updatesWaiting[found.id] != update.version else { continue }
+            do {
+                let outcome = try await withPackage(from: update.codebase, id: update.id, sha256: update.sha256) { unpacked -> UpdateOutcome in
+                    guard let manifest = ChromiumExtensionScanner.readManifest(unpacked) else { throw ExtensionError.notAnExtension }
+                    let asks = ExtensionRequestSummary.read(manifest)
+                    // As Chromium compares versions: "1.1.0" is "1.1".
+                    guard !ChromeWebStore.isVersion(asks.version, newerThan: update.version),
+                          !ChromeWebStore.isVersion(update.version, newerThan: asks.version) else {
+                        throw ExtensionError.invalid("the package is version \(asks.version), not the \(update.version) the Web Store announced.")
+                    }
+                    // As it is now: the user may have turned it off, or removed it, while the package came.
+                    guard let item = items.first(where: { $0.id == found.id }) else { return .gone }
+                    guard Set(asks.permissions).isSubset(of: item.permissions), Set(asks.hostPatterns).isSubset(of: item.hostPatterns) else {
+                        return .waiting
+                    }
+                    try await install(from: unpacked, origin: item.origin, webStoreID: update.id, enabled: item.enabled) { _ in true }
+                    return .installed
+                }
+                switch outcome {
+                case .installed: updated += 1
+                case .waiting: updatesWaiting[found.id] = update.version
+                case .gone: break
+                }
+            } catch {
+                loadErrors[found.id] = "Version \(update.version) wasn't installed: \((error as? LocalizedError)?.errorDescription ?? "\(error)")"
+            }
+        }
+        message = updated == 0 ? "No extension had an update to take." : updated == 1 ? "Updated an extension." : "Updated \(updated) extensions."
+        return updated
+    }
+
+    private enum UpdateOutcome { case installed, waiting, gone }
+
+    /// Checks for updates a few minutes after Cosmos starts, then once a day.
+    func checkForUpdatesDaily() {
+        guard updating == nil else { return }
+        updating = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(5 * 60))
+            while !Task.isCancelled, self != nil {
+                await self?.checkForUpdates()
+                try? await Task.sleep(for: .seconds(24 * 60 * 60))
+            }
+        }
+    }
+
+    /// Takes the waiting newer version of `id`, once the user has agreed to what it asks for.
+    func update(_ id: UUID, confirm: (ExtensionRequestSummary) async -> Bool) async throws {
+        guard let item = items.first(where: { $0.id == id }), let webStoreID = item.webStoreID else { return }
+        guard let version = store?.engine.versionDescription, let url = ChromeWebStore.downloadURL(for: webStoreID, chromiumVersion: version) else {
+            throw ExtensionError.download("Chromium hasn't started yet. Try again in a moment.")
+        }
+        busy = true
+        defer { busy = false }
+        try await withPackage(from: url, id: webStoreID) { unpacked in
+            guard let next = ChromiumExtensionScanner.readManifest(unpacked).map(ExtensionRequestSummary.read)?.version,
+                  ChromeWebStore.isVersion(next, newerThan: item.version) else {
+                throw ExtensionError.invalid("the Web Store has no newer version of it.")
+            }
+            guard let current = items.first(where: { $0.id == id }) else { return }
+            _ = try await install(from: unpacked, origin: current.origin, webStoreID: webStoreID, enabled: current.enabled, confirm: confirm)
         }
     }
 

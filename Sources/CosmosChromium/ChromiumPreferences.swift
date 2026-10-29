@@ -5,8 +5,13 @@ import CosmosCore
 /// and the browser's `Local State`), the same keys Chromium's own Settings page writes. Neither is open when this happens,
 /// so nothing overwrites it.
 enum ChromiumPreferences {
+    /// Chromium's own calls to Google that Cosmos has no use for, found by logging what an idle Chromium reaches
+    /// (docs/cef-engine.md): the clock check behind Chrome's certificate error pages, the address bar's AI Mode
+    /// eligibility check, and optimization hints (which ask about the sites you visit).
+    static let unusedServices = ["NetworkTimeServiceQuerying", "AimServerEligibilityEnabled", "AimServerRequestOnStartupEnabled", "OptimizationHints"]
+
     static func flags(settings: EngineSettings) -> [String] {
-        var flags: [String] = []
+        var flags = ["--disable-features=" + unusedServices.joined(separator: ",")]
         if !settings.hardwareAcceleration { flags.append("--disable-gpu") }
         return flags
     }
@@ -66,6 +71,8 @@ enum ChromiumPreferences {
             "intl": ["accept_languages": languages(s, system: system), "selected_languages": languages(s, system: system)],
             "webkit": ["webprefs": webprefs],
             "translate": ["enabled": false],
+            // Chromium's Safe Browsing needs Google's keys and shows nothing here; Cosmos warns from lists of its own.
+            "safebrowsing": ["enabled": false],
             "download": ["prompt_for_download": false, "directory_upgrade": true],
             "browser": ["has_seen_welcome_page": true, "check_default_browser": false],
             "history": ["saving_disabled": !keepsHistory],

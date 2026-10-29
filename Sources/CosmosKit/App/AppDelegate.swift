@@ -122,6 +122,8 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
             let extensions = ExtensionCenter(store: store, directory: dir)
             store.extensionCenter = extensions
             extensions.start()
+            // Demos and automated runs reach no service of their own.
+            if !options.demo, !options.offline, options.automationScript == nil { extensions.checkForUpdatesDaily() }
             let blocker = ContentBlockerController(store: store, directory: dir, offline: options.offline || options.demo)
             store.blocker = blocker
             blocker.start()

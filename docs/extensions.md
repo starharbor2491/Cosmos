@@ -67,7 +67,7 @@ Open **Cosmos ▸ Extensions…** (or type "extensions" in the Command Bar).
 | Way | What it does |
 |---|---|
 | **Find in Arc and Other Browsers** | Lists the extensions installed in Arc, Chrome, Brave, Edge, Vivaldi, Opera and Chromium on this Mac. Tick the ones you want and choose Add Selected. |
-| **Chrome Web Store link or id** | Paste `https://chromewebstore.google.com/detail/…/<id>` or the 32-letter id. Cosmos downloads the package from Google's update service and unpacks it. |
+| **Chrome Web Store link or id** | Paste `https://chromewebstore.google.com/detail/…/<id>` or the 32-letter id. Cosmos downloads the package from Google's update service (asking as the Chromium it runs, so it gets the version made for it), checks that its developer signed it for that id, and unpacks it. |
 | **Choose a Folder** | Any unpacked extension folder that contains `manifest.json`. Handy for extensions you are writing. |
 
 Before anything is copied, Cosmos shows what the extension asks for in plain words ("Read and change your data on all
@@ -77,6 +77,29 @@ signs in to Google, that its sign-in goes through a web page. Adding is a yes or
 Cosmos copies the extension into its own folder (`Extensions/<id>/` in the data folder), so it keeps working after you
 delete Arc. Reading from Arc never changes Arc's files. After an Arc import, the summary tells you how many extensions
 Arc had and where to add them.
+
+An extension from the Web Store keeps the Web Store's id: Cosmos writes its developer's key into the manifest of its
+copy (`key`), as Chrome does when it installs one, and Chromium makes the id from that key. Sites, sign-in pages
+(`https://<id>.chromiumapp.org`) and companion apps that know the extension by its id still do, and its data stays
+with it across updates. Extensions from Arc and other Chromium browsers already have the key in their manifests.
+
+## Updates
+
+Once a day (and a few minutes after Cosmos starts), Cosmos asks Google's update service about every extension that came
+from the Web Store, or from another browser with a Web Store id, in one request, as Chrome does. For each newer version:
+
+- its package must be signed by the extension's own developer, for that id, and match the SHA-256 the service gave;
+  one that isn't is not installed, and Settings ▸ Extensions says so under the extension;
+- its manifest must be the version the service announced (an older package, however well signed, is no update);
+- if it asks for nothing more than the version you have (no new permission, no new site), it replaces that version
+  by itself, in the same place in Chromium, with its data;
+- if it asks for more, it waits: Settings ▸ Extensions shows that the new version is ready, and **Update…** shows what
+  it asks for, as adding one does. Until then the version you have keeps running.
+
+A disabled extension is updated too and stays off. **Check Now** in Settings ▸ Extensions asks at once. One exception
+to "with its data": an extension added from the Web Store by a Cosmos from before this check has no `key` in its copy,
+so Chromium knows it by an id made from its folder; its first update brings the key and the Web Store's id, and what
+it had stored under the old id is left behind.
 
 ## Using them
 
@@ -98,8 +121,10 @@ Arc had and where to add them.
 - The `frame` context for menu items is not offered (Cosmos does not report which frame a right click was in).
 - Extensions that need a companion app (native messaging) were not tested; companion apps register in Chrome's own
   folders, which Cosmos's Chromium does not read, so they will most likely not find it.
-- Cosmos does not check an extension's signature. Packages from the Web Store come over HTTPS from Google; extensions
-  from Arc or other browsers are copied as they are. Only add extensions you trust.
+- Packages from the Web Store are checked against their developer's signature (the Web Store's own countersignature
+  is not checked: the developer's is what ties the files to the id). Extensions from Arc or other browsers are copied
+  as they are on disk, unchecked, until their first update from the Web Store; and an unpacked folder you choose is
+  never checked. Only add extensions you trust.
 
 ## How it was checked
 
@@ -125,9 +150,18 @@ for its tab, and the `chrome.tabs` events. The tests below were first written fo
 - `ExtensionTests`, `ExtensionShortcutTests` (on the fake engine): adding, the permission summary, enabling, removing,
   shortcut parsing and matching, which tab a menu item or shortcut is run over.
 - `ChromiumExtensionTests` (CosmosImport): finding extensions in a profile (versions, localized names, themes and apps
-  skipped), Web Store link and id parsing, and unwrapping `.crx` packages (CRX2 and CRX3).
-- Not checked: real extensions from the Web Store one by one, popups, side panels and notifications on screen, and
-  anything that needs a person at the keyboard.
+  skipped), and Web Store link and id parsing.
+- `WebStoreTests`, on packages made in the test as the Web Store makes them (CRX3, signed with a key of the test's):
+  a package signed for its id is taken; a changed one, one for another id, one whose signature covers other files, one
+  that claims an id its key does not make, a CRX2 and a bare zip are refused. The update service's address (the running
+  Chromium's version, CRX3, every extension at once) and its answer (Google's `gupdate` form, taken from a real answer);
+  an extension installed from the Web Store gets its key and the Web Store's id; an update that asks for nothing more
+  comes in by itself under the same id (the engine never lets go of it), one that asks for more waits and shows what
+  it asks for, and one with the wrong SHA-256 or another developer's signature stays out; a disabled one stays off.
+  `aNewerCopyOfAnExtensionKeepsItsIDAndItsData` (live Chromium): a second copy with the same key, in another folder,
+  takes the first one's place under the same id and reads what it stored.
+- Not checked: real extensions from the Web Store one by one (and so the signature check against a real package),
+  popups, side panels and notifications on screen, and anything that needs a person at the keyboard.
 
 ## For developers
 

@@ -57,7 +57,7 @@ let package = Package(
         .testTarget(name: "CosmosBlockingTests", dependencies: ["CosmosCore", "CosmosBlocking"]),
         .testTarget(name: "CosmosChromiumTests", dependencies: ["CosmosChromium", "CosmosEngine", "CosmosCore"]),
         .target(name: "CosmosCEFTestSupport", dependencies: ["CosmosCEF"], path: "Tests/CosmosCEFTestSupport"),
-        .testTarget(name: "CosmosKitTests", dependencies: ["CosmosKit", "CosmosCore", "CosmosEngine", "CosmosChromium", "CosmosBlocking",
+        .testTarget(name: "CosmosKitTests", dependencies: ["CosmosKit", "CosmosCore", "CosmosEngine", "CosmosChromium", "CosmosBlocking", "CosmosImport",
                                                          "CosmosCEF", "CosmosCEFTestSupport"]),
     ],
     swiftLanguageModes: [.v5],

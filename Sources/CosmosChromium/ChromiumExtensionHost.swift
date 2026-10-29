@@ -53,7 +53,7 @@ final class ChromiumExtensionHost: EngineExtensions {
 
     struct Loaded {
         let id: String
-        let folder: URL
+        var folder: URL
         /// The copy Chromium loaded (ExtensionStage).
         var staged: URL
         var permissions: Permissions
@@ -134,8 +134,8 @@ final class ChromiumExtensionHost: EngineExtensions {
     private func loadIntoChromium(_ folder: URL) async throws -> String {
         guard let c = profile?.connection, let stages = profile?.extensionStages else { throw CDPError.closed }
         guard let shim = Self.shim, let content = Self.contentShim else { throw CDPError(code: -4, message: "Cosmos's extension scripts are missing") }
-        // The copy's folder is named after the extension's own, so its id (which Chromium makes from the folder's path) is
-        // the same each time Cosmos starts, and its storage with it.
+        // The copy's folder is named after the extension's own, so the id of one without a key in its manifest (which
+        // Chromium then makes from the folder's path) is the same each time Cosmos starts, and its storage with it.
         let staged = stages.appendingPathComponent(folder.lastPathComponent, isDirectory: true)
         try ExtensionStage.stage(folder, to: staged, scripts: .init(worker: shim, content: content, page: shim))
         let r = try await c.send("Extensions.loadUnpacked", ["path": staged.path])
@@ -148,6 +148,19 @@ final class ChromiumExtensionHost: EngineExtensions {
         }
         let manifest = Self.manifest(folder)
         var item = loaded[id] ?? Loaded(id: id, folder: folder, staged: staged, permissions: Permissions(manifest), title: "", icon: nil, popup: "")
+        if item.folder != folder {
+            // A newer copy of the same extension (the same key, so the same id): Chromium took it in the older one's place,
+            // with its storage, so the older one's files go, and so does Cosmos's hold on its worker, which Chromium stops
+            // without letting go of (what is sent to it is never answered). The new copy's worker attaches as it starts.
+            folders.removeAll { $0 == item.folder }
+            if item.staged != staged { try? FileManager.default.removeItem(at: item.staged) }
+            item.folder = folder
+            for session in workers.filter({ $0.value == id }).map(\.key) {
+                workers[session] = nil
+                readyWorkers.remove(session)
+                c.post("Target.detachFromTarget", ["sessionId": session])
+            }
+        }
         item.staged = staged
         item.permissions = Permissions(manifest)
         let action = (manifest["action"] ?? manifest["browser_action"]) as? [String: Any] ?? [:]

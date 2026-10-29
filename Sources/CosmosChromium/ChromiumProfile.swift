@@ -70,9 +70,24 @@ final class ChromiumProfile: EngineProfile {
         let runtime = ChromiumRuntime.shared
         isDefault = directory != nil && id != nil && id == ChromiumRuntime.configuration?.defaultProfileID
         cacheDirectory = isDefault ? runtime.defaultCache : directory.map { Self.cacheDirectory(for: $0, id: id, root: runtime.root) }
-        stagingDirectory = (cacheDirectory ?? FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-private-\(UUID().uuidString)"))
-            .appendingPathComponent("Cosmos Downloads", isDirectory: true)
+        stagingDirectory = (cacheDirectory ?? Self.privateFolder()).appendingPathComponent("Cosmos Downloads", isDirectory: true)
         if isDefault { runtime.defaultProfile = self }
+    }
+
+    /// The folder a private profile's downloads wait in until Cosmos moves them: in the temporary directory, named after
+    /// this process, so that one left behind (Cosmos quit or crashed first) is known for what it is.
+    nonisolated static func privateFolder(in temporary: URL = FileManager.default.temporaryDirectory) -> URL {
+        temporary.appendingPathComponent("cosmos-private-\(ProcessInfo.processInfo.processIdentifier)-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    /// Removes the private folders of Cosmoses that have ended, and of the kind that named no process.
+    nonisolated static func removeAbandonedPrivateFolders(in temporary: URL = FileManager.default.temporaryDirectory) {
+        let prefix = "cosmos-private-"
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: temporary.path)) ?? [] where name.hasPrefix(prefix) {
+            let rest = name.dropFirst(prefix.count)
+            if let dash = rest.firstIndex(of: "-"), let pid = Int32(rest[..<dash]), pid > 0, kill(pid, 0) == 0 || errno != ESRCH { continue }
+            try? FileManager.default.removeItem(at: temporary.appendingPathComponent(name, isDirectory: true))
+        }
     }
 
     /// Where Chromium keeps the data of the profile whose folder is `directory`: the folder itself. Chromium opens only a

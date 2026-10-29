@@ -31,29 +31,9 @@ import Testing
         #expect(ChromeWebStore.extensionID(from: "https://chrome.google.com/webstore/detail/\(id)") == id)
         #expect(ChromeWebStore.extensionID(from: "https://example.com/detail/\(id)") == nil)
         #expect(ChromeWebStore.extensionID(from: "not a link") == nil)
-        let url = ChromeWebStore.downloadURL(for: id)?.absoluteString
+        let url = ChromeWebStore.downloadURL(for: id, chromiumVersion: "156.0.8078.48")?.absoluteString
         #expect(url?.hasPrefix("https://clients2.google.com/service/update2/crx?") == true)
         #expect(url?.contains("id%3D\(id)") == true || url?.contains("id=\(id)") == true)
-    }
-
-    @Test func crxContainersUnwrapToTheirZip() throws {
-        let zip = Data([0x50, 0x4B, 0x03, 0x04, 1, 2, 3, 4])
-        func le(_ n: UInt32) -> [UInt8] { [UInt8(n & 255), UInt8(n >> 8 & 255), UInt8(n >> 16 & 255), UInt8(n >> 24 & 255)] }
-        func crx(_ parts: [[UInt8]]) -> Data {
-            var d = Data("Cr24".utf8)
-            for p in parts { d.append(contentsOf: p) }
-            return d
-        }
-        var crx3 = crx([le(3), le(5), [9, 9, 9, 9, 9]])
-        crx3.append(zip)
-        #expect(try ChromeWebStore.zipPayload(fromCRX: crx3) == zip)
-        var crx2 = crx([le(2), le(3), le(2), [1, 1, 1], [2, 2]])
-        crx2.append(zip)
-        #expect(try ChromeWebStore.zipPayload(fromCRX: crx2) == zip)
-        #expect(try ChromeWebStore.zipPayload(fromCRX: zip) == zip)
-        #expect(throws: ChromeWebStore.CRXError.notAPackage) { try ChromeWebStore.zipPayload(fromCRX: Data("hello".utf8)) }
-        #expect(throws: ChromeWebStore.CRXError.truncated) { try ChromeWebStore.zipPayload(fromCRX: crx([le(3), le(500)])) }
-        #expect(throws: ChromeWebStore.CRXError.unsupportedVersion(9)) { try ChromeWebStore.zipPayload(fromCRX: crx([le(9), le(0)])) }
     }
 
     @Test func scanFindsTheNewestVersionAndSplitsPermissions() throws {
