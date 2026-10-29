@@ -75,8 +75,6 @@ public final class BrowserStore: TabHost {
     @ObservationIgnored var onMenuBarChange: (() -> Void)?
     /// The engine's own settings changed: the app hands them to the engine (they apply as each profile's engine restarts).
     @ObservationIgnored var onEngineSettingsChanged: (() -> Void)?
-    /// "Try Again" after the engine could not be fetched.
-    @ObservationIgnored var onRetryEngine: (() -> Void)?
     @ObservationIgnored var onPopupWindow: ((TabRuntime, NewPageRequest, _ bringForward: Bool) -> Void)?
     /// Shows a tab's video in a floating window (the app's Picture in Picture panel), and closes it.
     @ObservationIgnored var onPictureInPicture: ((TabRuntime, NSView) -> Bool)?
@@ -362,6 +360,11 @@ public final class BrowserStore: TabHost {
 
     // MARK: Environments
 
+    /// Where the engine keeps a profile's cookies and storage; nil for a store that keeps nothing.
+    func engineFolder(forProfile id: UUID) -> URL? {
+        dataDirectory?.appendingPathComponent("Engine Profiles", isDirectory: true).appendingPathComponent(id.uuidString, isDirectory: true)
+    }
+
     func environment(forProfile id: UUID?) -> ProfileEnvironment {
         if isIncognito || id == nil {
             if let e = incognitoEnvironment { return e }
@@ -374,8 +377,8 @@ public final class BrowserStore: TabHost {
         let pid = id!
         if let e = environments[pid] { return e }
         let profile = workspace.profile(pid) ?? workspace.profiles[0]
-        let folder = dataDirectory?.appendingPathComponent("Engine Profiles", isDirectory: true).appendingPathComponent(profile.id.uuidString, isDirectory: true)
-        let e = ProfileEnvironment(profileID: profile.id, engineProfile: engine.makeProfile(id: profile.id, directory: folder), store: self)
+        let e = ProfileEnvironment(profileID: profile.id, engineProfile: engine.makeProfile(id: profile.id, directory: engineFolder(forProfile: profile.id)),
+                                   store: self)
         e.engineProfile.setPermissionDecisions(permissionDecisionList)
         e.installBoosts(boosts)
         if let blocker { blocker.attach(to: e) }

@@ -2,12 +2,10 @@ import SwiftUI
 import CosmosCore
 import CosmosEngine
 
-/// Settings ▸ Engine: the Chromium Cosmos runs, how it stays up to date, and Chromium's own settings, folded into
-/// Cosmos's. They are written into Chromium's settings files when a profile's Chromium starts.
+/// Settings ▸ Engine: the Chromium Cosmos runs, and Chromium's own settings, folded into Cosmos's. They are written into
+/// Chromium's settings files as Chromium starts and as a profile opens.
 struct EnginePane: View {
     let store: BrowserStore
-    @Local private var checking = false
-    @Local private var checkedNote: String?
     /// The settings the engine started with, to say when a change is waiting for a restart.
     @Local private var started: EngineSettings?
     @Environment(\.palette) private var palette
@@ -16,13 +14,8 @@ struct EnginePane: View {
         @Bindable var store = store
         let engine = store.engine
         Pane(title: "Engine", subtitle: "\(engine.name) draws every page. Its settings live here.", symbol: "cpu.fill") {
-            SettingsGroup(title: engine.name, note: "Cosmos runs regular, open-source Chromium, fetched from Google's snapshot builds. It looks for a newer one once a day and switches to it on the next launch, only once it has started cleanly; the one before is kept to fall back on.") {
+            SettingsGroup(title: engine.name, note: "Cosmos runs Chromium's stable release, built into Cosmos through CEF (the Chromium Embedded Framework) and drawn in Cosmos's own windows. A newer Chromium comes with each Cosmos update.") {
                 SettingRow(title: "Version", detail: engine.versionDescription ?? statusText(store.engineStatus), symbol: "shippingbox") { EmptyView() }
-                Hairline()
-                SettingRow(title: "Updates", detail: updateDetail(engine), symbol: "arrow.triangle.2.circlepath") {
-                    ActionButton(title: checking ? "Checking…" : "Check Now", kind: .secondary) { checkNow(engine) }
-                        .disabled(checking)
-                }
             }
 
             SettingsGroup(title: "Privacy and security") {
@@ -154,24 +147,6 @@ struct EnginePane: View {
         case .preparing(let what, let progress): progress.map { "\(what) (\(Int($0 * 100))%)" } ?? what
         case .ready(let version): version
         case .failed(let why): why
-        }
-    }
-
-    private func updateDetail(_ engine: BrowserEngine) -> String {
-        if let pending = engine.pendingUpdate { return "A newer Chromium (\(pending)) is ready and runs from the next launch." }
-        if let checkedNote { return checkedNote }
-        if let error = engine.lastUpdateError { return "The last check failed: \(error)" }
-        guard let date = engine.lastUpdateCheck else { return "Not checked yet." }
-        return "Checked \(date.formatted(.relative(presentation: .named)))."
-    }
-
-    private func checkNow(_ engine: BrowserEngine) {
-        checking = true
-        checkedNote = nil
-        Task {
-            await engine.checkForUpdates()
-            checking = false
-            if engine.lastUpdateError == nil, engine.pendingUpdate == nil { checkedNote = "Up to date, checked just now." }
         }
     }
 }

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Cosmos Bridge",
-  "description": "Lets Cosmos set page zoom and clear site data and history in the Chromium it runs on. Part of Cosmos; not shown in the extensions list.",
+  "description": "Lets Cosmos clear site data and history in the Chromium it runs on. Part of Cosmos; not shown in the extensions list.",
   "version": "1.0",
   "background": { "service_worker": "cosmos-bridge.js" },
-  "permissions": ["debugger", "tabs", "browsingData", "history"]
+  "permissions": ["debugger", "browsingData", "history"]
 }

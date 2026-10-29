@@ -4,6 +4,8 @@
 # macros into the compiler itself avoids it; a plain rerun, or `rm -rf .build`, is the fallback.
 # Usage: scripts/test.sh [swift test args...]
 cd "${0:A:h}/.." || exit 1
+# The engine is built against CEF in Vendor/CEF (does nothing once it is there).
+scripts/fetch-cef.sh || exit 1
 plugin=/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing/libTestingMacros.dylib
 extra=()
 [[ -f $plugin ]] && extra=(-Xswiftc -load-plugin-library -Xswiftc $plugin)

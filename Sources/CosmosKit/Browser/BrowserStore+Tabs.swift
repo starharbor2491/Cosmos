@@ -620,7 +620,7 @@ extension BrowserStore {
     }
 
     public func tab(_ tab: TabRuntime, didOpen page: EnginePage, request: NewPageRequest) -> Bool {
-        if request.isScriptSizedPopup || request.isDeveloperTools { return openPopup(page, profileID: tab.profileID, request: request, bringForward: request.isDeveloperTools) }
+        if request.isScriptSizedPopup { return openPopup(page, profileID: tab.profileID, request: request) }
         guard let w = window(showing: tab.itemID) ?? windows.first(where: { $0.peek?.runtime === tab }) ?? activeWindow else { return false }
         return openTab(with: page, request: request, in: w)
     }

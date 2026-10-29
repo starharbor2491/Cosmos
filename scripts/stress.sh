@@ -12,7 +12,8 @@ cd "${0:A:h}/.."
 SEED=${1:-1}
 STEPS=${2:-300}
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/cosmos-stress.XXXXXX")
-swift build >/dev/null
+# Chromium's helper processes have to be inside the app, so the app is built and run from its bundle.
+scripts/build-app.sh --debug >/dev/null
 python3 -I - "$SEED" "$STEPS" "$WORK/script.json" <<'PY'
 import json, os, random, sys
 seed, steps, out = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
@@ -82,7 +83,7 @@ PY
 NETWORK=(--offline)
 [[ -n ${STRESS_ONLINE:-} ]] && NETWORK=()
 set +e
-perl -e 'alarm 600; exec @ARGV' .build/debug/Cosmos --demo "${NETWORK[@]}" --data-dir "$WORK/data" --automation "$WORK/script.json" >"$WORK/stderr.txt" 2>&1
+perl -e 'alarm 600; exec @ARGV' build/Cosmos.app/Contents/MacOS/Cosmos --demo "${NETWORK[@]}" --data-dir "$WORK/data" --automation "$WORK/script.json" >"$WORK/stderr.txt" 2>&1
 rc=$?
 if (( rc == 0 )); then
   echo "seed $SEED, $STEPS steps: survived ($(grep -c . "$WORK/script.json.log") log lines)"

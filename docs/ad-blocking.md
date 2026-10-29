@@ -4,7 +4,9 @@ Cosmos blocks ads, trackers and cookie banners with Chromium's own **`declarativ
 Manifest V3 ad blockers use. Chromium matches every request against them in its network process, so no page script is
 involved and pages cannot detect or bypass them. The compiler is `CosmosBlocking`, pure Foundation with no engine code;
 `CosmosChromium/BlockerExtension.swift` packages its output as a small extension ("Cosmos Blocker") that Cosmos writes
-into each profile and loads over the debugging pipe.
+into the default profile and loads over the debugging pipe. Private windows, which are in-memory profiles made from that
+one, get it too; other profiles get no blocking yet (Chromium loads extensions into the default profile only, see
+[cef-engine.md](cef-engine.md)).
 
 Arc ships EasyList, EasyPrivacy, AdGuard, uBlock and cookie-banner lists inside Chromium (see
 `arc-teardown/web-behaviors-and-boosts.md`). Cosmos offers the same coverage by compiling the same public lists.
@@ -21,7 +23,7 @@ Arc ships EasyList, EasyPrivacy, AdGuard, uBlock and cookie-banner lists inside 
         ▼
    BlockerExtension: rules-N.json rulesets, allow.json (sites switched off), hiding style sheets as content scripts
         ▼
-   Chromium: Extensions.loadUnpacked into the profile
+   Chromium: Extensions.loadUnpacked into the default profile (enabled in private windows)
 ```
 
 ## What is blocked, and how
@@ -139,7 +141,7 @@ blocking.json                      enabled list ids and custom lists
 FilterLists/<id>.txt               downloaded list text
 FilterLists/<id>.meta.json         URL, ETag, Last-Modified, last check
 FilterLists/compiled/…             compiled cache
-Engine Profiles/<profile>/Cosmos Blocker/   the extension Chromium loads (rewritten when lists or the per-site switches change)
+Engine Profiles/<default profile>/Cosmos Blocker/   the extension Chromium loads (rewritten when lists or the per-site switches change)
 ```
 
 ### How the browser uses it
@@ -183,7 +185,7 @@ Test runs download EasyList and EasyPrivacy into memory only; nothing downloaded
 
 ```
 scripts/test.sh --filter CosmosBlockingTests                       # parser, compiler, manager and corpus tests
-COSMOS_TEST_CHROMIUM=/path/to/Chromium.app scripts/test.sh --filter PageAgentTests   # + live headless Chromium
+scripts/test.sh --filter PageAgentTests                            # + live Chromium (CEF, in the test process)
 ```
 
 - **`DNRCompilerTests`**: the exact rules for each kind of filter, priorities, ruleset cutting, the regex budget, RE2
@@ -195,8 +197,8 @@ COSMOS_TEST_CHROMIUM=/path/to/Chromium.app scripts/test.sh --filter PageAgentTes
   compiles is valid.
 - **`BlockerExtensionTests`** (CosmosChromium): the extension's manifest, numbered rulesets, the allowlist ruleset and
   the hiding scripts.
-- **Live** (`PageAgentTests`, headless Chromium, no window): a page's script is blocked and an element hidden, and both
-  come back on a site that was switched off; and the rule-budget check above.
+- **Live** (`PageAgentTests`, Chromium in the test process, no window on screen): a page's script is blocked and an element hidden, and both
+  come back on a site that was switched off; a private window is blocked too; and the rule-budget check above.
 
 ## Known limits
 

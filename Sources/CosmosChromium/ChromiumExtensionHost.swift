@@ -42,7 +42,6 @@ final class ChromiumExtensionHost: EngineExtensions {
     private var loaded: [String: Loaded] = [:]
     /// Extension service workers Cosmos is attached to: session → extension id.
     private var workers: [String: String] = [:]
-    private var shimmed: Set<String> = []
     /// Chromium's tab ids of Cosmos's pages, and the tab targets `Extensions.triggerAction` wants.
     private var tabIDs: [String: Int] = [:]
     private var tabTargets: [String: String] = [:]
@@ -58,7 +57,6 @@ final class ChromiumExtensionHost: EngineExtensions {
 
     func browserStarted() async {
         workers = [:]
-        shimmed = []
         tabIDs = [:]
         tabTargets = [:]
         for folder in folders { _ = try? await loadIntoChromium(folder) }
@@ -66,7 +64,6 @@ final class ChromiumExtensionHost: EngineExtensions {
 
     func browserStopped() {
         workers = [:]
-        shimmed = []
         awaitingPopup?.continuation.resume(returning: nil)
         awaitingPopup = nil
     }
@@ -142,13 +139,12 @@ final class ChromiumExtensionHost: EngineExtensions {
             return
         }
         workers[session] = id
-        // Paused before its first line: stop again just before the script runs, put the shim in, then let it go.
+        // Cosmos attaches to a worker once it has started (see ChromiumRuntime), so the shim goes in now, after the
+        // worker's first lines: what they did through the APIs the shim watches is not reported.
         c.post("Runtime.addBinding", ["name": "__cosmosExt"], session: session)
         c.post("Runtime.enable", session: session)
-        c.post("Debugger.enable", session: session)
-        c.post("Debugger.setInstrumentationBreakpoint", ["instrumentation": "beforeScriptExecution"], session: session)
+        c.post("Runtime.evaluate", ["expression": shim], session: session)
         c.post("Runtime.runIfWaitingForDebugger", session: session)
-        _ = shim
     }
 
     static let shim: String? = {
@@ -167,16 +163,8 @@ final class ChromiumExtensionHost: EngineExtensions {
             }
             return
         }
-        guard let id = workers[session], let c = profile?.connection else { return }
+        guard let id = workers[session] else { return }
         switch event.method {
-        case "Debugger.paused":
-            if !shimmed.contains(session), let shim = Self.shim {
-                shimmed.insert(session)
-                c.post("Runtime.evaluate", ["expression": shim], session: session)
-                c.post("Debugger.removeInstrumentationBreakpoint", ["instrumentation": "beforeScriptExecution"], session: session)
-            }
-            c.post("Debugger.resume", session: session)
-            c.post("Debugger.disable", session: session)
         case "Runtime.bindingCalled":
             guard let payload = event.params["payload"] as? String,
                   let m = (try? JSONSerialization.jsonObject(with: Data(payload.utf8))) as? [String: Any] else { return }
@@ -449,7 +437,6 @@ final class ChromiumExtensionHost: EngineExtensions {
             // Alive, but not the worker this is for (a sign-in another worker started): ask the next one.
             if value as? Bool == false { continue }
             workers[session] = nil
-            shimmed.remove(session)
             c.post("Target.detachFromTarget", ["sessionId": session])
         }
     }

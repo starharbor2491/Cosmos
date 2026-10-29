@@ -401,9 +401,9 @@ final class Automation {
 
     // MARK: Snapshots
 
-    /// Renders the front window with `cacheDisplay`. Web content is drawn out of process and would come out blank, so
-    /// each visible web view is first snapshotted and swapped for an image view of itself in the same slot, which keeps
-    /// SwiftUI overlays (Command Bar, panels, Peek) layered above it as on screen.
+    /// Renders the front window with `cacheDisplay`. Chromium draws pages on the graphics processor, which `cacheDisplay`
+    /// does not see, so each page on show is first photographed by Chromium and laid over its own view, which keeps SwiftUI
+    /// overlays (Command Bar, panels, Peek) above it as on screen.
     private func snapshot(to path: String, window which: String? = nil) async {
         let target: NSWindow?
         switch which {
@@ -415,7 +415,18 @@ final class Automation {
         guard let window = target, let content = window.contentView else {
             note("  snapshot: no window"); return
         }
-        // Pages are pictures the engine sends, which the page views draw themselves, so they are in the picture as they are.
+        var covers: [NSView] = []
+        for runtime in store?.runtimes.values.map({ $0 }) ?? [] {
+            let view = runtime.page.view
+            guard view.window === window, !view.isHiddenOrHasHiddenAncestor, view.bounds.width > 0,
+                  let image = await runtime.page.snapshot(width: view.bounds.width) else { continue }
+            let cover = NSImageView(frame: view.bounds)
+            cover.image = image
+            cover.imageScaling = .scaleAxesIndependently
+            view.addSubview(cover)
+            covers.append(cover)
+        }
+        defer { covers.forEach { $0.removeFromSuperview() } }
         content.layoutSubtreeIfNeeded()
         let bounds = content.bounds
         guard let rep = content.bitmapImageRepForCachingDisplay(in: bounds) else { note("  snapshot: no bitmap"); return }

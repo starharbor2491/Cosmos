@@ -11,8 +11,6 @@ struct LaunchOptions {
     /// Never download filter lists (demos and automated runs use the cached or bundled ones).
     var offline = false
     var automationScript: URL?
-    /// A Chromium.app to run as it is, without downloading or updating one.
-    var chromium: URL?
 
     static func parse(_ args: [String], env: [String: String]) -> LaunchOptions {
         var o = LaunchOptions()
@@ -23,7 +21,6 @@ struct LaunchOptions {
             case "--demo": o.demo = true
             case "--offline": o.offline = true
             case "--automation": if i + 1 < args.count { o.automationScript = URL(fileURLWithPath: args[i + 1]); i += 1 }
-            case "--chromium": if i + 1 < args.count { o.chromium = URL(fileURLWithPath: args[i + 1]); i += 1 }
             default: break
             }
             i += 1
@@ -32,14 +29,7 @@ struct LaunchOptions {
         if o.automationScript == nil, let a = env["COSMOS_AUTOMATION"] { o.automationScript = URL(fileURLWithPath: a) }
         if env["COSMOS_DEMO"] == "1" { o.demo = true }
         if env["COSMOS_OFFLINE"] == "1" { o.offline = true }
-        if o.chromium == nil, let c = env["COSMOS_CHROMIUM"] { o.chromium = URL(fileURLWithPath: c) }
         return o
-    }
-
-    /// Where Cosmos keeps the Chromium it runs, shared by every data folder (a demo does not download it again).
-    static var chromiumDirectory: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Cosmos", isDirectory: true).appendingPathComponent("Chromium", isDirectory: true)
     }
 
     var resolvedDataDirectory: URL {
@@ -52,7 +42,8 @@ struct LaunchOptions {
 /// Starts the app. Called from the executable's `main.swift`.
 @MainActor
 public func runCosmos() {
-    let app = NSApplication.shared
+    // First: Chromium runs in this process, and needs it set up before anything else opens a file or makes NSApp.
+    let app = ChromiumEngine.prepareApplication()
     let delegate = CosmosAppDelegate(options: LaunchOptions.parse(CommandLine.arguments, env: ProcessInfo.processInfo.environment))
     retainedDelegate = delegate
     app.delegate = delegate
@@ -90,9 +81,14 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
         // Views read this while they are built, so it has to be set before the first window exists.
         SpatialProbe.isRecording = options.automationScript != nil
         NSApp.applicationIconImage = AppIcon.image
-        engine = ChromiumEngine(supportDirectory: LaunchOptions.chromiumDirectory, application: options.chromium, offline: options.offline)
+        engine = ChromiumEngine()
         store = BrowserStore(directory: options.resolvedDataDirectory, engine: engine)
         engine.settings = store.settings.engine
+        // Every profile's data is in the data folder's `Engine Profiles`; the first profile's is the one extensions run in.
+        let first = store.workspace.profiles[0].id
+        if let folder = store.engineFolder(forProfile: first) {
+            ChromiumEngine.configure(root: folder.deletingLastPathComponent(), defaultProfileID: first, defaultProfile: folder)
+        }
         var wasReady = engine.status.isReady
         engine.onStatusChange = { [weak self] in
             guard let self else { return }
@@ -143,8 +139,9 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
         store.saveNow()
         store.isTerminating = true
         for c in controllers { c.store.isTerminating = true }
-        engine.shutdown()
-        return .terminateNow
+        // Cosmos ends once Chromium has stopped: it writes out what it had not yet (cookies, site settings).
+        engine.shutdown { DispatchQueue.main.async { NSApp.reply(toApplicationShouldTerminate: true) } }
+        return .terminateLater
     }
 
     /// The main store and every incognito window's own.
@@ -229,10 +226,6 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
             guard let panel = self?.pictureInPicture, panel.runtime === runtime else { return }
             self?.pictureInPicture = nil
             panel.closeBecausePageEnded()
-        }
-        store.onRetryEngine = { [weak self] in
-            guard let engine = self?.engine else { return }
-            Task { await engine.checkForUpdate(force: true) }
         }
         store.onEngineSettingsChanged = { [weak self, weak store] in
             guard let self, let store, store === self.store else { return }

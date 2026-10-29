@@ -6,7 +6,14 @@ content scripts, service workers, `declarativeNetRequest`, `webRequest`, `storag
 Manifest V3 extensions work; Manifest V2 ones only as far as the Chromium in use still loads them (Chrome has been
 removing V2).
 
-What Cosmos adds is the part Chrome would draw: Chromium runs headless here and has no toolbar or menus of its own, so
+> **On CEF, not working yet.** Cosmos now runs Chromium through CEF, and its pages are not Chrome tabs: `chrome.tabs`
+> finds none of them and the button cannot be clicked through `Extensions.triggerAction`, and Cosmos attaches to an
+> extension's worker only once it has started, so the shim misses the worker's first lines. Extensions load, and their
+> content scripts and `declarativeNetRequest` rules run, in the default profile only; the button, popup, menu items,
+> shortcuts, notifications, side panel and sign-in described below wait for the extension step in
+> [cef-engine.md](cef-engine.md). The live tests for them are switched off until then.
+
+What Cosmos adds is the part Chrome would draw: Chromium has no toolbar or menus of its own here, so
 Cosmos draws the extension's button, badge and popup, its right-click menu items and its keyboard shortcuts, and sends
 your clicks and key presses back to the extension. That mirror is the "equivalent API" for the parts of `chrome.*`
 that end in browser UI:
@@ -67,6 +74,9 @@ Arc had and where to add them.
 
 ## How it was checked
 
+What follows was checked on headless Chromium, before CEF; on CEF these tests are switched off until Cosmos answers
+`chrome.tabs` and the button itself.
+
 - **Live, in headless Chromium** (`PageAgentTests.anExtensionRunsAndItsButtonMenuAndShortcutWork`): a Manifest V3
   extension with a content script, a service worker, a button, a menu item and a shortcut is loaded into a real
   profile. The content script runs on a page; the badge the worker sets reaches Cosmos's button; clicking the button,
@@ -102,4 +112,4 @@ Arc had and where to add them.
 | `CosmosEngine/Engine.swift` (`EngineExtensions`) | what the browser asks of an engine's extensions: load, unload, buttons, menu items, commands |
 | `CosmosChromium/ChromiumExtensionHost.swift` | loads extensions over the pipe (`Extensions.loadUnpacked`), attaches to their service workers, mirrors their UI, delivers clicks (`Extensions.triggerAction` for buttons) |
 | `CosmosChromium/Resources/extension-shim.js` | runs in each extension worker before its own code: reports badge, icon, popup, menu, notification, side panel and sign-in calls to Cosmos, and fires `contextMenus.onClicked`, `commands.onCommand`, the notification events and the end of a sign-in flow when Cosmos says so |
-| `CosmosChromium/Resources/Bridge/` | Cosmos's own small extension in every profile: tab ids for extension events, page zoom, clearing site data and Chromium's own history |
+| `CosmosChromium/Resources/Bridge/` | Cosmos's own small extension in the default profile: tab ids for extension events, clearing site data and Chromium's own history |

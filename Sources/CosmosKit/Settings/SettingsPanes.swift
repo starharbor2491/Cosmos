@@ -176,7 +176,12 @@ struct PrivacyPane: View {
 
     private func clearSiteData() {
         Task {
-            let ok = await model.confirm(.init(title: "Clear cookies and site data?", message: "You'll be signed out of websites in every profile. This can't be undone.",
+            // Only the first profile's Chromium can list every site that stored something.
+            let others = store.workspace.profiles.count > 1
+                ? " In profiles other than \(store.workspace.profiles[0].name), a site you haven't opened since Cosmos started may keep what it stored."
+                : ""
+            let ok = await model.confirm(.init(title: "Clear cookies and site data?",
+                                               message: "You'll be signed out of websites in every profile.\(others) This can't be undone.",
                                                confirmTitle: "Clear Site Data", destructive: true))
             guard ok else { return }
             for profile in store.workspace.profiles {

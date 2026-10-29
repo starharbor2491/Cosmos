@@ -8,10 +8,12 @@ You need macOS 14+ and the Swift command line tools. Full Xcode is not required 
 scripts/build-app.sh               # release build -> build/Cosmos.app
 scripts/build-app.sh --debug       # faster to produce
 scripts/build-app.sh --install     # also copy to ~/Applications
-swift build                        # just compile (debug); run with .build/debug/Cosmos
+swift build                        # just compile (debug)
 ```
 
-The script runs `swift build`, then assembles the bundle by hand: it copies the executables and SwiftPM's resource bundles into `Contents/Resources`, makes the icon from `cosmos icon/cosmos-app-icon-tile.png` (`sips` and `iconutil`), writes `Info.plist` (http and https URL types, usage strings) from `VERSION`, and signs ad hoc. There is no Xcode project.
+Chromium comes from CEF: `scripts/fetch-cef.sh` (which the build and test scripts run) downloads the pinned CEF build into `Vendor/CEF/` once, checks its SHA-1 and compiles CEF's C++ wrapper. Cosmos runs only from `Cosmos.app`, since Chromium's helper processes have to be inside it.
+
+The script runs `swift build`, then assembles the bundle by hand: it copies the executables and SwiftPM's resource bundles into `Contents/Resources`, puts the Chromium Embedded Framework and the five helper apps made from `CosmosHelper` into `Contents/Frameworks` (with CEF's license and Chromium's credits in `Contents/Resources`), makes the icon from `cosmos icon/cosmos-app-icon-tile.png` (`sips` and `iconutil`), writes `Info.plist` (http and https URL types, usage strings) from `VERSION`, and signs ad hoc, the framework and helpers first. There is no Xcode project.
 
 The icon artwork lives in `cosmos icon/`: `logos/app-icon/` (the galaxy, square) and `logos/single-color/` (the one-colour swirl). `scripts/make-app-icon.swift` cuts the galaxy to an icon tile (`swift scripts/make-app-icon.swift "cosmos icon/logos/app-icon/cosmos-app-icon-1024.png" "cosmos icon/cosmos-app-icon-tile.png"`); `Sources/CosmosKit/Resources/AppIcon.png` is a 512 px copy of the tile (`sips -z 512 512 "cosmos icon/cosmos-app-icon-tile.png" --out Sources/CosmosKit/Resources/AppIcon.png`) for the Dock, the in-app logo and the start page, and `MenuBarMark-18/36/54.png` are copies of `logos/single-color/cosmos-mark-black-*.png` for the menu-bar icon (a template image, so the system inks it).
 
@@ -30,13 +32,13 @@ Use the script rather than `swift test`: with only the command line tools, `swif
 | CosmosCoreTests | workspace tree and merge, archive, ranking and the Command Bar composer, history and frecency, calculator, URL input, public suffixes, JSON store, SQLite values |
 | CosmosImportTests | the Arc importer on a generated fixture, Chromium, Firefox and Safari importers, bookmark import, extension discovery, `.crx` unwrapping, Boost note |
 | CosmosBlockingTests | filter parser, `declarativeNetRequest` compiler, list manager (no network), the malware and phishing lists (reading, matching, keeping them downloaded), fuzzing, and a corpus test that downloads the real EasyList and EasyPrivacy (skipped when offline) |
-| CosmosChromiumTests | the pipe's message framing, the command line and environment Chromium starts with, the update rules, settings written into Chromium's files, the blocker extension, the extension host's toolbar and menu mirror, key mapping, drops, reading Chromium's accessibility tree for VoiceOver |
-| CosmosKitTests | the store (tabs, archive, spaces, persistence, incognito, permissions, sign-in, Picture in Picture, dangerous sites), the Command Bar model, Boost injection, content blocking, extensions, the radial menu, haptics. Most run on `FakeEngine` (in `TestSupport.swift`), which records what the store asked of the engine; `PageAgentTests` run the same code on real Chromium |
+| CosmosChromiumTests | the pipe's message framing, settings written into Chromium's files, the blocker extension, the extension host's toolbar and menu mirror, the right clicks the page view hears of |
+| CosmosKitTests | the store (tabs, archive, spaces, persistence, incognito, permissions, sign-in, Picture in Picture, dangerous sites), the Command Bar model, Boost injection, content blocking, extensions, the radial menu, haptics. Most run on `FakeEngine` (in `TestSupport.swift`), which records what the store asked of the engine; `CEFRuntimeTests` and `PageAgentTests` run the same code on real Chromium |
 
-**Live Chromium tests.** `PageAgentTests` start a real Chromium, headless (no window, no Dock icon, nothing takes the keyboard), load pages from a throwaway server on 127.0.0.1, and stop it at the end. They use the Chromium in `COSMOS_TEST_CHROMIUM` (the path of a `Chromium.app`) or, without it, the one Cosmos downloaded for itself; with neither they are skipped. Chromium gets a fake camera and microphone (`--use-fake-device-for-media-stream`), so the permission tests never reach the Mac's own; notifications are posted to a fake notifier, and the location to a page comes from the test. They cover workers, what pages are told about automation, permissions, frames from other sites (and what they cannot forge), sign-in, DevTools, drops, Picture in Picture, notifications, Chromium's own history, extensions' side panels and sign-in flows, dangerous sites and what VoiceOver reads.
+**Live Chromium tests.** `CEFRuntimeTests` and `PageAgentTests` run Chromium (CEF from `Vendor/CEF`) inside the test process, once for all of them (`CEFTestRuntime`), with its helper apps in a stand-in app in a temporary folder. Pages are in views that are in no window, or in a window that is never shown, so nothing comes to the front or takes the keyboard. They load pages from a throwaway server on 127.0.0.1. Chromium gets a fake camera and microphone (`--use-fake-device-for-media-stream`) and a mock Keychain, so the tests never reach the Mac's own; notifications are posted to a fake notifier, and the location to a page comes from the test. They cover pages and popups drawn in Cosmos's views, workers, what pages are told about automation, permissions, frames from other sites (and what they cannot forge), sign-in, DevTools, Picture in Picture, notifications, Chromium's own history, extensions, dangerous sites and blocking.
 
 ```bash
-COSMOS_TEST_CHROMIUM=/path/to/Chromium.app scripts/test.sh --skip MenuBarPanelTests
+scripts/test.sh --filter "CEFRuntimeTests|PageAgentTests"
 ```
 
 Tests that touch AppKit views are `@MainActor`.
@@ -67,13 +69,12 @@ swift test --sanitize=address --scratch-path /tmp/cosmos-asan   # all tests unde
 ## Run with a throwaway profile
 
 ```bash
-.build/debug/Cosmos --demo                    # three themed spaces with sample tabs, in a temporary folder
-.build/debug/Cosmos --data-dir /tmp/cosmos    # use a separate data folder
-.build/debug/Cosmos --offline                 # never download filter lists or Chromium updates
-.build/debug/Cosmos --chromium /path/to/Chromium.app   # run this Chromium instead of the downloaded one
+build/Cosmos.app/Contents/MacOS/Cosmos --demo                    # three themed spaces with sample tabs, in a temporary folder
+build/Cosmos.app/Contents/MacOS/Cosmos --data-dir /tmp/cosmos    # use a separate data folder
+build/Cosmos.app/Contents/MacOS/Cosmos --offline                 # never download filter lists
 ```
 
-`COSMOS_DATA_DIR`, `COSMOS_DEMO=1`, `COSMOS_OFFLINE=1` and `COSMOS_CHROMIUM` do the same through the environment. `--demo` implies no filter-list downloads and a temporary folder. The downloaded Chromium is kept in `~/Library/Application Support/Cosmos/Chromium/` whatever the data folder, so a demo does not download it again.
+`COSMOS_DATA_DIR`, `COSMOS_DEMO=1` and `COSMOS_OFFLINE=1` do the same through the environment. `--demo` implies no filter-list downloads and a temporary folder.
 
 ## The terminal tool
 
@@ -89,10 +90,10 @@ See [importing-from-arc.md](importing-from-arc.md).
 Granting a tool permission to record the screen is a lot to ask for a build script, so the app can photograph itself. Run it with a script:
 
 ```bash
-.build/debug/Cosmos --demo --automation script.json
+build/Cosmos.app/Contents/MacOS/Cosmos --demo --automation script.json
 ```
 
-The script is a JSON array of steps; the log goes to `script.json.log`. A snapshot renders the window's own views to a PNG. Pages are pictures Chromium sends, which the page views draw themselves, so they are in it as shown, with overlays and the sidebar exactly as drawn. (It does not show the window frame or the traffic lights.)
+The script is a JSON array of steps; the log goes to `script.json.log`. A snapshot renders the window's own views to a PNG. Chromium draws pages on the graphics processor, which that rendering does not see, so each page on show is first photographed by Chromium (`Page.captureScreenshot`) and laid over its own view; overlays and the sidebar are exactly as drawn. (It does not show the window frame or the traffic lights.)
 
 ```json
 [

@@ -1,8 +1,8 @@
 import AppKit
+import CosmosCEF
 import CosmosEngine
 
-/// One Chromium tab: a page target in the profile's Chromium, driven over the DevTools protocol and drawn by
-/// `ChromiumPageView`.
+/// One Chromium tab: a CEF browser drawn in `ChromiumPageView`, driven over the DevTools protocol as a page target.
 @MainActor
 final class ChromiumPage: EnginePage {
     /// Weak: a task of the page can still be waiting when the profile has gone (a question nobody answered before the
@@ -13,20 +13,18 @@ final class ChromiumPage: EnginePage {
     weak var delegate: EnginePageDelegate?
     private(set) var state = PageState()
 
+    /// The browser CEF draws the page with, once there is one.
+    private(set) var cefBrowser: CosmosCEFBrowser?
     private(set) var targetID: String?
     private(set) var sessionID: String?
     private(set) var isClosed = false
-    /// This page's DevTools, while they are open.
-    weak var inspector: ChromiumPage?
     /// Hears the address of every document the page asks for, redirects included (an extension's sign-in page, which
     /// ends at an address of the extension's).
     var onDocumentRequest: ((URL) -> Void)? { didSet { if onDocumentRequest != nil { command("Network.enable") } } }
     /// The page is gone: closed by Cosmos or by Chromium.
     var onClose: (() -> Void)?
-    /// The page Cosmos stopped as dangerous, until Chromium reports the failure.
-    private var stoppedDanger: (host: String?, danger: PageDanger)?
     /// The video in Picture in Picture: its view, the script context (of the page or a frame) that watches it, and where
-    /// that frame is in the page.
+    /// that frame is in the page. Chromium streams the page's frames to it (the screencast) only while it is up.
     private var pictureInPicture: (view: ChromiumPictureInPictureView, context: Context, frameID: String, offset: CGPoint)?
     /// The page's notifications: the page-world context that holds each, for its events.
     private var notifications: [String: Context] = [:]
@@ -38,35 +36,54 @@ final class ChromiumPage: EnginePage {
     struct Context: Hashable { let session: String; let id: Int }
     private var agentContextID: Int?
     private var contexts: [Context: (frameID: String, isAgent: Bool, isDefault: Bool)] = [:]
-    /// The scripts installed in each session (the page's and its frames').
+    /// The scripts installed in each session (the page's and its frames'), and how often they have been replaced.
     private var scriptIDs: [String: [String]] = [:]
+    private var scriptGeneration: [String: Int] = [:]
     /// Frames from other sites, which Chromium runs in processes (and sessions) of their own, and each one's frame.
     private var frameSessions: Set<String> = []
     private var frameOfSession: [String: String] = [:]
-    /// What VoiceOver reads, once an assistive app has looked at the page.
-    private(set) var accessibility: ChromiumAccessibility?
     private var isCasting = false
     private var frameGeneration = 0
     private let decodeQueue = DispatchQueue(label: "cosmos.chromium.frames", qos: .userInteractive)
-    private var appliedMetrics: (width: Int, height: Int, zoomFactor: Double)?
-    /// The zoom Chromium has for this page, when it is not the profile's default.
-    private var appliedZoom: Double?
     private var failedLoad: URL?
     private var showingOwnErrorPage = false
-    private(set) var caretRect: CGRect?
+    /// A page from a dangerous site that CEF stopped, until Chromium is done with the navigation it cancelled (it still
+    /// says that navigation started, which would take Cosmos's warning away).
+    private var stoppedDanger: (url: URL, danger: PageDanger)?
     /// The `window.open` that made the next popup of this page, with its features.
     var lastWindowOpen: NewPageRequest?
     private(set) var isInElementFullscreen = false
     private var metricsEnabled = false
+    private var overridesUserAgent = false
 
-    var zoom: Double = 1 { didSet { if zoom != oldValue { appliedMetrics = nil; viewGeometryChanged() } } }
-    /// Device pixels per CSS pixel: Chromium lays the page out at the screen's scale times the page's zoom.
-    var layoutScale: Double { appliedMetrics?.zoomFactor ?? Double(pageView.backingScale) * zoom }
+    /// Chromium keeps the zoom by site, as Chrome does: what this says is the zoom of the site the page shows.
+    var zoom: Double {
+        get { cefBrowser?.zoomFactor ?? 1 }
+        set { cefBrowser?.zoomFactor = newValue }
+    }
     var userAgent: String? { didSet { if userAgent != oldValue { applyUserAgent() } } }
 
     init(browser: ChromiumProfile) {
         self.browser = browser
         pageView.page = self
+    }
+
+    /// The page's browser, made in its view.
+    func makeBrowser(context: CosmosCEFContext) -> CosmosCEFBrowser {
+        let made = CosmosCEFBrowser(in: pageView, context: context, url: "about:blank")
+        cefBrowser = made
+        return made
+    }
+
+    /// A page a site opened: CEF made its browser out of sight, and it moves into this page's view once it says which
+    /// target it is.
+    func takeBrowser(forTarget target: String) {
+        ChromiumRuntime.shared.whenBrowser(forTarget: target) { [weak self] made in
+            guard let self, !self.isClosed else { made.close(); return }
+            self.cefBrowser = made
+            self.browser?.own(made)
+            made.move(to: self.pageView)
+        }
     }
 
     // MARK: Target
@@ -79,30 +96,37 @@ final class ChromiumPage: EnginePage {
         Task { await setUp() }
     }
 
+    /// Everything the page needs goes out in order before Chromium is told to let it run, without waiting for answers: a
+    /// page a site opened runs in its opener's renderer, which Chromium holds until then, so neither would answer.
     private func setUp() async {
-        guard let sessionID else { return }
-        let c = browser?.connection
-        for domain in ["Page.enable", "Runtime.enable"] { _ = try? await c?.send(domain, session: sessionID) }
-        c?.post("Page.setLifecycleEventsEnabled", ["enabled": true], session: sessionID)
-        c?.post("Page.setInterceptFileChooserDialog", ["enabled": true], session: sessionID)
-        // HTTP authentication: Chromium only says a site wants a password for requests it holds, so it holds documents
-        // (not images or scripts), which go on at once; a challenge comes to Cosmos.
-        c?.post("Fetch.enable", Self.authInterception, session: sessionID)
-        c?.post("Runtime.addBinding", ["name": "__cosmosPost", "executionContextName": ChromiumProfile.agentWorld], session: sessionID)
-        c?.post("Target.setAutoAttach", Self.frameAttachment, session: sessionID)
-        if accessibility != nil { c?.post("Accessibility.enable", session: sessionID) }
-        await installScripts(browser?.scripts ?? [])
+        guard let sessionID, let c = browser?.connection else { return }
+        prepare(session: sessionID, connection: c)
         applyUserAgent()
-        if let tree = try? await c?.send("Page.getFrameTree", session: sessionID),
+        c.post("Runtime.runIfWaitingForDebugger", session: sessionID)
+        if let tree = try? await c.send("Page.getFrameTree", session: sessionID),
            let frame = (tree["frameTree"] as? [String: Any])?["frame"] as? [String: Any] {
             mainFrameID = frame["id"] as? String
         }
-        c?.post("Runtime.runIfWaitingForDebugger", session: sessionID)
-        viewGeometryChanged()
         viewVisibilityChanged()
         let waiting = queued
         queued = []
         waiting.forEach { $0() }
+    }
+
+    /// What the page's session and each of its frames' sessions are set up with, before they run.
+    private func prepare(session: String, connection c: CDPConnection) {
+        c.post("Page.enable", session: session)
+        c.post("Runtime.enable", session: session)
+        if session == sessionID {
+            c.post("Page.setLifecycleEventsEnabled", ["enabled": true], session: session)
+            c.post("Page.setInterceptFileChooserDialog", ["enabled": true], session: session)
+        }
+        // HTTP authentication: Chromium only says a site wants a password for requests it holds, so it holds documents
+        // (not images or scripts), which go on at once; a challenge comes to Cosmos.
+        c.post("Fetch.enable", Self.authInterception, session: session)
+        c.post("Runtime.addBinding", ["name": "__cosmosPost", "executionContextName": ChromiumProfile.agentWorld], session: session)
+        c.post("Target.setAutoAttach", Self.frameAttachment, session: session)
+        installScripts(browser?.scripts ?? [], in: session)
     }
 
     static let authInterception: [String: Any] = ["patterns": [["urlPattern": "*", "resourceType": "Document", "requestStage": "Request"]],
@@ -113,20 +137,29 @@ final class ChromiumPage: EnginePage {
                                                  "filter": [["type": "iframe"], ["type": "worker"], ["exclude": true]]]
 
     /// Replaces the scripts every new document gets (agent, Boosts), in the page and in its frames from other sites.
-    func installScripts(_ scripts: [PageScript]) async {
+    func installScripts(_ scripts: [PageScript]) {
         guard let sessionID else { return }
-        for session in [sessionID] + frameSessions { await installScripts(scripts, in: session) }
+        for session in [sessionID] + frameSessions { installScripts(scripts, in: session) }
     }
 
-    private func installScripts(_ scripts: [PageScript], in session: String) async {
+    /// The scripts go out at once, in order; each one's id comes back later. One that comes back after the scripts were
+    /// replaced again is taken out at once.
+    private func installScripts(_ scripts: [PageScript], in session: String) {
         guard let c = browser?.connection else { return }
         for id in scriptIDs[session] ?? [] { c.post("Page.removeScriptToEvaluateOnNewDocument", ["identifier": id], session: session) }
         scriptIDs[session] = []
+        scriptGeneration[session, default: 0] += 1
+        let generation = scriptGeneration[session]
         for script in scripts {
             var params: [String: Any] = ["source": Self.wrap(script), "runImmediately": true]
             if script.world == .agent { params["worldName"] = ChromiumProfile.agentWorld }
-            if let r = try? await c.send("Page.addScriptToEvaluateOnNewDocument", params, session: session), let id = r["identifier"] as? String {
-                scriptIDs[session, default: []].append(id)
+            c.send("Page.addScriptToEvaluateOnNewDocument", params, session: session) { [weak self] r in
+                guard let self, let id = r?["identifier"] as? String else { return }
+                if self.scriptGeneration[session] == generation {
+                    self.scriptIDs[session, default: []].append(id)
+                } else {
+                    c.post("Page.removeScriptToEvaluateOnNewDocument", ["identifier": id], session: session)
+                }
             }
         }
     }
@@ -137,16 +170,9 @@ final class ChromiumPage: EnginePage {
         frameSessions.insert(session)
         frameOfSession[session] = frame
         browser?.route(session, to: self)
-        Task {
-            let c = browser?.connection
-            for domain in ["Page.enable", "Runtime.enable"] { _ = try? await c?.send(domain, session: session) }
-            c?.post("Fetch.enable", Self.authInterception, session: session)
-            c?.post("Runtime.addBinding", ["name": "__cosmosPost", "executionContextName": ChromiumProfile.agentWorld], session: session)
-            c?.post("Target.setAutoAttach", Self.frameAttachment, session: session)
-            if self.accessibility != nil { c?.post("Accessibility.enable", session: session) }
-            await installScripts(browser?.scripts ?? [], in: session)
-            c?.post("Runtime.runIfWaitingForDebugger", session: session)
-        }
+        guard let c = browser?.connection else { return }
+        prepare(session: session, connection: c)
+        c.post("Runtime.runIfWaitingForDebugger", session: session)
     }
 
     /// A worker, held at its start like every child (see `frameAttachment`): it goes on, and the session that attached
@@ -161,10 +187,11 @@ final class ChromiumPage: EnginePage {
         frameOfSession[session] = nil
         browser?.unroute(session)
         scriptIDs[session] = nil
+        scriptGeneration[session] = nil
         contexts = contexts.filter { $0.key.session != session }
     }
 
-    /// What a frame from another site's session reports: its scripts' worlds, their messages, its documents.
+    /// What a frame from another site's session reports: its scripts' worlds, their messages.
     private func handleFrame(_ event: CDPEvent, session: String) {
         let p = event.params
         switch event.method {
@@ -208,15 +235,6 @@ final class ChromiumPage: EnginePage {
     /// The session of a frame from another site (a frame's target is known by the frame's id).
     func session(forFrame frame: String) -> String? { frameOfSession.first { $0.value == frame }?.key }
 
-    /// An assistive app looked at the page: from now on its accessibility tree is read for it.
-    func accessibilityWanted() -> ChromiumAccessibility {
-        if let accessibility { return accessibility }
-        let made = ChromiumAccessibility(page: self)
-        accessibility = made
-        for session in frameSessions { browser?.connection?.post("Accessibility.enable", session: session) }
-        return made
-    }
-
     /// Runs `expression` in one script context, of the page or of one of its frames.
     private func evaluate(_ expression: String, in context: Context) {
         browser?.connection?.post("Runtime.evaluate", ["expression": expression, "contextId": context.id], session: context.session)
@@ -251,7 +269,7 @@ final class ChromiumPage: EnginePage {
         return try? await browser?.connection?.send(method, params, session: sessionID)
     }
 
-    /// An input event: dropped if the page is not running yet.
+    /// An input event (an editing command, text to paste): dropped if the page is not running yet.
     func input(_ method: String, _ params: [String: Any]) {
         guard let sessionID else { return }
         browser?.connection?.post(method, params, session: sessionID)
@@ -284,10 +302,10 @@ final class ChromiumPage: EnginePage {
             delegate?.pageDidStartNavigation(self)
             changed()
         case "Page.frameNavigated":
+            if let url = ((p["frame"] as? [String: Any])?["url"] as? String).flatMap(URL.init(string:)) { browser?.sawSite(url) }
             guard let frame = p["frame"] as? [String: Any], frame["parentId"] == nil else { return }
             mainFrameID = frame["id"] as? String
             agentContextID = nil
-            caretRect = nil
             if pictureInPicture != nil { endPictureInPicture() }
             if let unreachable = (frame["unreachableUrl"] as? String).flatMap(URL.init(string:)) {
                 state.url = unreachable
@@ -298,9 +316,6 @@ final class ChromiumPage: EnginePage {
                 Task { await browser?.applyDecisions(to: url) }
                 delegate?.pageDidCommitNavigation(self)
             }
-            // Chromium drops a page's own zoom when it navigates; it is set again.
-            appliedZoom = nil
-            if zoom != 1 || needsOwnZoom { appliedMetrics = nil; viewGeometryChanged() }
             refreshHistory()
             changed()
         case "Page.navigatedWithinDocument":
@@ -321,21 +336,15 @@ final class ChromiumPage: EnginePage {
             state.progress = 1
             refreshHistory()
             changed()
-            if failedLoad == nil { delegate?.pageDidFinishLoading(self) }
+            if stoppedDanger != nil { reportStoppedDanger() } else if failedLoad == nil { delegate?.pageDidFinishLoading(self) }
         case "Fetch.requestPaused":
             if let sessionID { documentPaused(p, session: sessionID) }
+        case "Fetch.authRequired":
+            if let sessionID { authRequired(p, session: sessionID) }
         case "Network.requestWillBeSent":
             if (p["type"] as? String) == "Document", let url = ((p["request"] as? [String: Any])?["url"] as? String).flatMap(URL.init(string:)) {
                 onDocumentRequest?(url)
             }
-        case "Fetch.authRequired":
-            if let sessionID { authRequired(p, session: sessionID) }
-        case "Accessibility.loadComplete":
-            accessibility?.pageLoaded()
-        case "Accessibility.nodesUpdated":
-            accessibility?.refreshSoon()
-        case "Page.javascriptDialogOpening":
-            runDialog(p)
         case "Page.fileChooserOpened":
             chooseFiles(p)
         case "Page.windowOpen":
@@ -402,12 +411,7 @@ final class ChromiumPage: EnginePage {
     private func reportFailure(_ url: URL) async {
         let code = await evaluate("(document.querySelector('.error-code') || {}).textContent || ''", in: .page) as? String ?? ""
         guard failedLoad == url else { return }
-        var error = Self.loadError(code)
-        if let stopped = stoppedDanger, stopped.host == url.host {
-            error = PageLoadError(kind: stopped.danger == .malware ? .malware : .phishing, detail: stopped.danger.rawValue)
-        }
-        stoppedDanger = nil
-        delegate?.page(self, didFailLoading: url, error: error)
+        delegate?.page(self, didFailLoading: url, error: Self.loadError(code))
         changed()
     }
 
@@ -434,8 +438,6 @@ final class ChromiumPage: EnginePage {
         guard let context = contexts[key], context.isAgent else { return }
         let fromMain = session == sessionID && context.frameID == mainFrameID
         switch message["type"] as? String {
-        case "__cursor": pageView.setCursor(message["value"] as? String ?? "default")
-        case "__select": showSelectMenu(message, context: key, fromMain: fromMain)
         case "__fullscreen": setElementFullscreen(message["value"] as? Bool ?? false)
         case "__ask":
             guard let id = message["id"] as? Int else { return }
@@ -449,8 +451,9 @@ final class ChromiumPage: EnginePage {
         case "__pipRect":
             if let pip = pictureInPicture, pip.context == key, let x = message["x"] as? Double, let y = message["y"] as? Double,
                let w = message["width"] as? Double, let h = message["height"] as? Double {
-                let f = layoutScale
-                pip.view.crop = CGRect(x: (x + pip.offset.x) * f, y: (y + pip.offset.y) * f, width: w * f, height: h * f)
+                // CSS pixels of the page; the page's view shows them at its zoom.
+                let z = zoom
+                pip.view.videoRect = CGRect(x: (x + pip.offset.x) * z, y: (y + pip.offset.y) * z, width: w * z, height: h * z)
             }
         case "__tell":
             guard let note = message["note"] as? [String: Any], let id = note["id"] as? String else { return }
@@ -468,45 +471,20 @@ final class ChromiumPage: EnginePage {
         case "__pipGone":
             if pictureInPicture?.context == key { endPictureInPicture() }
         case "__title": if fromMain { setTitle(message["value"] as? String ?? "", url: state.url?.absoluteString ?? "") }
-        case "__caret":
-            if fromMain, let x = message["x"] as? Double, let y = message["y"] as? Double, let h = message["height"] as? Double {
-                caretRect = CGRect(x: x * zoom, y: (y + h) * zoom, width: 1, height: h * zoom)
-            }
         // An error document (Chromium's, then Cosmos's) says nothing about the site: its icons are not the site's to fetch.
         case "meta" where fromMain && failedLoad != nil: break
         default: delegate?.page(self, agentMessage: message, fromMainFrame: fromMain)
         }
     }
 
-    // MARK: Drawing
+    // MARK: Picture in Picture frames
 
-    var needsOwnZoom: Bool { browser.map { abs(pageView.backingScale - $0.defaultZoomFactor) > 0.01 } ?? false }
-
-    func viewGeometryChanged() {
-        guard sessionID != nil, pageView.bounds.width > 0, pageView.bounds.height > 0 else { return }
-        accessibility?.refreshSoon()
-        let scale = pageView.backingScale
-        let width = Int((pageView.bounds.width * scale).rounded()), height = Int((pageView.bounds.height * scale).rounded())
-        let factor = Double(scale) * zoom
-        if let m = appliedMetrics, m.width == width, m.height == height, m.zoomFactor == factor { return }
-        appliedMetrics = (width, height, factor)
-        // Chromium lays the page out at `factor` (its browser zoom: the screen's scale times the page's own zoom) in a
-        // viewport of the view's size in device pixels, so the frames it sends are sharp on a Retina screen.
-        command("Emulation.setDeviceMetricsOverride", ["width": width, "height": height, "deviceScaleFactor": 1, "mobile": false])
-        // A zoom of its own, or back to the default after one: Chromium keeps a page's zoom until it is told otherwise.
-        if let browser, abs(factor - (appliedZoom ?? browser.defaultZoomFactor)) > 0.001, let targetID {
-            browser.setZoom(factor, target: targetID)
-            appliedZoom = abs(factor - browser.defaultZoomFactor) > 0.001 ? factor : nil
-        }
-    }
-
+    /// Chromium draws the page itself; only a video in Picture in Picture needs its frames, wherever the tab is.
     func viewVisibilityChanged() {
-        // A video in Picture in Picture is seen in its own window, wherever the tab is.
-        let showing = pageView.isShowing || pictureInPicture != nil
-        guard sessionID != nil, showing != isCasting else { return }
-        isCasting = showing
-        if showing {
-            viewGeometryChanged()
+        let casting = pictureInPicture != nil
+        guard sessionID != nil, casting != isCasting else { return }
+        isCasting = casting
+        if casting {
             command("Page.startScreencast", ["format": "jpeg", "quality": 92, "everyNthFrame": 1])
         } else {
             command("Page.stopScreencast")
@@ -515,18 +493,17 @@ final class ChromiumPage: EnginePage {
 
     private func frame(_ p: [String: Any]) {
         if let ack = p["sessionId"] as? Int { command("Page.screencastFrameAck", ["sessionId": ack]) }
-        guard let base64 = p["data"] as? String else { return }
+        guard let base64 = p["data"] as? String,
+              let width = (p["metadata"] as? [String: Any])?["deviceWidth"] as? Double, width > 0 else { return }
         frameGeneration += 1
         let generation = frameGeneration
-        let scale = pageView.backingScale
         decodeQueue.async { [weak self] in
             guard let data = Data(base64Encoded: base64), let source = CGImageSourceCreateWithData(data as CFData, nil),
                   let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self, generation == self.frameGeneration else { return }
-                    self.pageView.show(image, scale: scale)
-                    self.pictureInPicture?.view.show(image)
+                    self.pictureInPicture?.view.show(image, pixelsPerPoint: CGFloat(Double(image.width) / width))
                 }
             }
         }
@@ -534,33 +511,49 @@ final class ChromiumPage: EnginePage {
 
     // MARK: Dialogs, files, menus
 
-    private func runDialog(_ p: [String: Any]) {
-        let message = p["message"] as? String ?? ""
-        let origin = (p["url"] as? String).flatMap(URL.init(string:))?.host ?? ""
-        let kind: PageDialog.Kind = switch p["type"] as? String {
-        case "confirm": .confirm
-        case "prompt": .prompt(default: p["defaultPrompt"] as? String ?? "")
-        case "beforeunload": .beforeUnload
+    /// A page's `alert`, `confirm`, `prompt` or leave-the-page question, which CEF hands Cosmos to show.
+    func runDialog(_ kind: CosmosCEFDialogKind, message: String, defaultText: String, origin: String, answer: @escaping (Bool, String?) -> Void) {
+        let dialogKind: PageDialog.Kind = switch kind {
+        case .confirm: .confirm
+        case .prompt: .prompt(default: defaultText)
+        case .beforeUnload: .beforeUnload
         default: .alert
         }
+        let host = URL(string: origin)?.host ?? ""
         Task {
-            let answer = await delegate?.page(self, runDialog: PageDialog(kind: kind, message: message, origin: origin)) ?? PageDialog.Answer(accepted: false)
-            var params: [String: Any] = ["accept": answer.accepted]
-            if let text = answer.text { params["promptText"] = text }
-            command("Page.handleJavaScriptDialog", params)
+            let reply = await delegate?.page(self, runDialog: PageDialog(kind: dialogKind, message: message, origin: host)) ?? PageDialog.Answer(accepted: false)
+            answer(reply.accepted, reply.text)
         }
     }
 
-    /// A page or frame about to load (Chromium holds documents for sign-in): it goes on, unless Cosmos says the site is
-    /// dangerous, and then nothing is sent to it.
+    /// CEF asks before every navigation of the page and its frames. One to a dangerous site is stopped before anything is
+    /// sent to it, and for the page itself Cosmos says why; a frame is left out quietly. False stops it.
+    func allowsNavigation(to url: URL, mainFrame: Bool) -> Bool {
+        guard let danger = delegate?.page(self, dangerAt: url) else { return true }
+        if mainFrame {
+            stoppedDanger = (url, danger)
+            // In case Chromium says nothing more about the navigation.
+            Task {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                self.reportStoppedDanger()
+            }
+        }
+        return false
+    }
+
+    private func reportStoppedDanger() {
+        guard let (url, danger) = stoppedDanger else { return }
+        stoppedDanger = nil
+        failedLoad = url
+        state.url = url
+        state.isLoading = false
+        delegate?.page(self, didFailLoading: url, error: PageLoadError(kind: danger == .malware ? .malware : .phishing, detail: danger.rawValue))
+        changed()
+    }
+
+    /// A document Chromium holds for sign-in (see `authInterception`): it goes on at once.
     private func documentPaused(_ p: [String: Any], session: String) {
         guard let id = p["requestId"] as? String else { return }
-        let url = ((p["request"] as? [String: Any])?["url"] as? String).flatMap(URL.init(string:))
-        if let url, let danger = delegate?.page(self, dangerAt: url) {
-            if session == sessionID && isMain(p["frameId"]) { stoppedDanger = (url.host, danger) }
-            browser?.connection?.post("Fetch.failRequest", ["requestId": id, "errorReason": "BlockedByClient"], session: session)
-            return
-        }
         browser?.connection?.post("Fetch.continueRequest", ["requestId": id], session: session)
     }
 
@@ -585,42 +578,6 @@ final class ChromiumPage: EnginePage {
             guard let urls, !urls.isEmpty else { return }
             command("DOM.setFileInputFiles", ["files": urls.map(\.path), "backendNodeId": node])
         }
-    }
-
-    private func showSelectMenu(_ m: [String: Any], context: Context, fromMain: Bool) {
-        guard let id = m["id"] as? Int, let options = m["options"] as? [[String: Any]] else { return }
-        let selected = m["selected"] as? Int ?? -1
-        let menu = NSMenu()
-        menu.autoenablesItems = false
-        var lastGroup: String?
-        for (index, option) in options.enumerated() {
-            let group = option["group"] as? String
-            if group != lastGroup, let group {
-                if !menu.items.isEmpty { menu.addItem(.separator()) }
-                let header = NSMenuItem(title: group, action: nil, keyEquivalent: "")
-                header.isEnabled = false
-                menu.addItem(header)
-            }
-            lastGroup = group
-            let item = NSMenuItem(title: option["label"] as? String ?? "", action: #selector(SelectMenuTarget.choose(_:)), keyEquivalent: "")
-            item.tag = index
-            item.isEnabled = !(option["disabled"] as? Bool ?? false)
-            item.state = index == selected ? .on : .off
-            if group != nil { item.indentationLevel = 1 }
-            menu.addItem(item)
-        }
-        let target = SelectMenuTarget { [weak self] index in
-            self?.evaluate("__cosmosChoose(\(id), \(index))", in: context)
-        }
-        menu.items.forEach { $0.target = target }
-        var at = pageView.convert(pageView.window?.mouseLocationOutsideOfEventStream ?? .zero, from: nil)
-        if fromMain, let x = m["x"] as? Double, let y = m["y"] as? Double { at = CGPoint(x: x * zoom, y: y * zoom) }
-        let current = menu.items.first { $0.state == .on }
-        _ = withExtendedLifetime(target) {
-            menu.popUp(positioning: current, at: at, in: pageView)
-        }
-        // A menu dismissed without a choice leaves the element as it was.
-        evaluate("__cosmosChoose(\(id), -1)", in: context)
     }
 
     /// A frame of the page asked for a permission (see page-bridge.js). The question is about the page's site, as in
@@ -745,13 +702,12 @@ final class ChromiumPage: EnginePage {
         }
     }
 
+    /// The page's own user agent, or (empty) Chromium's again. Chromium's is left alone until a page has its own, so its
+    /// client hints stay.
     private func applyUserAgent() {
-        guard sessionID != nil else { return }
-        if let userAgent {
-            command("Emulation.setUserAgentOverride", ["userAgent": userAgent])
-        } else if let original = browser?.userAgent {
-            command("Emulation.setUserAgentOverride", ["userAgent": original])
-        }
+        guard sessionID != nil, userAgent != nil || overridesUserAgent else { return }
+        overridesUserAgent = userAgent != nil
+        command("Emulation.setUserAgentOverride", ["userAgent": userAgent ?? ""])
     }
 
     func evaluate(_ script: String, in world: ScriptWorld) async -> Any? {
@@ -789,12 +745,9 @@ final class ChromiumPage: EnginePage {
     }
 
     func snapshot(width: CGFloat) async -> NSImage? {
-        var image = pageView.currentImage
-        if image == nil, let r = await request("Page.captureScreenshot", ["format": "jpeg", "quality": 80]),
-           let data = (r["data"] as? String).flatMap({ Data(base64Encoded: $0) }), let source = CGImageSourceCreateWithData(data as CFData, nil) {
-            image = CGImageSourceCreateImageAtIndex(source, 0, nil)
-        }
-        guard let image, image.width > 0 else { return nil }
+        guard let r = await request("Page.captureScreenshot", ["format": "jpeg", "quality": 80]),
+              let data = (r["data"] as? String).flatMap({ Data(base64Encoded: $0) }), let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil), image.width > 0 else { return nil }
         let height = width * CGFloat(image.height) / CGFloat(image.width)
         return NSImage(cgImage: image, size: NSSize(width: width, height: height))
     }
@@ -810,15 +763,11 @@ final class ChromiumPage: EnginePage {
 
     func forceClicked() { delegate?.pageDidForceClick(self) }
 
-    /// Opens Chromium's DevTools for the page, or closes them when they are open.
+    /// Opens Chromium's DevTools for the page, or closes them when they are open. CEF shows them in a window of its own
+    /// (it will not draw them in a view of Cosmos's), which goes when the page does.
     func showInspector() -> Bool {
-        guard targetID != nil else { return false }
-        if let inspector, !inspector.isClosed {
-            if let d = inspector.delegate { d.pageRequestsClose(inspector) } else { inspector.close() }
-            self.inspector = nil
-            return true
-        }
-        Task { await browser?.openInspector(for: self) }
+        guard targetID != nil, let cefBrowser else { return false }
+        if cefBrowser.hasDevTools { cefBrowser.closeDevTools() } else { cefBrowser.showDevTools() }
         return true
     }
 
@@ -831,24 +780,30 @@ final class ChromiumPage: EnginePage {
         return PageUsage(memory: UInt64(max(0, values["JSHeapTotalSize"] ?? 0)), cpuSeconds: values["TaskDuration"] ?? 0)
     }
 
-    func activate() {
-        guard let targetID else { whenReady { [weak self] in self?.activate() }; return }
-        browser?.connection?.post("Target.activateTarget", ["targetId": targetID])
-    }
+    /// Chromium draws pages in views of their own, not in a tab strip of its own: it has no active tab to follow.
+    func activate() {}
 
     func close() {
         guard !isClosed else { return }
         isClosed = true
         onClose?()
-        queued.removeAll()
+        // What waited for the page to start ends now, with nothing (the page never had a session).
+        let waiting = queued
+        queued = []
+        waiting.forEach { $0() }
         pageView.removeFromSuperview()
         for session in frameSessions { browser?.unroute(session) }
         frameSessions = []
-        if let inspector, !inspector.isClosed { if let d = inspector.delegate { d.pageRequestsClose(inspector) } else { inspector.close() } }
         browser?.forget(self)
+        closeBrowser()
     }
 
-    /// The browser lost its process: nothing more will come from this page.
+    func closeBrowser() {
+        cefBrowser?.close()
+        cefBrowser = nil
+    }
+
+    /// The profile closed: nothing more will come from this page.
     func browserDidStop() {
         isClosed = true
         sessionID = nil
@@ -856,12 +811,6 @@ final class ChromiumPage: EnginePage {
         frameSessions = []
         contexts = [:]
         scriptIDs = [:]
+        scriptGeneration = [:]
     }
-}
-
-/// Receives the choice from a `<select>` menu.
-private final class SelectMenuTarget: NSObject {
-    let chosen: (Int) -> Void
-    init(_ chosen: @escaping (Int) -> Void) { self.chosen = chosen }
-    @objc func choose(_ sender: NSMenuItem) { chosen(sender.tag) }
 }

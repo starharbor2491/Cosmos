@@ -8,3 +8,6 @@ __pycache__/
 build/
 Cosmos.app/
 .claude/worktrees/
+
+# CEF, fetched by scripts/fetch-cef.sh
+Vendor/CEF/

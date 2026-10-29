@@ -5,7 +5,7 @@ import CosmosCore
 // engine underneath can change without the sidebar, Command Bar, Boosts or settings knowing. Chromium (CosmosChromium) is
 // the engine today.
 
-/// Where the engine itself is: Chromium has to be downloaded before the first page can show.
+/// Where the engine itself is: Chromium has to start before the first page can show.
 public enum EngineStatus: Equatable, Sendable {
     /// Getting ready: what is happening, and how far along when that is known (0...1).
     case preparing(String, progress: Double?)
@@ -22,20 +22,13 @@ public protocol BrowserEngine: AnyObject {
     var status: EngineStatus { get }
     /// Called on the main actor whenever `status` changes.
     var onStatusChange: (() -> Void)? { get set }
-    /// The version that runs ("159.0.8129.0"), with the build it came from when that is known.
+    /// The version that runs ("156.0.8078.48"), once it runs.
     var versionDescription: String? { get }
-    /// When the engine last looked for a newer version, and what went wrong if it could not.
-    var lastUpdateCheck: Date? { get }
-    var lastUpdateError: String? { get }
-    /// A newer version that is ready and runs from the next launch.
-    var pendingUpdate: String? { get }
-    /// Looks for a newer version now. A new one is used from the next launch.
-    func checkForUpdates() async
     /// The engine side of one browsing profile: its own cookies, storage, extensions and blocking. `directory` nil keeps
     /// nothing once the profile is closed (incognito).
     func makeProfile(id: UUID?, directory: URL?) -> EngineProfile
-    /// Stops every profile (the app is quitting).
-    func shutdown()
+    /// Stops every profile (the app is quitting), then runs `done`, once the engine has written what it had not yet.
+    func shutdown(then done: @escaping () -> Void)
 }
 
 /// Which JavaScript world a script runs in. `.agent` is Cosmos's own: pages cannot see it or call into it, and it is
@@ -101,14 +94,11 @@ public struct NewPageRequest: Equatable, Sendable {
     public var userGesture: Bool
     /// Made by an extension rather than by a page.
     public var fromExtension: Bool
-    /// The engine's developer tools for the opener, to show in a window of their own.
-    public var isDeveloperTools: Bool
-    public init(url: URL?, features: [String] = [], userGesture: Bool = false, fromExtension: Bool = false, isDeveloperTools: Bool = false) {
+    public init(url: URL?, features: [String] = [], userGesture: Bool = false, fromExtension: Bool = false) {
         self.url = url; self.features = features; self.userGesture = userGesture; self.fromExtension = fromExtension
-        self.isDeveloperTools = isDeveloperTools
     }
     /// A page that asked for a window of a given size needs its opener (an OAuth sign-in, a payment sheet).
-    public var isScriptSizedPopup: Bool { !isDeveloperTools && features.contains { $0.hasPrefix("width=") || $0.hasPrefix("height=") } }
+    public var isScriptSizedPopup: Bool { features.contains { $0.hasPrefix("width=") || $0.hasPrefix("height=") } }
 }
 
 @MainActor

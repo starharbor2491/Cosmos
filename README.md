@@ -4,7 +4,7 @@ A space-themed web browser for macOS, made for people leaving Arc. It keeps the 
 
 Arc stops working on 22 December 2026. [`arc-teardown/`](arc-teardown/) is the study of how Arc works that Cosmos was built from.
 
-> **Status.** Cosmos 1.0 and 1.1 were built and checked end to end on WebKit, on one Mac (macOS 27). The move to Chromium that this README describes is checked by the test suite, including tests that drive a real headless Chromium (pages, the page agent, Boosts, blocking, extensions), but it has **not yet been used in the running app**. The 1.1.1 download on the Releases page is the WebKit version. Cosmos is not notarized, has had no users but its author, and has gaps listed under [What is not here](#what-is-not-here). Read that before you trust it with your only browser.
+> **Status.** Cosmos 1.0 and 1.1 were built and checked end to end on WebKit, on one Mac (macOS 27). The move to Chromium that this README describes (Chromium's stable release through CEF, drawn in Cosmos's own windows) is checked by the test suite, including tests that run real Chromium in the test process (pages, popups, the page agent, Boosts, permissions, sign-in, dangerous sites, blocking), but it has **not yet been used in the running app**, and **extensions do not work on it yet** (see [docs/extensions.md](docs/extensions.md)). The 1.1.1 download on the Releases page is the WebKit version. Cosmos is not notarized, has had no users but its author, and has gaps listed under [What is not here](#what-is-not-here). Read that before you trust it with your only browser.
 
 ## What you get
 
@@ -26,7 +26,7 @@ Arc stops working on 22 December 2026. [`arc-teardown/`](arc-teardown/) is the s
 
 ## Install
 
-Cosmos needs macOS 14 or later and the Swift command line tools (`xcode-select --install`). Full Xcode is not needed. On first launch it downloads Chromium (about 185 MB, 380 MB unpacked) from Google's public snapshot builds.
+Cosmos needs macOS 14 or later and the Swift command line tools (`xcode-select --install`). Full Xcode is not needed. The first build downloads CEF, Chromium's stable release packaged to run inside an app (about 135 MB, checked against its SHA-1); Cosmos.app carries it, about 350 MB in all.
 
 ```bash
 git clone <this repository> && cd Cosmos
@@ -64,11 +64,11 @@ Cosmos is a browser, not a clone of everything Arc shipped.
 - **No sync between devices and no account.** Your tabs and settings are a few files on your Mac (listed below), and each profile's cookies and site data are in its Chromium folder next to them.
 - **None of Arc's AI features** (Ask on page, summaries, Tidy Tabs by AI, AI renaming), and no Easels, Notes, Live Folders or calendar and mail previews.
 - **Arc's Boosts cannot be imported.** In the Arc profile used to build this, Boost definitions are not stored on disk (only an image cache), so Cosmos cannot read them. Recreate a Boost in about a minute from Site Controls.
-- **Two of Chrome's own services work differently.** Chromium runs headless underneath, so Cosmos draws what Chrome would show in its own windows: permission prompts, HTTP sign-in, Picture in Picture (a floating window), DevTools (a window of their own), site and extension notifications (posted to macOS by Cosmos) and extensions' side panels; VoiceOver reads pages from a copy of Chromium's accessibility tree that Cosmos keeps beside the page. But **Safe Browsing** needs Google's own keys, so Cosmos warns from public malware and phishing lists instead (Settings ▸ Engine ▸ Warn about dangerous sites): they are fetched twice a day and checked on your Mac, they know fewer sites than Google's service, and they are checked against the addresses of pages and frames only, not downloads. And an extension's **Google sign-in** (`identity.getAuthToken`) has no Google account in the browser to use, so it goes through Google's sign-in page, which some Google services refuse; `launchWebAuthFlow` works as in Chrome.
+- **Two of Chrome's own services work differently.** Chromium draws pages inside Cosmos's windows, without Chrome's window around them, so Cosmos draws what Chrome would show there: permission prompts, HTTP sign-in, a page's dialogs, Picture in Picture (a floating window) and site notifications (posted to macOS by Cosmos); DevTools open in a window of Chromium's own. But **Safe Browsing** needs Google's own keys, so Cosmos warns from public malware and phishing lists instead (Settings ▸ Engine ▸ Warn about dangerous sites): they are fetched twice a day and checked on your Mac, they know fewer sites than Google's service, and they are checked against the addresses of pages and frames only, not downloads. And an extension's **Google sign-in** (`identity.getAuthToken`) has no Google account in the browser to use, so it goes through Google's sign-in page, which some Google services refuse; `launchWebAuthFlow` works as in Chrome.
 - **No page gestures on Chromium yet.** Two-finger swipe back and forward and pinch or smart zoom on a page came with WebKit; on Chromium use ⌘[ and ⌘], and ⌘+ and ⌘−.
 - **Ad blocking is Manifest V3-style.** `declarativeNetRequest` rules cannot do everything uBlock Origin does (no scriptlets, no `:has-text`, no `$redirect`, no `$popup`). About 97% of EasyList and EasyPrivacy's network filters compile. [docs/ad-blocking.md](docs/ad-blocking.md) has the numbers and the gaps. For more, add uBlock Origin Lite as an extension.
 - **Not verified:** anything that needs a person at the trackpad. The sidebar drag gesture, the haptic taps, the two-finger space swipe, Force Touch Peek and how the animations feel are built and unit tested (state machines, payloads, the model operations) but were never exercised on screen, because nothing here records the screen. Also not checked by eye: the exact alignment of the window buttons, JavaScript dialogs, OAuth sign-in popups, the permission and sign-in sheets, the Picture in Picture window, the side panel, the dangerous-site warning, macOS notifications, dropping a file from Finder, VoiceOver itself (the tests read and press the tree VoiceOver gets, with VoiceOver off), and anything on macOS 14 or 15 (all testing was on macOS 27).
-- **Not notarized**, so macOS asks you to confirm the first launch. Updates to Cosmos itself are manual: pull and run the build script again. Chromium updates itself.
+- **Not notarized**, so macOS asks you to confirm the first launch. Updates to Cosmos itself are manual: pull and run the build script again. A newer Chromium comes with a newer Cosmos (the CEF build is pinned in `scripts/fetch-cef.sh`).
 
 ## Where your data lives
 
@@ -87,9 +87,9 @@ Cosmos is a browser, not a clone of everything Arc shipped.
 | `Favicons/` | the logos of sites in your sidebar; ones not renewed for 90 days are deleted |
 | `Backups/` | dated copies of the JSON files, kept automatically; Clear History and removing something from the Archive rewrite the files they change and delete the older copies, which would still list it |
 
-Cookies, local storage and the page cache are kept by Chromium, one folder per profile, in `Engine Profiles/` there, and downloads go to `~/Downloads`. Incognito windows use a throwaway Chromium folder that is deleted when they close. Chromium itself is in `~/Library/Application Support/Cosmos/Chromium/` (the current snapshot and the one before).
+Cookies, local storage and the page cache are kept by Chromium, one folder per profile, in `Engine Profiles/` there, and downloads go to `~/Downloads`. Incognito windows keep nothing on disk: Chromium holds them in memory. Chromium itself is inside Cosmos.app.
 
-Nothing leaves your Mac except what you browse, Chromium snapshots and the daily check for a newer one (from Google's storage), the filter lists and the malware and phishing lists Cosmos downloads (the addresses you visit are checked against them on your Mac, never sent anywhere), your location, only to a site you allowed to have it (from macOS Location Services), the logos of sites that have a tab in your sidebar (fetched from the site itself, asking only for its home page and icon, never the page you were on), search suggestions (switch off in Settings) and Chrome Web Store downloads you ask for. There is no telemetry. Clear History (Settings ▸ Privacy, or Clear… in the Library's History section, which asks first) removes the visited pages (from Cosmos's History and from the history Chromium keeps of its own), what the Command Bar learned from them, the saved site icons, the page the menu bar browser was on and the dated copies of the files those were in (the sidebar's own file and copies still list a page that is open in a tab); closed tabs in the Archive stay until you clear the Archive, and cookies, site data and the page cache are cleared separately (Settings ▸ Privacy ▸ Clear Site Data).
+Nothing leaves your Mac except what you browse, the filter lists and the malware and phishing lists Cosmos downloads (the addresses you visit are checked against them on your Mac, never sent anywhere), your location, only to a site you allowed to have it (from macOS Location Services), the logos of sites that have a tab in your sidebar (fetched from the site itself, asking only for its home page and icon, never the page you were on), search suggestions (switch off in Settings) and Chrome Web Store downloads you ask for. There is no telemetry. Clear History (Settings ▸ Privacy, or Clear… in the Library's History section, which asks first) removes the visited pages (from Cosmos's History and from the history Chromium keeps of its own), what the Command Bar learned from them, the saved site icons, the page the menu bar browser was on and the dated copies of the files those were in (the sidebar's own file and copies still list a page that is open in a tab); closed tabs in the Archive stay until you clear the Archive, and cookies, site data and the page cache are cleared separately (Settings ▸ Privacy ▸ Clear Site Data). In profiles other than the first, Clear Site Data deletes every cookie and the page cache but reaches the stored data only of the sites opened since Cosmos started: a site last opened in an earlier run keeps what it stored (Chromium cannot list them there). Cookies that are only for the session end when Cosmos quits. Chromium's helper processes (pages, graphics, network) run in its sandbox, as in Chrome.
 
 ## For developers
 
@@ -100,7 +100,9 @@ Sources/CosmosCore       model, storage, search ranking (no UI, no engine)
 Sources/CosmosImport     Arc, Chromium, Firefox and Safari importers; extension discovery
 Sources/CosmosBlocking   filter list parser and declarativeNetRequest compiler
 Sources/CosmosEngine     what an engine provides: the protocols the browser talks to
-Sources/CosmosChromium   the engine: regular Chromium, headless, over the DevTools protocol
+Sources/CosmosCEF        Chromium through CEF, inside Cosmos's process (Objective-C++)
+Sources/CosmosChromium   the engine: Chromium's pages in Cosmos's views, driven over the DevTools protocol
+Sources/CosmosHelper     Chromium's other processes (the helper apps inside Cosmos.app)
 Sources/CosmosKit        the browser: AppKit and SwiftUI
 Sources/Cosmos           the app (a few lines)
 Sources/CosmosCLI        cosmos-cli: import and inspect from the terminal
@@ -108,9 +110,9 @@ Sources/CosmosCLI        cosmos-cli: import and inspect from the terminal
 
 ## Credits and licenses
 
-Cosmos is MIT licensed ([LICENSE](LICENSE)). Its own code uses only Apple frameworks; there are no third-party code dependencies.
+Cosmos is MIT licensed ([LICENSE](LICENSE)). Its own code uses only Apple frameworks and CEF.
 
-- **Chromium** (BSD-style license and the licenses of its components, <https://www.chromium.org>) is not included: Cosmos downloads Google's unmodified snapshot builds to your Mac at first launch and runs them as they are.
+- **Chromium** and the **Chromium Embedded Framework** (BSD-style licenses, and the licenses of Chromium's components; <https://www.chromium.org>, <https://bitbucket.org/chromiumembedded/cef>) are in Cosmos.app, as CEF's own unmodified build from <https://cef-builds.spotifycdn.com>, which `scripts/fetch-cef.sh` downloads when Cosmos is built (it is not in the repository). CEF's license and Chromium's credits are in `Cosmos.app/Contents/Resources`.
 
 - The registrable-domain logic uses the **Public Suffix List** (<https://publicsuffix.org>, MPL 2.0), bundled with its comments removed in `Sources/CosmosCore/Resources/public_suffix_rules.txt`.
 - **Filter lists are not included.** Cosmos downloads EasyList and EasyPrivacy (GPLv3+ / CC BY-SA 3.0, easylist.to), the Fanboy cookie list (CC BY 3.0) and, if you turn them on, uBlock Origin's lists (GPLv3) from their publishers. Settings ▸ Blocking shows each list's license.

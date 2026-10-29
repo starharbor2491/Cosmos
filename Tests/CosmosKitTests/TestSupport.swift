@@ -14,12 +14,8 @@ final class FakeEngine: BrowserEngine {
     var status: EngineStatus = .ready(version: "1.0") { didSet { onStatusChange?() } }
     var onStatusChange: (() -> Void)?
     var versionDescription: String? = "1.0"
-    var lastUpdateCheck: Date?
-    var lastUpdateError: String?
-    var pendingUpdate: String?
     private(set) var profiles: [FakeProfile] = []
 
-    func checkForUpdates() async { lastUpdateCheck = Date() }
 
     func makeProfile(id: UUID?, directory: URL?) -> EngineProfile {
         let profile = FakeProfile(id: id, directory: directory)
@@ -27,7 +23,7 @@ final class FakeEngine: BrowserEngine {
         return profile
     }
 
-    func shutdown() { profiles.forEach { $0.close() } }
+    func shutdown(then done: @escaping () -> Void) { profiles.forEach { $0.close() }; done() }
 }
 
 @MainActor
@@ -255,19 +251,24 @@ final class SiteServer: @unchecked Sendable {
         var delay: TimeInterval = 0
         /// "user:password": without them in a Basic `Authorization` header the answer is 401 and a Basic challenge.
         var basicAuth: String? = nil
+        /// More lines for the answer's head ("Set-Cookie: a=b").
+        var headers: [String] = []
     }
 
     private final class Recorder: @unchecked Sendable {
         private let lock = NSLock()
-        private var paths: [String] = []
-        func add(_ path: String) { lock.lock(); paths.append(path); lock.unlock() }
-        var all: [String] { lock.lock(); defer { lock.unlock() }; return paths }
+        private var asked: [(path: String, lines: [String])] = []
+        func add(_ path: String, _ lines: [String]) { lock.lock(); asked.append((path, lines)); lock.unlock() }
+        var all: [String] { lock.lock(); defer { lock.unlock() }; return asked.map(\.path) }
+        func lines(of path: String) -> [[String]] { lock.lock(); defer { lock.unlock() }; return asked.filter { $0.path == path }.map(\.lines) }
     }
 
     private let listener: NWListener
     private let recorder: Recorder
     let port: UInt16
     var requests: [String] { recorder.all }
+    /// The head of each request for `path`, a line each.
+    func requestHeads(of path: String) -> [[String]] { recorder.lines(of: path) }
 
     init(routes: [String: Route]) async throws {
         let recorder = Recorder()
@@ -278,13 +279,14 @@ final class SiteServer: @unchecked Sendable {
                 let lines = data.map { String(decoding: $0, as: UTF8.self).components(separatedBy: "\r\n") } ?? []
                 let path = lines.first?.split(separator: " ").dropFirst().first.map(String.init) ?? "/"
                 // A connection that sends nothing (Chromium connects ahead of a page it may load) asks for nothing.
-                if !lines.isEmpty { recorder.add(path) }
+                if !lines.isEmpty { recorder.add(path, lines) }
                 let route = routes[path.components(separatedBy: "?").first ?? path]
                 let credentials = route?.basicAuth.map { "authorization: basic " + Data($0.utf8).base64EncodedString().lowercased() }
                 let refused = credentials.map { c in !lines.contains { $0.lowercased() == c } } ?? false
                 let body = refused ? Data("<body>sign in</body>".utf8) : route?.body ?? Data()
                 let status = route == nil ? "404 Not Found" : refused ? "401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"Cosmos test\"" : "200 OK"
-                let head = "HTTP/1.1 \(status)\r\nContent-Type: \(refused ? "text/html" : route?.type ?? "text/plain")\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
+                let extra = (route?.headers ?? []).map { $0 + "\r\n" }.joined()
+                let head = "HTTP/1.1 \(status)\r\nContent-Type: \(refused ? "text/html" : route?.type ?? "text/plain")\r\nContent-Length: \(body.count)\r\n\(extra)Connection: close\r\n\r\n"
                 let send = { connection.send(content: Data(head.utf8) + body, completion: .contentProcessed { _ in connection.cancel() }) }
                 if let delay = route?.delay, delay > 0 { DispatchQueue.global().asyncAfter(deadline: .now() + delay, execute: send) } else { send() }
             }

@@ -1,15 +1,17 @@
 # How Cosmos is put together
 
-Cosmos is a Swift package of six libraries and two executables. Each layer imports only the ones above it.
+Cosmos is a Swift package of seven libraries and three executables. Each layer imports only the ones above it.
 
 ```
 CosmosCore      the model, storage and search ranking. Foundation and SQLite only: no UI, no engine.
 CosmosImport    reads Arc, Chromium, Firefox and Safari data; finds extensions in other browsers
 CosmosBlocking  filter list parser and compiler to Chromium declarativeNetRequest rules
 CosmosEngine    the protocols a web engine implements for Cosmos (BrowserEngine, EngineProfile, EnginePage, EngineExtensions)
-CosmosChromium  the engine Cosmos runs: regular Chromium, headless, driven over the DevTools protocol
+CosmosCEF       Chromium through CEF, inside Cosmos's process (Objective-C++)
+CosmosChromium  the engine Cosmos runs: Chromium's stable release, drawn in Cosmos's windows, driven over the DevTools protocol
 CosmosKit       the browser: AppKit and SwiftUI, talking to the engine only through CosmosEngine
 Cosmos          the app: three lines that call CosmosKit
+CosmosHelper    Chromium's other processes (GPU, renderers, plug-ins), as the helper apps inside Cosmos.app
 cosmos-cli      import and inspect from the terminal
 ```
 
@@ -46,25 +48,27 @@ CosmosKit imports `CosmosEngine`, never `CosmosChromium`; only `AppDelegate` nam
 
 ## The Chromium engine (CosmosChromium)
 
-Cosmos runs regular, unmodified Chromium: no fork, no patches, no CEF or Electron.
+Cosmos runs Chromium's stable release through CEF, the Chromium Embedded Framework: no fork and no patches. [cef-engine.md](cef-engine.md) records why and how.
 
-- **One process per profile.** `ChromiumProfile` starts Chromium with `--headless --remote-debugging-pipe --user-data-dir=<the profile's folder>`: no window, no Dock icon, and no debugging port that anything else on the Mac could reach. Either switch would make `navigator.webdriver` true, which sites such as Google's sign-in refuse, so Chromium also gets `--disable-blink-features=AutomationControlled`. Cosmos talks to it over two pipes (descriptors 3 and 4) with NUL-terminated DevTools protocol messages (`CDPConnection`). Chromium's crash folder is moved into the profile too (`BREAKPAD_DUMP_LOCATION`), so nothing is written to `~/Library/Application Support/Chromium`.
-- **Pages are tabs.** Each `ChromiumPage` is a page target. Cosmos attaches to every target before it runs (Chromium waits for it), so the page agent and Boosts are in place for the first document. Pages a site or an extension opens arrive the same way and become Cosmos tabs or popups.
-- **Cosmos draws the pages.** Chromium renders offscreen and streams frames (`Page.startScreencast`); `ChromiumPageView` puts the newest on its layer and turns AppKit mouse, scroll and key events into `Input.dispatch*` events (`KeyMapping`). Frames come at device-independent size, so the bridge extension zooms each page by the screen's scale to keep text sharp.
-- **Settings are folded in.** Cosmos's Settings are the only settings. Before Chromium starts, `ChromiumPreferences` writes them into `Default/Preferences` and `Local State`, with the same keys Chromium's own Settings page writes: fonts and sizes, default zoom, cookies, JavaScript, images, pop-ups, sound, site permission defaults, Do Not Track, preloading, HTTPS-first, WebRTC, languages, secure DNS, hardware acceleration. Chromium's password and autofill prompts are off (they have nowhere to show). They are in Settings ▸ Engine; after a change there, Restart Engine starts every profile's Chromium again with the new settings, and open tabs reload.
-- **Updates.** `ChromiumInstall` downloads Chromium from Google's public `chromium-browser-snapshots` bucket (`Mac_Arm` or `Mac`), checks its MD5 against the bucket's record, unpacks it under `~/Library/Application Support/Cosmos/Chromium/` and starts it headless once to make sure it runs. It looks for a newer snapshot once a day; a new one is used from the next launch, the one before is kept, and a snapshot that will not start is marked bad and never tried again while the previous one comes back. Settings ▸ Engine shows the version and has Check Now.
-- **What Chrome draws in its own windows, Cosmos draws.** Headless Chromium has no prompts, dialogs or windows of its own, and turns down what would need one, so each piece goes through Cosmos:
-  - *Permissions.* `page-bridge.js`, in the page's own world, wraps `getUserMedia`, geolocation, `Notification.requestPermission` and the rest, and asks Cosmos (through the agent's world) before the real call. Cosmos asks the user or answers from what they decided, sets Chromium's own permission for that origin (`Browser.setPermission`), then lets the call go on. Remembered decisions are set before a page of that site loads. The location comes from macOS (`LocationSource`) through `Emulation.setGeolocationOverride`, so Chromium never asks macOS itself.
+- **One Chromium, inside Cosmos.** `ChromiumRuntime` starts CEF once, in Cosmos's own process, with an external message pump on the main run loop; the renderers, the GPU process and the rest run as the helper apps in `Cosmos.app/Contents/Frameworks`. Cosmos talks to it over the DevTools protocol on a pipe in its own process (descriptors 3 and 4, set up first thing in `main`), with NUL-terminated messages (`CDPConnection`): there is no debugging port anything else on the Mac could reach. The pipe would make `navigator.webdriver` true, which sites such as Google's sign-in refuse, so Chromium also gets `--disable-blink-features=AutomationControlled`.
+- **Profiles are CEF request contexts**, each with its own folder in the data folder's `Engine Profiles/`, or nothing on disk for a private window. The first profile is CEF's global context, the only one extensions run in.
+- **Pages are CEF browsers.** Each `ChromiumPage` is a CEF browser drawn in a view of Cosmos's (`ChromiumPageView`), and is a page target over the pipe: the browser asks its own DevTools channel which target it is, and Cosmos attaches to it then. A page starts empty and loads its address once the page agent and Boosts are in, so they are there for the first document. Pages a site opens are made by CEF out of sight and move into the page Cosmos makes a tab or popup of; their first document runs before Cosmos is attached ([cef-engine.md](cef-engine.md) says why).
+- **Chromium draws the pages** and takes the mouse, keyboard, input methods, drags, the pointer's shape, `<select>` menus and VoiceOver itself. Cosmos's page view only hears of right clicks and Force Clicks on their way in.
+- **Settings are folded in.** Cosmos's Settings are the only settings. `ChromiumPreferences` writes them into a profile's `Preferences` before it opens and the browser's `Local State` before Chromium starts, with the same keys Chromium's own Settings page writes: fonts and sizes, cookies, JavaScript, images, pop-ups, sound, site permission defaults, Do Not Track, preloading, HTTPS-first, WebRTC, languages, secure DNS, hardware acceleration. Chromium's own password and autofill prompts are off. They are in Settings ▸ Engine; after a change there, Restart Engine sets them into the running Chromium and reloads open tabs (turning the graphics processor off waits for the next launch).
+- **Updates** come with Cosmos: `scripts/fetch-cef.sh` pins one CEF build, and a newer Chromium is a newer Cosmos.
+- **What Chrome draws in its own windows, Cosmos draws.** A CEF browser in a view of Cosmos's has no prompts, dialogs or windows of Chrome's, and turns down what would need one, so each piece goes through Cosmos:
+  - *Permissions.* `page-bridge.js`, in the page's own world, wraps `getUserMedia`, geolocation, `Notification.requestPermission` and the rest, and asks Cosmos (through the agent's world) before the real call. Cosmos asks the user or answers from what they decided, sets the profile's own permission for that origin (a CEF content setting), then lets the call go on. CEF gives a page the camera or microphone only when its site has that permission. Remembered decisions are set before a page of that site loads. The location comes from macOS (`LocationSource`) through `Emulation.setGeolocationOverride`, so Chromium never asks macOS itself.
   - *HTTP sign-in.* Documents are held at the request stage (`Fetch.enable`, documents only) and go on at once; a challenge (`Fetch.authRequired`) comes to Cosmos's sheet and its answer goes back.
-  - *Dangerous sites.* The same held request is first checked against the malware and phishing lists (`CosmosBlocking/DangerousSites`); a listed page fails before it is asked for and shows Cosmos's warning, with Go Back and Visit Anyway; a listed frame is left out.
-  - *DevTools* are Chromium's own front end (`Target.openDevTools`), a page Cosmos attaches to and shows in a window of its own.
-  - *Picture in Picture* is a floating Cosmos panel showing the screencast cropped to the video, which the agent keeps measuring; the page's PiP API and events behave as in Chrome.
+  - *Dangerous sites.* CEF asks before every navigation of every page and frame (`OnBeforeBrowse`), a popup's first page included; Cosmos checks the address against the malware and phishing lists (`CosmosBlocking/DangerousSites`). A listed page is stopped before it is asked for and shows Cosmos's warning, with Go Back and Visit Anyway; a listed frame is left out.
+  - *Dialogs.* A page's `alert`, `confirm`, `prompt` and leave-the-page question come to Cosmos's sheet through CEF.
+  - *DevTools* are Chromium's own, in a window CEF makes (it will not draw them in a view of Cosmos's).
+  - *Picture in Picture* is a floating Cosmos panel showing the page's frames (`Page.startScreencast`, only while it is up) cropped to the video, which the agent keeps measuring; the page's PiP API and events behave as in Chrome.
   - *Notifications* from sites and extensions are posted to macOS as Cosmos's (`Notifier`); clicks, buttons and closing go back to the page or worker. The page's world reports a notification with a window message, which any script can post, so the agent's world passes one on only from its own frame, while the site has permission, and under that frame's own site.
   - *Frames from other sites*, which Chromium runs in processes of their own, are attached as they appear (`Target.setAutoAttach` on each page): they get the agent, Boosts, permissions and sign-in too. Chromium holds a page's workers at their start the same way, so they are attached as well, only to be let go.
-  - *Drops* from other apps reach the page as Chromium drag events (`Input.dispatchDragEvent`); a sidebar tab dragged over the page does not.
-  - *VoiceOver.* Once an assistive app looks at a page, `ChromiumAccessibility` reads Chromium's accessibility tree of it and of each frame (`Accessibility.getFullAXTree`), lays it out from a DOM snapshot, and hands it to AppKit as elements under the page view, kept from one reading to the next. It is read again when the page changes, scrolls, or VoiceOver looks a second later. Press scrolls the thing into sight and clicks it; focusing a field puts the page's cursor there.
+  - *Downloads* go through CEF's download handler into the profile's `Cosmos Downloads` folder, and Cosmos moves each where it belongs.
+  - *The context menu* is Cosmos's: CEF's is left empty.
 - **Extensions** run in Chromium with its own APIs; `ChromiumExtensionHost` and the shim mirror what Chrome would draw for them. See [extensions.md](extensions.md).
-- **Blocking** is an extension Cosmos writes into each profile from the compiled lists. See [ad-blocking.md](ad-blocking.md).
+- **Blocking** is an extension Cosmos writes from the compiled lists, in the default profile. See [ad-blocking.md](ad-blocking.md).
 
 ## The browser (CosmosKit)
 

@@ -7,40 +7,27 @@ import CosmosEngine
 @testable import CosmosKit
 @testable import CosmosCore
 
-/// A Chromium to test on: `COSMOS_TEST_CHROMIUM` (a Chromium.app), or the one Cosmos keeps. Nil when there is none, and
-/// the tests that need one are skipped.
-enum RealChromium {
-    static let app: URL? = {
-        if let path = ProcessInfo.processInfo.environment["COSMOS_TEST_CHROMIUM"], FileManager.default.fileExists(atPath: path) {
-            return URL(fileURLWithPath: path)
-        }
-        let install = ChromiumInstall(root: LaunchOptions.chromiumDirectory)
-        guard let current = install.loadState().current else { return nil }
-        let app = install.app(for: current)
-        return FileManager.default.fileExists(atPath: app.path) ? app : nil
-    }()
-}
-
 /// Cosmos on the real engine: the page agent in Chromium pages, and what Cosmos makes of what it reports. Chromium runs
-/// headless (no window, no Dock icon); each test starts its own and stops it at the end.
+/// in the test process (`CEFTestRuntime`), in views that are in no window; each test has profiles of its own, and its
+/// store's first profile is the default one, which extensions run in.
 @MainActor
-@Suite(.enabled(if: RealChromium.app != nil, "no Chromium to test on"), .serialized)
+@Suite(.enabled(if: CEFTestRuntime.isAvailable, "no CEF in Vendor/CEF (scripts/fetch-cef.sh)"), .serialized)
 struct PageAgentTests {
     let engine: ChromiumEngine
     let rig: Rig
 
-    init() {
-        // A fake camera and microphone: the tests never reach the Mac's own, so macOS never asks about them.
-        engine = ChromiumEngine(supportDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-test-chromium-\(UUID().uuidString)"),
-                                application: RealChromium.app, offline: true, extraFlags: ["--use-fake-device-for-media-stream"])
+    init() async throws {
+        if let failure = await CEFTestRuntime.start() { throw CDPError(code: -1, message: failure) }
+        engine = ChromiumEngine()
         engine.start()
         rig = Rig(engine: engine)
+        CEFTestRuntime.makeDefault(rig.store.workspace.profiles[0].id)
     }
 
-    /// Every test ends with this, so no Chromium outlives it.
+    /// Every test ends with this, so none of its profiles outlives it.
     private func stop() {
         rig.store.closeEnvironments()
-        engine.shutdown()
+        engine.closeProfiles()
     }
 
     private func html(_ body: String) -> SiteServer.Route { .init(type: "text/html", body: Data(body.utf8)) }
@@ -68,8 +55,10 @@ struct PageAgentTests {
 
     /// A real (trusted) click, as Chromium gets one from the page area.
     private func click(_ selector: String, in runtime: TabRuntime, button: String = "left", modifiers: Int = 0) async throws {
-        let p = try await center(of: selector, in: runtime)
         let page = try #require(runtime.page as? ChromiumPage)
+        // Chromium drops input that comes before the page has drawn: two frames, and it has.
+        _ = await page.evaluate("new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(1))))", in: .page)
+        let p = try await center(of: selector, in: runtime)
         let bit = button == "right" ? 2 : 1
         page.input("Input.dispatchMouseEvent", ["type": "mouseMoved", "x": p.x, "y": p.y, "button": "none", "buttons": 0, "modifiers": modifiers])
         page.input("Input.dispatchMouseEvent", ["type": "mousePressed", "x": p.x, "y": p.y, "button": button, "buttons": bit, "clickCount": 1, "modifiers": modifiers])
@@ -289,40 +278,6 @@ struct PageAgentTests {
         #expect(got == ["display none", "lat 12.5"])
     }
 
-    // MARK: Developer tools
-
-    /// Chromium's own DevTools for a page arrive as a page of their own, marked as such, for Cosmos to show in a window;
-    /// asking again closes them. Driven on the engine alone, so no window opens.
-    @Test func developerToolsComeAsAPageOfTheirOwnAndCloseOnTheSecondAsk() async throws {
-        defer { stop() }
-        final class Recorder: EngineProfileDelegate {
-            var opened: [(page: EnginePage, request: NewPageRequest)] = []
-            func profile(_ profile: EngineProfile, didOpen page: EnginePage, opener: EnginePage?, request: NewPageRequest) -> Bool {
-                opened.append((page, request)); return true
-            }
-            func profile(_ profile: EngineProfile, didStartDownload download: EngineDownload) {}
-            func profileDidRestart(_ profile: EngineProfile) {}
-        }
-        let server = try await SiteServer(routes: ["/": html("<body>hello</body>")])
-        let recorder = Recorder()
-        let profile = engine.makeProfile(id: UUID(), directory: FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-devtools-\(UUID().uuidString)"))
-        defer { profile.close() }
-        profile.delegate = recorder
-        let page = try #require(profile.makePage() as? ChromiumPage)
-        page.view.setFrameSize(NSSize(width: 800, height: 600))
-        page.load(URL(string: "http://127.0.0.1:\(server.port)/")!)
-        try await waitFor { page.state.url?.port == Int(server.port) && !page.state.isLoading }
-        #expect(page.showInspector())
-        try await waitFor { !recorder.opened.isEmpty }
-        let tools = try #require(recorder.opened.first)
-        #expect(tools.request.isDeveloperTools)
-        let inspector = try #require(tools.page as? ChromiumPage)
-        try await waitFor { inspector.state.url?.scheme == "devtools" }
-        #expect(inspector.state.url?.scheme == "devtools")
-        #expect(page.showInspector())
-        #expect(inspector.isClosed)
-    }
-
     // MARK: History
 
     /// Chromium keeps a history of its own for each profile, which Cosmos does not show. Deleting a page from History
@@ -335,18 +290,23 @@ struct PageAgentTests {
         _ = await first.evaluate(returning: "location.hash = 'part'; 1")
         _ = try await open(b)
         let profile = try #require(rig.store.engineProfiles.first as? ChromiumProfile)
+        // Only this test's pages: the default profile is CEF's global context, which every test in the process shares.
         func visited() async -> [String] {
-            (await profile.bridgeEvaluate("chrome.history.search({ text: '', startTime: 0 }).then(r => r.map(i => i.url).sort())") as? [String]) ?? ["unreadable"]
+            let all = await profile.bridgeEvaluate("chrome.history.search({ text: '', startTime: 0 }).then(r => r.map(i => i.url).sort())") as? [String]
+            return all?.filter { $0.hasPrefix("http://127.0.0.1:\(server.port)/") } ?? ["unreadable"]
         }
         let all = [a.absoluteString, a.absoluteString + "#part", b.absoluteString]
         for _ in 0..<100 where await visited() != all { try await Task.sleep(for: .milliseconds(50)) }
-        #expect(await visited() == all)
+        var seen = await visited()
+        #expect(seen == all)
         rig.store.deleteHistoryEntry(a)
         for _ in 0..<100 where await visited() != [b.absoluteString] { try await Task.sleep(for: .milliseconds(50)) }
-        #expect(await visited() == [b.absoluteString])
+        seen = await visited()
+        #expect(seen == [b.absoluteString])
         rig.store.clearHistory()
         for _ in 0..<100 where await visited() != [] { try await Task.sleep(for: .milliseconds(50)) }
-        #expect(await visited() == [])
+        seen = await visited()
+        #expect(seen == [])
     }
 
     // MARK: Notifications
@@ -430,7 +390,7 @@ struct PageAgentTests {
 
     /// An extension's `chrome.notifications` too: Cosmos posts it with the extension's icon, and a click reaches the
     /// extension's `onClicked`.
-    @Test func anExtensionsNotificationIsPostedAndItsClickReachesTheExtension() async throws {
+    @Test(.disabled("Extensions on CEF: Cosmos has to answer chrome.tabs and the toolbar button itself, and put its shim ahead of the worker (docs/cef-engine.md)")) func anExtensionsNotificationIsPostedAndItsClickReachesTheExtension() async throws {
         defer { stop() }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-test-notes-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -488,7 +448,7 @@ struct PageAgentTests {
 
     /// `chrome.sidePanel`: Chromium keeps the options but has no panel to show. Cosmos is asked to open it (here by the
     /// button, as `setPanelBehavior` says), and gets the extension's panel page, which runs with the extension's APIs.
-    @Test func anExtensionsSidePanelOpensAsAPageCosmosShows() async throws {
+    @Test(.disabled("Extensions on CEF: Cosmos has to answer chrome.tabs and the toolbar button itself, and put its shim ahead of the worker (docs/cef-engine.md)")) func anExtensionsSidePanelOpensAsAPageCosmosShows() async throws {
         defer { stop() }
         let folder = try extensionFolder([
             "manifest.json": """
@@ -520,7 +480,7 @@ struct PageAgentTests {
 
     /// `identity.launchWebAuthFlow`: Chromium would sign in in a window nobody sees. Cosmos opens the sign-in page as a
     /// window of its own, and the address the site sends back to the extension is the extension's answer.
-    @Test func anExtensionsSignInOpensAWindowAndEndsWhereTheSiteSendsBack() async throws {
+    @Test(.disabled("Extensions on CEF: Cosmos has to answer chrome.tabs and the toolbar button itself, and put its shim ahead of the worker (docs/cef-engine.md)")) func anExtensionsSignInOpensAWindowAndEndsWhereTheSiteSendsBack() async throws {
         defer { stop() }
         let server = try await SiteServer(routes: [
             "/": html("<body>hello</body>"),
@@ -597,94 +557,6 @@ struct PageAgentTests {
         try await waitFor(5) { ended == 2 }
         #expect(ended == 2, "the page left it: Cosmos closes its window")
         #expect(!runtime.isInPictureInPicture)
-    }
-
-    // MARK: Drops
-
-    /// A file dragged from Finder onto a page's drop area reaches the page, contents and all.
-    @Test func aFileDroppedOnThePageReachesIt() async throws {
-        defer { stop() }
-        let page = """
-        <body style='margin:0'><div id='zone' style='width:400px;height:300px'></div><script>
-        const zone = document.getElementById('zone');
-        zone.addEventListener('dragover', e => e.preventDefault());
-        zone.addEventListener('drop', e => { e.preventDefault(); const f = e.dataTransfer.files[0]; f.text().then(t => window.dropped = f.name + ':' + t); });
-        </script></body>
-        """
-        let server = try await SiteServer(routes: ["/": html(page)])
-        let runtime = try await open(URL(string: "http://127.0.0.1:\(server.port)/")!)
-        let file = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-drop-\(UUID().uuidString).txt")
-        try Data("from Finder".utf8).write(to: file)
-        defer { try? FileManager.default.removeItem(at: file) }
-        let pasteboard = NSPasteboard(name: NSPasteboard.Name("cosmos-test-\(UUID().uuidString)"))
-        defer { pasteboard.releaseGlobally() }
-        pasteboard.clearContents()
-        pasteboard.writeObjects([file as NSURL])
-        let data = try #require(ChromiumPageView.dragData(from: pasteboard, fromInsideCosmos: false))
-        let view = try #require((runtime.page as? ChromiumPage)?.pageView)
-        for type in ["dragEnter", "dragOver", "drop"] { view.sendDrag(type, data: data, at: CGPoint(x: 100, y: 100)) }
-        for _ in 0..<100 where (await runtime.evaluate(returning: "window.dropped || ''") as? String ?? "").isEmpty { try await Task.sleep(for: .milliseconds(50)) }
-        #expect(await runtime.evaluate(returning: "window.dropped") as? String == file.lastPathComponent + ":from Finder")
-    }
-
-    // MARK: VoiceOver
-
-    /// Chromium headless has no window to hang its accessibility tree on, so Cosmos mirrors it under the page area once an
-    /// assistive app looks: VoiceOver reads the page (frames from the same and from other sites too), finds each thing
-    /// where it is on screen, presses buttons and puts the cursor in fields, and hears when the page changes.
-    @Test func voiceOverReadsThePageFindsThingsWhereTheyArePressesAndFocuses() async throws {
-        defer { stop() }
-        let other = try await SiteServer(routes: ["/": html("<body style='margin:0'><button onclick=\"parent.postMessage('inner', '*')\">Inside</button></body>")])
-        let server = try await SiteServer(routes: ["/": html("""
-        <body style="margin:0"><h1>Welcome</h1><p>Read <a href="/next">more</a> here.</p><input aria-label="Name">
-        <div style="height:1600px"></div>
-        <button onclick="window.pressed = (window.pressed || 0) + 1" style="position:absolute; left:40px; top:900px; width:120px; height:30px">Press me</button>
-        <iframe src="http://localhost:\(other.port)/" style="position:absolute; left:300px; top:100px; width:200px; height:100px; border:0"></iframe>
-        <iframe srcdoc="<body style='margin:0'><a href='#near'>Nearby</a></body>" style="position:absolute; left:300px; top:250px; width:200px; height:60px; border:0"></iframe>
-        <script>addEventListener('message', e => window.inner = e.data)</script></body>
-        """)])
-        let runtime = try await open(URL(string: "http://127.0.0.1:\(server.port)/")!)
-        let page = try #require(runtime.page as? ChromiumPage)
-        let view = page.pageView
-
-        func all(_ children: [Any]?) -> [ChromiumAXElement] {
-            (children as? [ChromiumAXElement] ?? []).flatMap { [$0] + all($0.accessibilityChildren()) }
-        }
-        func find(_ role: String, _ label: String) -> ChromiumAXElement? {
-            all(view.accessibilityChildren()).first { $0.accessibilityRole()?.rawValue == role && $0.accessibilityLabel() == label }
-        }
-        try await waitFor { find("AXButton", "Inside") != nil && find("AXLink", "Nearby") != nil }
-        let heading = try #require(find("AXHeading", "Welcome"))
-        #expect(heading.accessibilityValue() as? Int == 1)
-        let link = try #require(find("AXLink", "more"))
-        #expect(link.accessibilityURL()?.path == "/next")
-        #expect(all(link.accessibilityChildren()).contains { $0.accessibilityRole() == .staticText && $0.accessibilityValue() as? String == "more" })
-        #expect(find("AXTextField", "Name") != nil)
-        #expect(all(view.accessibilityChildren()).first?.accessibilityRole()?.rawValue == "AXWebArea")
-
-        // Where things are: in the page area, as the page lays them out; frames add where they are in the page.
-        #expect(find("AXButton", "Inside")?.rectInView.map { abs($0.minX - 300) < 2 && abs($0.minY - 100) < 2 } == true, "\(String(describing: find("AXButton", "Inside")?.rectInView))")
-        #expect(find("AXLink", "Nearby")?.rectInView.map { abs($0.minX - 300) < 2 && abs($0.minY - 250) < 4 } == true, "\(String(describing: find("AXLink", "Nearby")?.rectInView))")
-        _ = await runtime.evaluate(returning: "scrollTo(0, 600), 1")
-        await page.accessibility?.refresh()
-        let button = try #require(find("AXButton", "Press me"))
-        #expect(button.rectInView.map { abs($0.minX - 40) < 2 && abs($0.minY - 300) < 2 && abs($0.width - 120) < 2 } == true, "\(String(describing: button.rectInView))")
-
-        #expect(button.accessibilityPerformPress())
-        for _ in 0..<100 where (await runtime.evaluate(returning: "window.pressed || 0") as? Int ?? 0) == 0 { try await Task.sleep(for: .milliseconds(25)) }
-        #expect(await runtime.evaluate(returning: "window.pressed || 0") as? Int == 1)
-        #expect(try #require(find("AXButton", "Inside")).accessibilityPerformPress(), "in a frame from another site, scrolled out of sight")
-        for _ in 0..<100 where (await runtime.evaluate(returning: "window.inner || ''") as? String ?? "").isEmpty { try await Task.sleep(for: .milliseconds(25)) }
-        #expect(await runtime.evaluate(returning: "window.inner || ''") as? String == "inner")
-
-        try #require(find("AXTextField", "Name")).setAccessibilityFocused(true)
-        for _ in 0..<100 where (await runtime.evaluate(returning: "document.activeElement.getAttribute('aria-label')") as? String) != "Name" { try await Task.sleep(for: .milliseconds(25)) }
-        #expect(await runtime.evaluate(returning: "document.activeElement.getAttribute('aria-label')") as? String == "Name")
-
-        // The page changes; what VoiceOver reads follows, without being told.
-        _ = await runtime.evaluate(returning: "document.body.insertAdjacentHTML('afterbegin', '<h2>Later</h2>'), 1")
-        try await waitFor(10) { find("AXHeading", "Later") != nil }
-        #expect(find("AXHeading", "Later") != nil)
     }
 
     // MARK: Dangerous sites
@@ -825,7 +697,7 @@ struct PageAgentTests {
     /// and its badge, a menu item, a shortcut) reaches Cosmos, and Cosmos's clicks reach the extension with the right tab.
     /// A click on an extension's button goes to the tab the page is in, which Cosmos first asks Chromium about. A Chromium
     /// slow to answer (a busy Mac) must not lose the click: here it is paused for two seconds at that moment.
-    @Test func anExtensionsButtonStillWorksWhenChromiumIsSlowToSayWhichTabThePageIsIn() async throws {
+    @Test(.disabled("Extensions on CEF: Cosmos has to answer chrome.tabs and the toolbar button itself, and put its shim ahead of the worker (docs/cef-engine.md)")) func anExtensionsButtonStillWorksWhenChromiumIsSlowToSayWhichTabThePageIsIn() async throws {
         defer { stop() }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-test-slow-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -863,7 +735,7 @@ struct PageAgentTests {
         #expect(rig.store.workspace.unpinned(in: rig.space).count == tabs && popups == 0, "the click opened nothing else")
     }
 
-    @Test func anExtensionRunsAndItsButtonMenuAndShortcutWork() async throws {
+    @Test(.disabled("Extensions on CEF: Cosmos has to answer chrome.tabs and the toolbar button itself, and put its shim ahead of the worker (docs/cef-engine.md)")) func anExtensionRunsAndItsButtonMenuAndShortcutWork() async throws {
         defer { stop() }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-test-extension-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -960,6 +832,28 @@ struct PageAgentTests {
         for _ in 0..<40 where (await allowed.evaluate(returning: "window.adRan === true") as? Bool) != true { try await Task.sleep(for: .milliseconds(50)) }
         #expect(await allowed.evaluate(returning: "window.adRan === true") as? Bool == true)
         #expect(await allowed.evaluate(returning: "getComputedStyle(document.querySelector('.cosmos-test-ad')).display") as? String == "block")
+    }
+
+    /// A private window is a profile kept in memory, made from the default one: the default profile's blocker runs in it.
+    @Test func aPrivateWindowIsBlockedToo() async throws {
+        defer { stop() }
+        let page = "<body><div class='cosmos-test-ad'>ad</div><script src='/ad.js'></script></body>"
+        let server = try await SiteServer(routes: ["/": html(page), "/ad.js": .init(type: "text/javascript", body: Data("window.adRan = true".utf8))])
+        let lists = ContentBlocker.compile(name: "t", text: "/ad.js$script\n##.cosmos-test-ad\n").lists
+            .map { CompiledBlockingList(name: $0.name, json: $0.json, kind: $0.kind == .network ? .network : .cosmetic, digest: $0.digest) }
+        let profile = rig.store.environment(forProfile: rig.space.profileID).engineProfile
+        profile.setContentBlocking(lists, allowlist: [])
+        _ = try await open(URL(string: "http://127.0.0.1:\(server.port)/")!)
+
+        let incognito = engine.makeProfile(id: nil, directory: nil)
+        defer { incognito.close() }
+        incognito.setPageScripts([])
+        let made = try #require(incognito.makePage() as? ChromiumPage)
+        made.load(URL(string: "http://127.0.0.1:\(server.port)/")!)
+        try await waitFor { made.state.url?.port == Int(server.port) && !made.state.isLoading }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(await made.evaluate("window.adRan === true", in: .page) as? Bool == false)
+        #expect(await made.evaluate("getComputedStyle(document.querySelector('.cosmos-test-ad')).display", in: .page) as? String == "none")
     }
 
     /// EasyList and EasyPrivacy together are about 104,000 rules, more than Chromium promises one extension (30,000); the

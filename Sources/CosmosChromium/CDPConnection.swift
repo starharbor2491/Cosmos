@@ -43,7 +43,7 @@ public final class CDPConnection: @unchecked Sendable {
     private let writer: FileHandle
     private let lock = NSLock()
     private var nextID = 0
-    private var waiting: [Int: CheckedContinuation<[String: Any], Error>] = [:]
+    private var waiting: [Int: (Result<[String: Any], Error>) -> Void] = [:]
     private var isClosed = false
     private let writeQueue = DispatchQueue(label: "cosmos.cdp.write")
 
@@ -81,12 +81,12 @@ public final class CDPConnection: @unchecked Sendable {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
         if let id = object["id"] as? Int {
             lock.lock()
-            let continuation = waiting.removeValue(forKey: id)
+            let answer = waiting.removeValue(forKey: id)
             lock.unlock()
             if let error = object["error"] as? [String: Any] {
-                continuation?.resume(throwing: CDPError(code: error["code"] as? Int ?? 0, message: error["message"] as? String ?? ""))
+                answer?(.failure(CDPError(code: error["code"] as? Int ?? 0, message: error["message"] as? String ?? "")))
             } else {
-                continuation?.resume(returning: object["result"] as? [String: Any] ?? [:])
+                answer?(.success(object["result"] as? [String: Any] ?? [:]))
             }
         } else if let method = object["method"] as? String {
             let event = CDPEvent(method: method, params: object["params"] as? [String: Any] ?? [:], sessionID: object["sessionId"] as? String)
@@ -100,19 +100,34 @@ public final class CDPConnection: @unchecked Sendable {
     @discardableResult
     public func send(_ method: String, _ params: [String: Any] = [:], session: String? = nil) async throws -> [String: Any] {
         try await withCheckedThrowingContinuation { continuation in
-            lock.lock()
-            guard !isClosed else { lock.unlock(); continuation.resume(throwing: CDPError.closed); return }
-            nextID += 1
-            let id = nextID
-            waiting[id] = continuation
-            lock.unlock()
-            guard let data = CDPFraming.encode(id: id, method: method, params: params, sessionID: session) else {
-                lock.lock(); let c = waiting.removeValue(forKey: id); lock.unlock()
-                c?.resume(throwing: CDPError(code: -2, message: "Could not encode \(method)"))
-                return
-            }
-            write(data)
+            enqueue(method, params, session) { continuation.resume(with: $0) }
         }
+    }
+
+    /// Sends a command now, in order with the calls around it, and hands its answer (nil when it failed) to `answer` on
+    /// the main actor: for a command that has to go out before others that do not wait for it.
+    public func send(_ method: String, _ params: [String: Any] = [:], session: String? = nil,
+                     answer: @escaping @MainActor @Sendable ([String: Any]?) -> Void) {
+        enqueue(method, params, session) { result in
+            let value = try? result.get()
+            nonisolated(unsafe) let unsafeValue = value
+            DispatchQueue.main.async { MainActor.assumeIsolated { answer(unsafeValue) } }
+        }
+    }
+
+    private func enqueue(_ method: String, _ params: [String: Any], _ session: String?, _ answer: @escaping (Result<[String: Any], Error>) -> Void) {
+        lock.lock()
+        guard !isClosed else { lock.unlock(); answer(.failure(CDPError.closed)); return }
+        nextID += 1
+        let id = nextID
+        waiting[id] = answer
+        lock.unlock()
+        guard let data = CDPFraming.encode(id: id, method: method, params: params, sessionID: session) else {
+            lock.lock(); let a = waiting.removeValue(forKey: id); lock.unlock()
+            a?(.failure(CDPError(code: -2, message: "Could not encode \(method)")))
+            return
+        }
+        write(data)
     }
 
     /// Sends a command whose answer does not matter (input events, acknowledgements). Sent in the order of the calls.
@@ -139,7 +154,7 @@ public final class CDPConnection: @unchecked Sendable {
         let pending = waiting
         waiting.removeAll()
         lock.unlock()
-        for c in pending.values { c.resume(throwing: CDPError.closed) }
+        for answer in pending.values { answer(.failure(CDPError.closed)) }
         try? writer.close()
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated { self?.onClose?() }

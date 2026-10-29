@@ -21,9 +21,13 @@ done
 
 VERSION=$(cat VERSION 2>/dev/null || echo "1.0")
 APP=build/Cosmos.app
+ID=app.cosmos.browser
+# Chromium, through CEF (does nothing once it is in Vendor/CEF).
+scripts/fetch-cef.sh
 echo "==> swift build -c $CONFIG"
 swift build -c $CONFIG --product Cosmos 2>&1 | grep -v "ld: warning" | tail -3
 swift build -c $CONFIG --product cosmos-cli 2>&1 | grep -v "ld: warning" | tail -1
+swift build -c $CONFIG --product CosmosHelper 2>&1 | grep -v "ld: warning" | tail -1
 BIN=$(swift build -c $CONFIG --show-bin-path)
 
 echo "==> assembling $APP"
@@ -32,6 +36,38 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN/Cosmos" "$APP/Contents/MacOS/Cosmos"
 cp "$BIN/cosmos-cli" "$APP/Contents/MacOS/cosmos-cli"
 for bundle in "$BIN"/*.bundle(N); do cp -R "$bundle" "$APP/Contents/Resources/"; done
+
+echo "==> Chromium"
+# The framework, and Chromium's other processes as the helper apps next to it: each finds the framework three folders
+# up from its executable, and the browser by this app's bundle identifier.
+mkdir -p "$APP/Contents/Frameworks"
+cp -R "Vendor/CEF/Release/Chromium Embedded Framework.framework" "$APP/Contents/Frameworks/"
+# CEF's license, and those of Chromium and everything in it.
+cp Vendor/CEF/LICENSE.txt "$APP/Contents/Resources/CEF License.txt"
+cp Vendor/CEF/CREDITS.html "$APP/Contents/Resources/Chromium Credits.html"
+for suffix in "" " (Alerts)" " (GPU)" " (Plugin)" " (Renderer)"; do
+  name="Cosmos Helper$suffix"
+  helper="$APP/Contents/Frameworks/$name.app"
+  kind=${${suffix:l}//[^a-z]/}
+  mkdir -p "$helper/Contents/MacOS"
+  cp "$BIN/CosmosHelper" "$helper/Contents/MacOS/$name"
+  cat > "$helper/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>$name</string>
+  <key>CFBundleExecutable</key><string>$name</string>
+  <key>CFBundleIdentifier</key><string>$ID.helper${kind:+.$kind}</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>$VERSION</string>
+  <key>CFBundleVersion</key><string>$VERSION</string>
+  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>LSUIElement</key><true/>
+</dict>
+</plist>
+PLIST
+done
 
 echo "==> icon"
 ICON_SOURCE="cosmos icon/cosmos-app-icon-tile.png"
@@ -52,7 +88,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <dict>
   <key>CFBundleName</key><string>Cosmos</string>
   <key>CFBundleDisplayName</key><string>Cosmos</string>
-  <key>CFBundleIdentifier</key><string>app.cosmos.browser</string>
+  <key>CFBundleIdentifier</key><string>$ID</string>
   <key>CFBundleExecutable</key><string>Cosmos</string>
   <key>CFBundleIconFile</key><string>Cosmos</string>
   <key>CFBundlePackageType</key><string>APPL</string>
@@ -60,7 +96,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>$VERSION</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
-  <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>NSPrincipalClass</key><string>CosmosApplication</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
   <key>NSAppTransportSecurity</key>
@@ -105,6 +141,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 
 echo "==> signing (ad hoc)"
+# Inside out: the framework and helpers before the app that holds them.
+codesign --force --sign - "$APP/Contents/Frameworks/Chromium Embedded Framework.framework" 2>&1 | grep -v "replacing existing signature" || true
+for helper in "$APP/Contents/Frameworks/"*.app; do
+  codesign --force --sign - "$helper" 2>&1 | grep -v "replacing existing signature" || true
+done
 codesign --force --deep --sign - "$APP" 2>&1 | grep -v "replacing existing signature" || true
 codesign --verify --deep "$APP" && echo "signature ok"
 

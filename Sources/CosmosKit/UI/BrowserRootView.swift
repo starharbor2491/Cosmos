@@ -276,8 +276,6 @@ struct EngineStatusCard: View {
                 switch store.engineStatus {
                 case .preparing(let what, let progress):
                     Text(what).font(.system(size: 17, weight: .semibold)).foregroundStyle(palette.text)
-                    Text("Cosmos draws pages with Chromium. The first time, it fetches it (about 185 MB); pages open as soon as it is ready.")
-                        .font(.system(size: 12.5)).foregroundStyle(palette.secondary).multilineTextAlignment(.center).frame(maxWidth: 340)
                     if let progress {
                         ProgressView(value: progress).progressViewStyle(.linear).frame(width: 240).tint(palette.accent)
                         Text("\(Int(progress * 100))%").font(.system(size: 11.5, weight: .medium).monospacedDigit()).foregroundStyle(palette.tertiary)
@@ -286,13 +284,8 @@ struct EngineStatusCard: View {
                     }
                 case .failed(let why):
                     Text("Cosmos has no Chromium to draw pages with").font(.system(size: 17, weight: .semibold)).foregroundStyle(palette.text)
-                    Text(why).font(.system(size: 12.5)).foregroundStyle(palette.secondary).multilineTextAlignment(.center).frame(maxWidth: 380)
-                    Button { store.onRetryEngine?() } label: {
-                        Text("Try Again").font(.system(size: 13, weight: .semibold))
-                            .padding(.horizontal, 16).padding(.vertical, 7)
-                            .background(Capsule().fill(palette.accentFill)).foregroundStyle(palette.onAccent)
-                    }
-                    .buttonStyle(.plain)
+                    Text(why + " Chromium is part of Cosmos: installing Cosmos again puts it back.")
+                        .font(.system(size: 12.5)).foregroundStyle(palette.secondary).multilineTextAlignment(.center).frame(maxWidth: 380)
                 case .ready:
                     EmptyView()
                 }
