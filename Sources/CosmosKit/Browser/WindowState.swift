@@ -101,12 +101,18 @@ public final class WindowState: Identifiable {
     /// Reload) never acts on a page that is covered.
     public var sidebarVisible = true { didSet { if !sidebarVisible { libraryOpen = false } } }
     public var sidebarWidth: Double
+    /// The window's width as last laid out (0 before), for what fits beside the page (`PaneFit`).
+    public var contentWidth: Double = 0
     /// True while the hidden sidebar is slid over the page because the pointer touched the window edge.
     public var sidebarPeeking = false
     public var overlay: Overlay? { didSet { radial = nil } }
     public var peek: PeekSession? { didSet { radial = nil } }
     /// An extension's side panel, beside the page.
     public var sidePanel: SidePanel?
+    /// The quick utility whose panel is open at the right (translation, zoom, files, passwords, the site's controls).
+    public var utility: Utility?
+    /// The rail of utilities along the window's right edge (View ▸ Show Utilities).
+    public var utilitiesVisible = true
     /// The radial menu that is open over the page, if any. It belongs to the page it was opened over, so a change of tab,
     /// space, overlay or Peek puts it away.
     public var radial: RadialSession?

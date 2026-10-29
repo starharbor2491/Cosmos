@@ -8,9 +8,27 @@ import CosmosCore
 struct SiteControlsPanel: View {
     let store: BrowserStore
     let window: WindowState
+    /// In the utilities' panel beside the page: the controls alone, without the floating panel around them.
+    var embedded = false
     @Environment(\.palette) private var palette
 
     var body: some View {
+        if embedded {
+            controls
+        } else {
+            controls
+                .frame(width: 340)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous))
+                .background(RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous).fill(palette.panel))
+                .overlay(RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous).strokeBorder(palette.stroke, lineWidth: 0.8))
+                .shadow(color: palette.shadow, radius: 28, y: 10)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(.leading, window.sidebarVisible ? Metrics.Sidebar.gutter : 90)
+                .padding(.top, window.sidebarVisible ? Metrics.Height.toolbar + Metrics.Height.field + Metrics.Space.xs : 52)
+        }
+    }
+
+    @ViewBuilder private var controls: some View {
         let rt = store.currentRuntime(in: window)
         let url = store.currentURL(in: window)
         let host = url?.host ?? ""
@@ -76,14 +94,6 @@ struct SiteControlsPanel: View {
             }
             .padding(8)
         }
-        .frame(width: 340)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous))
-        .background(RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous).fill(palette.panel))
-        .overlay(RoundedRectangle(cornerRadius: Metrics.Radius.panel, style: .continuous).strokeBorder(palette.stroke, lineWidth: 0.8))
-        .shadow(color: palette.shadow, radius: 28, y: 10)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(.leading, window.sidebarVisible ? Metrics.Sidebar.gutter : 90)
-        .padding(.top, window.sidebarVisible ? Metrics.Height.toolbar + Metrics.Height.field + Metrics.Space.xs : 52)
     }
 
     private func radialDetail(_ host: String) -> String {

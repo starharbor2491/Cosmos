@@ -31,8 +31,9 @@ public final class ChromiumEngine: BrowserEngine {
     /// folder is `defaultProfile`, is the one Chromium starts with and the one extensions run in. False when this Cosmos
     /// has no Chromium in it.
     @discardableResult
-    public static func configure(root: URL, defaultProfileID: UUID, defaultProfile: URL) -> Bool {
-        guard let configuration = ChromiumRuntime.Configuration.app(root: root, defaultProfileID: defaultProfileID, defaultProfile: defaultProfile)
+    public static func configure(root: URL, defaultProfileID: UUID, defaultProfile: URL, switches: [String] = []) -> Bool {
+        guard let configuration = ChromiumRuntime.Configuration.app(root: root, defaultProfileID: defaultProfileID, defaultProfile: defaultProfile,
+                                                                    switches: switches)
         else { return false }
         ChromiumRuntime.configuration = configuration
         return true

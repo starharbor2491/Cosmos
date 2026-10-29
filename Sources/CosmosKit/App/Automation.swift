@@ -188,6 +188,9 @@ final class Automation {
             if step["back"] as? Bool == true { session.back() }
         case "sidebar":
             state?.sidebarVisible = (step["visible"] as? Bool) ?? true
+        case "utility":
+            // Opens a utility's panel at the right ("name": translate, zoom, files, passwords, site; none closes it).
+            state?.utility = (step["name"] as? String).flatMap(Utility.init(rawValue:))
         case "peek":
             if let url, let s = store, let st = state { s.openPeek(url, from: st.selectedItemID, in: st) }
         case "external":
@@ -332,7 +335,9 @@ final class Automation {
         case "log":
             note("  " + (step["text"] as? String ?? ""))
         case "quit":
-            NSApp.terminate(nil)
+            // From the run loop, not from inside this task: Cosmos answers "later" and stops Chromium first, which needs
+            // the main queue that this task would be holding.
+            NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0)
         default:
             note("  unknown verb \(verb)")
         }

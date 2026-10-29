@@ -86,10 +86,13 @@ extension CosmosAppDelegate {
                 guard let rt = c.store.currentRuntime(in: c.state) else { return }
                 rt.find(c.state.findQuery, backwards: true) { c.state.findHadMatch = $0 }
             })
+            m.addItem(.separator())
+            add(m, "Fill Saved Password", "", [], { $0.store.perform(.fillPassword, in: $0.state) })
         }
 
         top("View") { m in
             add(m, "Toggle Sidebar", "s", [.command], { $0.store.perform(.toggleSidebar, in: $0.state) })
+            add(m, "Toggle Utilities", "s", [.command, .control], { $0.store.perform(.toggleUtilities, in: $0.state) })
             m.addItem(.separator())
             add(m, "Reload Page", "r", [.command], { $0.store.perform(.reload, in: $0.state) })
             add(m, "Reload Ignoring Cache", "r", [.command, .shift], { $0.store.perform(.hardReload, in: $0.state) })

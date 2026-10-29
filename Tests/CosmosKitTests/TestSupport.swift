@@ -65,6 +65,8 @@ final class FakeProfile: EngineProfile {
     func clearSiteData() async { clearedSiteData += 1 }
     func clearHistory(since date: Date?) async { clearedHistory.append(date) }
     func deleteHistory(of url: URL) async { deletedHistory.append(url) }
+    var cookies: [EngineCookie] = []
+    func setCookies(_ cookies: [EngineCookie]) async -> Int { self.cookies += cookies; return cookies.count }
     func processIDs() async -> [Int32] { processes }
     func restart() { restarts += 1; delegate?.profileDidRestart(self) }
     func close() { isClosed = true }
@@ -121,6 +123,8 @@ final class FakePage: EnginePage {
     func download(_ url: URL) { downloads.append(url) }
     func recentContextClick() -> ContextClick? { contextClick }
     func showInspector() -> Bool { false }
+    var filled: [(username: String, password: String, origin: String)] = []
+    func fillLogin(username: String, password: String, origin: String) async -> Bool { filled.append((username, password, origin)); return true }
     private(set) var leftPictureInPicture = 0
     func leavePictureInPicture() { leftPictureInPicture += 1 }
     private(set) var notificationActions: [(id: String, action: NotificationAction)] = []

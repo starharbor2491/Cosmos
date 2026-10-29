@@ -50,6 +50,14 @@ enum CEFTestRuntime {
         }
     }()
 
+    /// Waits, at most a few seconds, until every browser the test made has closed. A test whose pages are still closing
+    /// when the process exits leaves Chromium at work while exit() takes its globals away, and the process crashes.
+    @MainActor static func settle() async {
+        guard CosmosCEFRuntime.isRunning else { return }
+        let deadline = Date().addingTimeInterval(3)
+        while CosmosCEFRuntime.openBrowserCount > 0, Date() < deadline { try? await Task.sleep(for: .milliseconds(20)) }
+    }
+
     /// Makes `id`'s profile the default one (the one extensions run in, whose data is CEF's global context's), for the
     /// profiles made from now on.
     static func makeDefault(_ id: UUID) {
@@ -134,15 +142,34 @@ enum CEFTestRuntime {
             return "could not make the helper apps: \(error)"
         }
         // The Keychain is left alone in tests (a second test binary would be asked about the first one's item), and a fake
-        // camera and microphone stand in for the Mac's, so macOS never asks about them. The helpers cannot be sandboxed:
-        // the sandbox lets them read only the app the browser process is, and this process is the test runner.
+        // camera and microphone stand in for the Mac's, so macOS never asks about them. Names under cosmos.test are this
+        // Mac, for tests that need a site with subdomains. The helpers cannot be sandboxed: the sandbox lets them read only
+        // the app the browser process is, and this process is the test runner.
         ChromiumRuntime.configuration = ChromiumRuntime.Configuration(
             mainBundle: app, framework: frameworks.appendingPathComponent(framework.lastPathComponent),
             helper: frameworks.appendingPathComponent("Cosmos Helper.app/Contents/MacOS/Cosmos Helper"),
             root: root, defaultProfileID: UUID(), defaultCache: root.appendingPathComponent("Default", isDirectory: true),
-            switches: ["--use-mock-keychain", "--use-fake-device-for-media-stream"], sandboxed: false)
+            switches: ["--use-mock-keychain", "--use-fake-device-for-media-stream", "--host-resolver-rules=MAP *cosmos.test 127.0.0.1"],
+            sandboxed: false)
         return nil
     }
+}
+
+/// After each test of a suite that runs Chromium, its pages have closed (`CEFTestRuntime.settle`).
+struct SettlesChromium: SuiteTrait, TestTrait, TestScoping {
+    var isRecursive: Bool { true }
+    func scopeProvider(for test: Test, testCase: Test.Case?) -> SettlesChromium? { testCase == nil ? nil : self }
+    func provideScope(for test: Test, testCase: Test.Case?, performing function: @Sendable () async throws -> Void) async throws {
+        do { try await function() } catch {
+            await CEFTestRuntime.settle()
+            throw error
+        }
+        await CEFTestRuntime.settle()
+    }
+}
+
+extension Trait where Self == SettlesChromium {
+    static var settlesChromium: Self { Self() }
 }
 
 /// The first of two ends of `within`: the work's, or the clock's.
@@ -167,7 +194,7 @@ func within<T: Sendable>(_ seconds: Double, _ work: @escaping @Sendable () async
 }
 
 @MainActor
-@Suite(.enabled(if: CEFTestRuntime.isAvailable, "no CEF in Vendor/CEF (scripts/fetch-cef.sh)"), .serialized)
+@Suite(.enabled(if: CEFTestRuntime.isAvailable, "no CEF in Vendor/CEF (scripts/fetch-cef.sh)"), .serialized, .settlesChromium)
 struct CEFRuntimeTests {
     final class Opened: EngineProfileDelegate {
         var pages: [(page: EnginePage, opener: EnginePage?)] = []
@@ -362,6 +389,42 @@ struct CEFRuntimeTests {
         let before = server.requests.filter { $0.hasPrefix("/ad.js") }.count
         #expect(try await visit("http://127.0.0.1:\(server.port)/", title: "Ads") == false, "the next site, in the same tab")
         #expect(server.requests.filter { $0.hasPrefix("/ad.js") }.count == before)
+    }
+
+    /// Another browser's cookies go into a profile and are sent to their own sites from then on, and to no others; a
+    /// cookie Chromium would not have taken from the site itself (SameSite=None that is not secure) is refused.
+    @Test func cookiesFromAnotherBrowserReachTheirSitesOnly() async throws {
+        if let failure = await CEFTestRuntime.start() { Issue.record(Comment(rawValue: failure)); return }
+        let engine = ChromiumEngine()
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-cef-cookies-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let profile = try #require(engine.makeProfile(id: UUID(), directory: folder) as? ChromiumProfile)
+        defer { profile.close() }
+        profile.setPageScripts([])
+        let server = try await SiteServer(routes: ["/": .init(type: "text/html", body: Data("<title>Signed in</title>".utf8))])
+        let taken = await profile.setCookies([
+            EngineCookie(domain: "cosmos.test", name: "kept", value: "yes", expires: Date().addingTimeInterval(3600), isHTTPOnly: true, sameSite: .lax),
+            EngineCookie(domain: "cosmos.test", name: "session", value: "1"),
+            EngineCookie(domain: ".cosmos.test", name: "everywhere", value: "1", expires: Date().addingTimeInterval(3600)),
+            EngineCookie(domain: ".elsewhere.test", name: "other", value: "no", expires: Date().addingTimeInterval(3600)),
+            EngineCookie(domain: "cosmos.test", name: "loose", value: "no", sameSite: .none),
+            EngineCookie(domain: "cosmos.test", name: "secure", value: "no", isSecure: true),
+        ])
+        #expect(taken == 5, "SameSite=None without Secure is refused")
+        func sent(to host: String) async throws -> String {
+            let page = try #require(profile.makePage() as? ChromiumPage)
+            defer { page.close() }
+            page.load(try #require(URL(string: "http://\(host):\(server.port)/")))
+            try await waitFor { page.state.title == "Signed in" && !page.state.isLoading }
+            let heads = server.requestHeads(of: "/").filter { $0.contains { $0.lowercased() == "host: \(host):\(server.port)" } }
+            return heads.flatMap { $0 }.filter { $0.lowercased().hasPrefix("cookie:") }.joined(separator: "; ")
+        }
+        let site = try await sent(to: "cosmos.test")
+        #expect(site.contains("kept=yes") && site.contains("session=1") && site.contains("everywhere=1"), "\(site)")
+        #expect(!site.contains("other=") && !site.contains("loose=") && !site.contains("secure="), "\(site): a Secure cookie goes over https only")
+        let sub = try await sent(to: "www.cosmos.test")
+        #expect(sub.contains("everywhere=1"), "a cookie for the domain reaches its subdomains: \(sub)")
+        #expect(!sub.contains("kept=") && !sub.contains("session="), "one for its host only does not: \(sub)")
     }
 
     final class Downloads: EngineProfileDelegate {

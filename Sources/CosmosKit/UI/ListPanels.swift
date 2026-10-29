@@ -294,7 +294,7 @@ struct DownloadsSection: View {
     }
 }
 
-private struct DownloadRow: View {
+struct DownloadRow: View {
     let item: DownloadItem
     @Environment(\.palette) private var palette
     @Local private var hover = false

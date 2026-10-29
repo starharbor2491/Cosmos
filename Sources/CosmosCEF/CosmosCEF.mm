@@ -269,6 +269,7 @@ class CosmosCefApp : public CefApp, public CefBrowserProcessHandler {
 }
 
 + (BOOL)isRunning { return gRunning; }
++ (NSInteger)openBrowserCount { return (NSInteger)gOpenBrowsers.size() + gBeingMade; }
 + (NSString *)lastError { return gLastError; }
 + (NSString *)chromiumVersion {
   return [NSString stringWithFormat:@"%d.%d.%d.%d", CHROME_VERSION_MAJOR, CHROME_VERSION_MINOR, CHROME_VERSION_BUILD,
@@ -279,9 +280,43 @@ class CosmosCefApp : public CefApp, public CefBrowserProcessHandler {
 
 #pragma mark Contexts
 
+@implementation CosmosCEFCookie
+@end
+
+// CEF's times are microseconds since 1601.
+static cef_basetime_t BaseTime(NSDate *date) {
+  cef_basetime_t t;
+  t.val = (int64_t)((date.timeIntervalSince1970 + 11644473600.0) * 1000000.0);
+  return t;
+}
+
+class CookieSet : public CefSetCookieCallback {
+ public:
+  explicit CookieSet(void (^taken)(BOOL)) : taken_([taken copy]) {}
+  // One CEF lets go of without an answer (it refused the cookie, or is shutting down) counts as not taken, so that the
+  // caller hears about every cookie.
+  ~CookieSet() override { Answer(NO); }
+  void OnComplete(bool success) override { Answer(success); }
+
+ private:
+  void Answer(BOOL ok) {
+    void (^taken)(BOOL) = taken_;
+    taken_ = nil;
+    if (taken) dispatch_async(dispatch_get_main_queue(), ^{ taken(ok); });
+  }
+
+  void (^taken_)(BOOL);
+  IMPLEMENT_REFCOUNTING(CookieSet);
+};
+
 @implementation CosmosCEFContext {
  @public
   CefRefPtr<CefRequestContext> _context;
+}
+
+// Once CEF has stopped, letting go of something it made would call into it: the process is ending, so it is kept.
+- (void)dealloc {
+  if (gStopped) (void)_context.release();
 }
 
 - (instancetype)initWithCachePath:(NSString *)cachePath {
@@ -336,6 +371,49 @@ class CookiesDeleted : public CefDeleteCookiesCallback {
   if (!cookies || !cookies->DeleteCookies("", "", new CookiesDeleted(done))) dispatch_async(dispatch_get_main_queue(), done);
 }
 
+- (void)setCookies:(NSArray<CosmosCEFCookie *> *)cookies done:(void (^)(NSInteger))done {
+  CefRefPtr<CefCookieManager> manager = _context->GetCookieManager(nullptr);
+  if (!manager || cookies.count == 0) {
+    dispatch_async(dispatch_get_main_queue(), ^{ done(0); });
+    return;
+  }
+  // Each answer comes on the main thread; the last one says how many were taken.
+  __block NSInteger left = (NSInteger)cookies.count, taken = 0;
+  void (^one)(BOOL) = ^(BOOL ok) {
+    if (ok) taken++;
+    if (--left == 0) done(taken);
+  };
+  NSDate *now = [NSDate date];
+  for (CosmosCEFCookie *c in cookies) {
+    BOOL domainCookie = [c.domain hasPrefix:@"."];
+    NSString *host = domainCookie ? [c.domain substringFromIndex:1] : c.domain;
+    NSString *path = c.path.length ? c.path : @"/";
+    NSString *url = [NSString stringWithFormat:@"%@://%@%@", c.secure ? @"https" : @"http", host, path];
+    CefCookie cookie;
+    CefString(&cookie.name) = c.name.UTF8String;
+    CefString(&cookie.value) = c.value.UTF8String;
+    // A cookie only its host gets has no domain of its own; one for the subdomains too keeps its leading dot.
+    if (domainCookie) CefString(&cookie.domain) = c.domain.UTF8String;
+    CefString(&cookie.path) = path.UTF8String;
+    cookie.secure = c.secure;
+    cookie.httponly = c.httpOnly;
+    // Made now: Chromium caps how long a cookie lasts from when it was made, and one another browser made long ago and
+    // kept renewing would come in already over that cap.
+    cookie.creation = BaseTime(now);
+    cookie.last_access = BaseTime(now);
+    cookie.has_expires = c.expires != nil;
+    if (c.expires) cookie.expires = BaseTime(c.expires);
+    switch (c.sameSite) {
+      case 0: cookie.same_site = CEF_COOKIE_SAME_SITE_NO_RESTRICTION; break;
+      case 1: cookie.same_site = CEF_COOKIE_SAME_SITE_LAX_MODE; break;
+      case 2: cookie.same_site = CEF_COOKIE_SAME_SITE_STRICT_MODE; break;
+      default: cookie.same_site = CEF_COOKIE_SAME_SITE_UNSPECIFIED; break;
+    }
+    cookie.priority = CEF_COOKIE_PRIORITY_MEDIUM;
+    manager->SetCookie(url.UTF8String, cookie, new CookieSet(one));
+  }
+}
+
 @end
 
 #pragma mark Downloads
@@ -348,6 +426,10 @@ class CookiesDeleted : public CefDeleteCookiesCallback {
 @implementation CosmosCEFDownload {
   CefRefPtr<CefDownloadItemCallback> _callback;
   BOOL _cancelWhenPossible;
+}
+
+- (void)dealloc {
+  if (gStopped) (void)_callback.release();
 }
 
 - (instancetype)initWithItem:(CefRefPtr<CefDownloadItem>)item {
@@ -732,6 +814,10 @@ class CosmosBrowserClient : public CefClient,
   BOOL _closeWhenMade;
   NSMutableArray<void (^)(NSString *)> *_waitingForTarget;
   double _zoomFactor;
+}
+
+- (void)dealloc {
+  if (gStopped) (void)_browser.release();
 }
 
 - (instancetype)initPopupInView:(NSView *)holder opener:(CosmosCEFBrowser *)opener {

@@ -382,6 +382,20 @@ final class ChromiumProfile: EngineProfile {
         }
     }
 
+    // MARK: Cookies
+
+    func setCookies(_ cookies: [EngineCookie]) async -> Int {
+        guard !cookies.isEmpty, await start(), let context else { return 0 }
+        let list = cookies.map { c -> CosmosCEFCookie in
+            let o = CosmosCEFCookie()
+            o.domain = c.domain; o.name = c.name; o.value = c.value; o.path = c.path
+            o.expires = c.expires
+            o.secure = c.isSecure; o.httpOnly = c.isHTTPOnly; o.sameSite = c.sameSite.rawValue
+            return o
+        }
+        return await withCheckedContinuation { done in context.setCookies(list) { done.resume(returning: $0) } }
+    }
+
     // MARK: Blocking
 
     func setContentBlocking(_ lists: [CompiledBlockingList]?, allowlist: [String]) {

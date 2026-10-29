@@ -1,5 +1,6 @@
 import AppKit
 import CosmosCEF
+import CosmosCore
 import CosmosEngine
 
 /// One Chromium tab: a CEF browser drawn in `ChromiumPageView`, driven over the DevTools protocol as a page target.
@@ -494,7 +495,11 @@ final class ChromiumPage: EnginePage {
         case "__title": if fromMain { setTitle(message["value"] as? String ?? "", url: state.url?.absoluteString ?? "") }
         // An error document (Chromium's, then Cosmos's) says nothing about the site: its icons are not the site's to fetch.
         case "meta" where fromMain && failedLoad != nil: break
-        default: delegate?.page(self, agentMessage: message, fromMainFrame: fromMain)
+        default:
+            // Which site the frame is, as Chromium knows it: what the page says of itself is not taken for that.
+            var told = message
+            told["frameOrigin"] = context.origin
+            delegate?.page(self, agentMessage: told, fromMainFrame: fromMain)
         }
     }
 
@@ -750,6 +755,20 @@ final class ChromiumPage: EnginePage {
         guard sessionID != nil, userAgent != nil || overridesUserAgent else { return }
         overridesUserAgent = userAgent != nil
         command("Emulation.setUserAgentOverride", ["userAgent": userAgent ?? ""])
+    }
+
+    /// In Cosmos's own world of each frame whose origin is `origin`, the main frame's first; the page's scripts never see
+    /// the password before it is in the form.
+    func fillLogin(username: String, password: String, origin: String) async -> Bool {
+        let expression = "window.__cosmosFillLogin ? __cosmosFillLogin(\(ChromiumResources.jsString(username)), \(ChromiumResources.jsString(password))) : false"
+        let worlds = contexts.filter { $0.value.isAgent && SavedLogin.origin($0.value.origin) == origin }
+            .sorted { ($0.value.frameID == mainFrameID ? 0 : 1) < ($1.value.frameID == mainFrameID ? 0 : 1) }
+        for (key, _) in worlds {
+            let r = try? await browser?.connection?.send("Runtime.evaluate", ["expression": expression, "contextId": key.id, "returnByValue": true],
+                                                         session: key.session)
+            if (r?["result"] as? [String: Any])?["value"] as? Bool == true { return true }
+        }
+        return false
     }
 
     func evaluate(_ script: String, in world: ScriptWorld) async -> Any? {

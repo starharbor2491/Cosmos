@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import CosmosBlocking
 import CosmosCore
 import CosmosEngine
@@ -23,6 +24,9 @@ public final class BrowserStore: TabHost {
 
     public let history: HistoryStore
     public let favicons: FaviconStore
+    /// Saved passwords (Settings ▸ Passwords), in `Passwords.vault`; in memory for a private window, which neither saves
+    /// nor fills them.
+    public let passwords: PasswordManager
     let haptics = Haptics()
     /// Where the Mac is, for sites the user let know: macOS is asked by Cosmos, never by the engine. Tests replace it.
     @ObservationIgnored var locate: @MainActor () async -> PageLocation? = { await LocationSource.shared.current() }
@@ -109,10 +113,13 @@ public final class BrowserStore: TabHost {
     @ObservationIgnored var isTerminating = false
 
     /// Opens (or creates) the browser's data in `directory`; pass `nil` for a throwaway in-memory (incognito) store.
-    public init(directory: URL?, incognito: Bool = false, engine: BrowserEngine) {
+    /// `passwordKey` gives the key to the saved passwords (the Keychain's, made there the first time).
+    public init(directory: URL?, incognito: Bool = false, engine: BrowserEngine,
+                passwordKey: @escaping () throws -> SymmetricKey = PasswordManager.keychainKey) {
         isIncognito = incognito
         dataDirectory = directory
         self.engine = engine
+        passwords = PasswordManager(file: incognito ? nil : directory?.appendingPathComponent("Passwords.vault"), key: passwordKey)
         if let directory {
             try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let ws = JSONFileStore<Workspace>(url: directory.appendingPathComponent("workspace.json"))

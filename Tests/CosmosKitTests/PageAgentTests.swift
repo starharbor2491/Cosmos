@@ -11,7 +11,7 @@ import CosmosEngine
 /// in the test process (`CEFTestRuntime`), in views that are in no window; each test has profiles of its own, and its
 /// store's first profile is the default one, which extensions run in.
 @MainActor
-@Suite(.enabled(if: CEFTestRuntime.isAvailable, "no CEF in Vendor/CEF (scripts/fetch-cef.sh)"), .serialized)
+@Suite(.enabled(if: CEFTestRuntime.isAvailable, "no CEF in Vendor/CEF (scripts/fetch-cef.sh)"), .serialized, .settlesChromium)
 struct PageAgentTests {
     let engine: ChromiumEngine
     let rig: Rig
@@ -1017,6 +1017,65 @@ struct PageAgentTests {
         #expect(log.contains("created \(madeID)"))
         #expect(log.contains("complete \(madeID)"))
         #expect(log.contains("removed \(madeID)"))
+    }
+
+    // MARK: Passwords
+
+    /// A saved sign-in goes into the form of a frame of its own site only: the page's, or a frame's from another site,
+    /// each told of it as a person typing would tell it (input events), and no other frame sees it.
+    @Test func aSavedSignInIsFilledIntoFramesOfItsOwnSiteOnly() async throws {
+        defer { stop() }
+        let form = """
+            <form><input name=user autocomplete=username><input type=password name=pass><button>Sign in</button></form>
+            <script>for (const f of document.querySelectorAll('input')) f.addEventListener('input', () => REPORT(document.querySelector('[name=user]').value + '|' + document.querySelector('[name=pass]').value));</script>
+            """
+        // The frame is the same server under another name (localhost): another site.
+        let server = try await SiteServer(routes: [
+            "/": html("<title>Page</title>" + form.replacingOccurrences(of: "REPORT(", with: "(v => document.documentElement.dataset.typed = v)(")
+                      + "<script>document.write(`<iframe src='http://localhost:${location.port}/frame'></iframe>`);"
+                      + "addEventListener('message', e => document.documentElement.dataset.frameTyped = e.data)</script>"),
+            "/frame": html(form.replacingOccurrences(of: "REPORT(", with: "(v => parent.postMessage(v, '*'))(")),
+        ])
+        let runtime = try await open(URL(string: "http://127.0.0.1:\(server.port)/")!)
+        let page = "http://127.0.0.1:\(server.port)", frame = "http://localhost:\(server.port)"
+        try await waitFor { runtime.loginFormOrigins == [page, frame] }
+        #expect(runtime.loginFormOrigins == [page, frame], "each frame with a password field says so, by its own origin: \(runtime.loginFormOrigins)")
+
+        #expect(await runtime.fill(SavedLogin(origin: frame, username: "framed", password: "f-secret", created: Date())))
+        #expect(try await waitForAttribute("data-frame-typed", in: runtime) == "framed|f-secret")
+        #expect(await runtime.evaluate(returning: "document.documentElement.dataset.typed || ''") as? String == "", "not into the page's form")
+
+        #expect(await runtime.fill(SavedLogin(origin: page, username: "me", password: "secret", created: Date())))
+        #expect(try await waitForAttribute("data-typed", in: runtime) == "me|secret")
+        #expect(await runtime.fill(SavedLogin(origin: "https://elsewhere.test", username: "x", password: "y", created: Date())) == false)
+    }
+
+    /// What is typed into a sign-in form and sent (here by a real click on its button) is offered for saving, under the
+    /// site Chromium says the frame is: the page's, or for a form in a frame from another site, that site's.
+    @Test func aSignInThatIsSentIsOfferedForSaving() async throws {
+        defer { stop() }
+        let form = "<form onsubmit='return false'><input name=user value=USER><input type=password name=pass value=PASS>"
+            + "<button id=go style='position:fixed;inset:0;width:100%;height:100%'>Sign in</button></form>"
+        let server = try await SiteServer(routes: [
+            "/": html("<title>Sign in</title><form onsubmit=\"return false\"><input name=user><input type=password name=pass><button id=go>Sign in</button></form>"),
+            "/framed": html("<title>Framed</title><script>document.write(`<iframe id=f src='http://localhost:${location.port}/frame' "
+                            + "style='position:fixed;left:0;top:0;width:300px;height:200px;border:0'></iframe>`)</script>"),
+            "/frame": html(form.replacingOccurrences(of: "USER", with: "framed").replacingOccurrences(of: "PASS", with: "f-secret")),
+        ])
+        let runtime = try await open(URL(string: "http://127.0.0.1:\(server.port)/")!)
+        let origin = "http://127.0.0.1:\(server.port)"
+        _ = await runtime.evaluate(returning: "document.querySelector('[name=user]').value = 'me'; document.querySelector('[name=pass]').value = 'secret'; 1")
+        try await click("#go", in: runtime)
+        try await waitFor(5) { runtime.offeredLogin != nil }
+        #expect(runtime.offeredLogin == .init(origin: origin, username: "me"))
+        #expect(!rig.store.passwords.shouldOffer(origin: origin, username: "me", password: "secret"), "and not twice")
+
+        let framed = try await open(URL(string: "http://127.0.0.1:\(server.port)/framed")!)
+        let frame = "http://localhost:\(server.port)"
+        try await waitFor { framed.loginFormOrigins == [frame] }
+        try await click("#f", in: framed)
+        try await waitFor(5) { framed.offeredLogin != nil }
+        #expect(framed.offeredLogin == .init(origin: frame, username: "framed"), "the frame's site, not the page's")
     }
 
     // MARK: Boosts and blocking

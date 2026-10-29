@@ -18,6 +18,8 @@ public struct Settings: Codable, Equatable {
     public var adBlockingEnabled = true
     /// Warn before opening a page from a site on a public malware or phishing list (Settings ▸ Engine).
     public var warnAboutDangerousSites = true
+    /// Cosmos asks whether to keep a password typed into a site's sign-in form (Settings ▸ Passwords).
+    public var offerToSavePasswords = true
     public var enabledFilterLists: [String] = ["easylist", "easyprivacy", "fanboy-cookiemonster"]
     public var autoPictureInPicture = true
     public var restoreTabsOnLaunch = true
@@ -47,7 +49,7 @@ public struct Settings: Codable, Equatable {
         case searchEngineID, appearance, sidebarWidth, sidebarSide, revealSidebarOnHover, adBlockingEnabled, enabledFilterLists
         case autoPictureInPicture, restoreTabsOnLaunch, showSearchSuggestions, peekFromPinned, permissionDecisions
         case adBlockAllowlist, hasCompletedOnboarding, memorySaverMinutes, showStatusBubble, closeWindowOnLastTab, trackpadHaptics, radialMenu, menuBar
-        case engine, warnAboutDangerousSites
+        case engine, warnAboutDangerousSites, offerToSavePasswords
     }
 
     // Tolerant decoding: a settings file written by an older/newer build must never lock the user out.
@@ -65,5 +67,6 @@ public struct Settings: Codable, Equatable {
         get(.showStatusBubble, &showStatusBubble); get(.closeWindowOnLastTab, &closeWindowOnLastTab)
         get(.trackpadHaptics, &trackpadHaptics); get(.radialMenu, &radialMenu); get(.menuBar, &menuBar)
         get(.engine, &engine); get(.warnAboutDangerousSites, &warnAboutDangerousSites)
+        get(.offerToSavePasswords, &offerToSavePasswords)
     }
 }

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 import CosmosEngine
@@ -7,12 +8,14 @@ import CosmosEngine
 /// A store backed by a throwaway directory, with a window on the first space.
 @MainActor
 final class Rig {
+    /// The saved passwords' key in tests: the Mac's Keychain is never reached.
+    nonisolated static let passwordKey = SymmetricKey(size: .bits256)
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-test-\(UUID().uuidString)", isDirectory: true)
     let store: BrowserStore
     let window: WindowState
 
     init(seed: Bool = false, engine: BrowserEngine? = nil) {
-        store = BrowserStore(directory: dir, engine: engine ?? FakeEngine())
+        store = BrowserStore(directory: dir, engine: engine ?? FakeEngine(), passwordKey: { Rig.passwordKey })
         window = store.makeWindowState()
         store.register(window)
         if seed { DemoSeed.populate(store) }

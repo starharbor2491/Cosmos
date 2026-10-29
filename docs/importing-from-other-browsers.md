@@ -47,12 +47,20 @@ Bookmarks land in one Space (named "Imported" unless you choose another; an exis
 
 A running browser holds its databases open and locked (Arc keeps `History` open with exclusive locking). Cosmos never opens those files. It copies the database and its `-wal`/`-journal` companions to a private temporary folder (a fast copy-on-write clone on APFS), reads the copy, and deletes it afterwards, even if the import fails. If the browser was in the middle of writing, SQLite rolls the *copy* back to its last committed state. If the files change while copying, Cosmos copies again.
 
+## Arc's passwords and sign-ins
+
+After an import from Arc, Cosmos offers to bring Arc's saved passwords and its cookies as well. If you agree, macOS asks whether Cosmos may read Arc's key ("Arc Safe Storage"); nothing is read without it. Cosmos then decrypts a copy of Arc's `Login Data` and `Cookies` (Chromium's "v10" format: AES-128-CBC under a key made from that secret) and:
+
+- adds each site's newest password for each user name to Cosmos's own passwords (Settings ▸ Passwords), keeping any Cosmos already had for the same site and user name; sign-ins to HTTP authentication prompts are left out, and the sites Arc was told never to save for are never offered in Cosmos either;
+- gives the first profile Arc's cookies that have not expired, so you stay signed in. Cookies Arc keeps for one site's frames on another site (partitioned cookies) are left out.
+
+What Cosmos says afterwards has counts only, never a site or a user name.
+
 ## What is not imported, and why
 
 | Not imported | Why |
 |---|---|
-| **Passwords** | Chromium browsers (Arc, Chrome, Brave, Edge, ...) encrypt the `Login Data` database with a key kept in your macOS Keychain under that browser's own name ("Arc Safe Storage", "Chrome Safe Storage", ...). Only that browser is trusted to use the key, and macOS asks for your login password to hand it to anyone else. Firefox keeps its key in `key4.db` behind a master password option, and Safari's passwords live in iCloud Keychain. Cosmos doesn't try to extract any of them. |
-| **Cookies and logged-in sessions** | Encrypted with the same per-browser Keychain key, and many sites bind a session to the browser that created it, so copies wouldn't reliably keep you signed in. You sign in once in Cosmos. |
+| **Passwords and cookies, from browsers other than Arc** | Chromium browsers (Arc, Chrome, Brave, Edge, ...) encrypt the `Login Data` and `Cookies` databases with a key kept in your macOS Keychain under that browser's own name ("Chrome Safe Storage", ...), which macOS hands to another app only after asking you. Cosmos asks for Arc's alone, after an Arc import, and only when you say yes (see below). Firefox keeps its key in `key4.db` behind a master password option, and Safari's passwords live in iCloud Keychain. Cosmos doesn't try to extract any of them. |
 | **Autofill (addresses, cards)** | Same encryption, and payment data is deliberately not exportable. |
 | **Extensions** | Not part of this import. Extensions from Chrome-family browsers are added from **Cosmos ▸ Extensions… ▸ Find in Arc and Other Browsers** (see [extensions.md](extensions.md)); Cosmos runs on Chromium, which can't run Firefox or Safari extensions. |
 | **Open tabs and windows** | Other browsers' session files are internal formats. For Arc, open tabs, pinned tabs and spaces come from its sidebar import instead. |

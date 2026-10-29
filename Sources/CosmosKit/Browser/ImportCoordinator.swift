@@ -1,5 +1,6 @@
 import AppKit
 import CosmosCore
+import CosmosEngine
 import CosmosImport
 
 /// One place a user can bring their browsing life from. The Welcome screen lists these.
@@ -79,6 +80,13 @@ enum ImportCoordinator {
         }
         store.applyArcImport(result, replacing: replace, in: window)
         var summary = result.report.summary
+        let profile = ArcImporter.defaultChromiumProfile(in: directory)
+        let hasSignIns = (ChromiumSecrets.loginFiles + ["Cookies", "Network/Cookies"]).contains {
+            FileManager.default.fileExists(atPath: profile.appendingPathComponent($0).path)
+        }
+        if hasSignIns, Self.askToImportSignIns() {
+            summary += "\n\n" + (await Self.importArcSignIns(into: store, from: directory))
+        }
         if store.extensionCenter != nil {
             let extensions = await Task.detached(priority: .utility) { ChromiumExtensionScanner.scanAll(browsers: [.arc]).count }.value
             if extensions > 0 {
@@ -88,7 +96,54 @@ enum ImportCoordinator {
         return ImportOutcome(summary: summary)
     }
 
+    // MARK: Arc's passwords and sign-ins
+
+    /// Arc's saved passwords into Cosmos's, and its cookies (the sites it is signed in to) into the default profile. The
+    /// key to both is in Arc's Keychain item, which macOS asks the user before handing over; `secret` stands in for that
+    /// in tests. Returns what to tell the user (counts only: no sites, no names).
+    static func importArcSignIns(into store: BrowserStore, from directory: URL = ArcImporter.defaultDirectory,
+                                 secret: @escaping @Sendable () -> String? = {
+                                     ChromiumSafeStorage.keychainSecret(service: ArcImporter.safeStorage.service, account: ArcImporter.safeStorage.account)
+                                 }) async -> String {
+        guard !store.isIncognito else { return "A private window keeps nothing, so there is nothing to import into." }
+        let profile = ArcImporter.defaultChromiumProfile(in: directory)
+        let read = await Task.detached(priority: .userInitiated) { () -> (logins: ChromiumSecrets.Read<ImportedLogin>?, cookies: ChromiumSecrets.Read<ImportedCookie>?, locked: Bool) in
+            guard let secret = secret() else { return (nil, nil, true) }
+            let storage = ChromiumSafeStorage(secret: secret)
+            return (try? ChromiumSecrets.readLogins(profileDirectory: profile, storage: storage),
+                    try? ChromiumSecrets.readCookies(profileDirectory: profile, storage: storage), false)
+        }.value
+        if read.locked { return "Cosmos couldn't get Arc's key from your Keychain, so nothing was imported. If macOS asked, choose Allow next time." }
+        var parts: [String] = []
+        if let logins = read.logins {
+            let added = store.passwords.add(logins.items.map {
+                SavedLogin(origin: $0.origin, username: $0.username, password: $0.password, created: $0.created ?? Date())
+            }, neverSaved: logins.neverSaved)
+            parts.append("\(added.formatted()) password\(added == 1 ? "" : "s")")
+        }
+        if let cookies = read.cookies {
+            let engineProfile = store.environment(forProfile: store.workspace.profiles[0].id).engineProfile
+            let set = await engineProfile.setCookies(cookies.items.map {
+                EngineCookie(domain: $0.domain, name: $0.name, value: $0.value, path: $0.path, expires: $0.expires, isSecure: $0.isSecure,
+                             isHTTPOnly: $0.isHTTPOnly, sameSite: EngineCookie.SameSite(rawValue: $0.sameSite.rawValue) ?? .unspecified)
+            })
+            parts.append("sign-ins to sites (\(set.formatted()) cookie\(set == 1 ? "" : "s"))")
+        }
+        if parts.isEmpty { return "Arc has no saved passwords or sign-ins Cosmos could read." }
+        return "Imported " + parts.joined(separator: " and ") + " from Arc."
+    }
+
     private enum Choice { case merge, replace, cancel }
+
+    /// Whether to bring over Arc's passwords and sign-ins too: macOS then asks whether Cosmos may read Arc's key.
+    private static func askToImportSignIns() -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Bring over Arc's passwords and sign-ins too?"
+        alert.informativeText = "Cosmos keeps Arc's saved passwords and stays signed in to the sites you use. macOS asks you first to let Cosmos read Arc's key (“Arc Safe Storage”): choose Allow."
+        alert.addButton(withTitle: "Import Passwords and Sign-ins")
+        alert.addButton(withTitle: "Not Now")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
 
     private static func askMergeOrReplace(spaces: Int, tabs: Int) -> Choice {
         let alert = NSAlert()

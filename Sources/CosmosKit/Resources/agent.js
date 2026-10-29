@@ -1,5 +1,6 @@
 // Cosmos page agent: runs in Cosmos's own isolated world in every frame and reports page facts to the browser.
-// It never modifies page content and exposes nothing to the page's own scripts: `__cosmosPost` only exists in this world.
+// It changes page content only when the user asks (a saved password filled in) and exposes nothing to the page's own
+// scripts: `__cosmosPost` only exists in this world.
 (function () {
   'use strict';
   const post = (m) => { try { __cosmosPost(JSON.stringify(m)); } catch (e) { /* Cosmos is not listening */ } };
@@ -132,4 +133,59 @@
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && isTop && e.isTrusted) setTimeout(() => { if (!e.defaultPrevented) post({ type: 'escape' }); }, 0);
   }, true);
+
+  // Sign-ins. A password field the page shows is reported once, so Cosmos can offer the passwords it has for the site;
+  // what is typed into a form with one is reported when the person sends it (a submit, or Enter or a click on its submit
+  // button, as pages that sign in without submitting do; not a button that shows the password or the like), for Cosmos
+  // to offer to save. Cosmos fills one in with __cosmosFillLogin.
+  const passwordField = (root) => Array.from(root.querySelectorAll('input[type="password" i]'))
+    .find(f => !f.disabled && !f.readOnly && f.getClientRects().length > 0);
+  const usernameField = (password) => {
+    const scope = password.form || document;
+    const named = scope.querySelector('input[autocomplete~="username" i]');
+    if (named) return named;
+    let before = null;
+    for (const f of scope.querySelectorAll('input')) {
+      if (f === password) break;
+      if (['text', 'email', 'tel', ''].includes((f.getAttribute('type') || '').toLowerCase()) && f.getClientRects().length > 0) before = f;
+    }
+    return before;
+  };
+  let toldOfForm = false;
+  const tellOfForm = () => { if (!toldOfForm && passwordField(document)) { toldOfForm = true; post({ type: 'loginForm' }); } };
+  // A frame's document can be whole before this script is in it (Cosmos reaches a frame from another site a moment late).
+  if (document.readyState === 'complete') tellOfForm(); else window.addEventListener('load', tellOfForm);
+  document.addEventListener('focusin', e => { if (e.target instanceof HTMLInputElement && e.target.type === 'password') tellOfForm(); }, true);
+  const sent = (password) => {
+    if (!password || !password.value) return;
+    const user = usernameField(password);
+    post({ type: 'login', username: user ? user.value : '', password: password.value });
+  };
+  const passwordIn = (el) => {
+    const form = el && (el.form || (el.closest && el.closest('form')));
+    return form ? form.querySelector('input[type="password" i]') : null;
+  };
+  document.addEventListener('submit', e => {
+    if (e.isTrusted && e.target instanceof HTMLFormElement) sent(e.target.querySelector('input[type="password" i]'));
+  }, true);
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' || !e.isTrusted || !(e.target instanceof HTMLInputElement)) return;
+    sent(e.target.type === 'password' ? e.target : passwordIn(e.target));
+  }, true);
+  document.addEventListener('click', e => {
+    if (!e.isTrusted || !e.target.closest) return;
+    const button = e.target.closest('button, input[type="submit" i]');
+    if (button && button.type === 'submit') sent(passwordIn(button));
+  }, true);
+  window.__cosmosFillLogin = (username, password) => {
+    const field = passwordField(document);
+    if (!field) return false;
+    // The page's frameworks (React and the like) learn of a value from an input event after the field's own setter.
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    const fill = (f, v) => { setValue.call(f, v); f.dispatchEvent(new Event('input', { bubbles: true })); f.dispatchEvent(new Event('change', { bubbles: true })); };
+    const user = usernameField(field);
+    if (user && username) fill(user, username);
+    fill(field, password);
+    return true;
+  };
 })();

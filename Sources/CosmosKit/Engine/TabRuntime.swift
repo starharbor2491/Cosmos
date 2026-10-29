@@ -48,6 +48,8 @@ public protocol TabHost: AnyObject {
     /// Puts a video in a floating window of its own; false when there is none to put it in.
     func tab(_ tab: TabRuntime, showPictureInPicture view: NSView) -> Bool
     func tabDidLeavePictureInPicture(_ tab: TabRuntime)
+    /// Where saved passwords are kept and offered; nil where none are (a private window).
+    var passwordManager: PasswordManager? { get }
 }
 
 public extension TabHost {
@@ -63,6 +65,7 @@ public extension TabHost {
     func tab(_ tab: TabRuntime, dangerAt url: URL) -> PageDanger? { nil }
     func tab(_ tab: TabRuntime, allowDangerous url: URL) {}
     func tab(_ tab: TabRuntime, closeNotification id: String) {}
+    var passwordManager: PasswordManager? { nil }
 }
 
 /// One live page: owns the engine's page, mirrors its state into observable properties and answers what the page asks
@@ -93,6 +96,11 @@ public final class TabRuntime: NSObject {
     public private(set) var hoverURL: URL?
     public private(set) var themeColor: RGBA?
     public private(set) var loadFailed = false
+    /// The origins of the page's frames that have shown a password field since it loaded.
+    public private(set) var loginFormOrigins: Set<String> = []
+    /// The sign-in Cosmos is asking whether to save, while it asks: one question at a time, however often the page sends.
+    public private(set) var offeredLogin: OfferedLogin?
+    public struct OfferedLogin: Equatable { public var origin: String; public var username: String }
     public private(set) var isCapturing = false
     public var isMuted = false { didSet { applyMute() } }
     public var lastActivity = Date()
@@ -149,6 +157,8 @@ public final class TabRuntime: NSObject {
         canGoBack = s.canGoBack
         canGoForward = s.canGoForward
         isCapturing = s.isCapturing
+        // Chromium keeps a zoom for each site, so a page that goes to another site may have another zoom.
+        if zoom != page.zoom { zoom = page.zoom }
     }
 
     // MARK: Commands
@@ -168,10 +178,15 @@ public final class TabRuntime: NSObject {
     /// The range ⌘+ and ⌘- keep to; a zoom read from a Boost file is held to it too.
     static func clampedZoom(_ z: Double) -> Double { z.isFinite ? min(5, max(0.25, z)) : 1 }
 
-    public func zoomIn() { page.zoom = Self.clampedZoom(page.zoom + 0.1) }
-    public func zoomOut() { page.zoom = Self.clampedZoom(page.zoom - 0.1) }
-    public func resetZoom() { page.zoom = 1 }
-    public var zoom: Double { page.zoom }
+    public func zoomIn() { setZoom(page.zoom + 0.1) }
+    public func zoomOut() { setZoom(page.zoom - 0.1) }
+    public func resetZoom() { setZoom(1) }
+    /// The page's zoom, kept here so that views follow it (read again as the page changes).
+    public private(set) var zoom: Double = 1
+    private func setZoom(_ value: Double) {
+        page.zoom = Self.clampedZoom(value)
+        zoom = page.zoom
+    }
 
     /// Runs `js` in the page; `world` `.agent` is Cosmos's own, out of the page's reach.
     public func evaluate(_ js: String, in world: ScriptWorld = .page) {
@@ -254,7 +269,14 @@ public final class TabRuntime: NSObject {
     func handleAgentMessage(_ body: [String: Any], fromMainFrame: Bool) {
         switch body["type"] as? String {
         case "ready":
-            if fromMainFrame { sendConfig() }
+            if fromMainFrame { loginFormOrigins = []; sendConfig() }
+        case "loginForm":
+            guard let origin = SavedLogin.origin(body["frameOrigin"] as? String) else { break }
+            loginFormOrigins.insert(origin)
+            if profileID != nil { host?.passwordManager?.prepare() }
+        case "login":
+            guard let origin = SavedLogin.origin(body["frameOrigin"] as? String), let password = body["password"] as? String else { break }
+            offerToSave(origin: origin, username: body["username"] as? String ?? "", password: password)
         case "meta":
             guard fromMainFrame, let pageURL = url, let host = pageURL.host else { return }
             let icons = (body["icons"] as? [[String: Any]] ?? []).compactMap { d -> (URL, String, String)? in
@@ -295,6 +317,50 @@ public final class TabRuntime: NSObject {
     }
 
     private static func address(_ value: Any?) -> URL? { (value as? String).flatMap { $0.isEmpty ? nil : URL(string: $0) } }
+
+    // MARK: Passwords
+
+    /// What was typed into a sign-in form that was sent to `origin` (the frame's own, as Chromium knows it, not what the
+    /// page says). Cosmos asks whether to keep it, unless it has it already, the user said never for the site, saving is
+    /// off, or this is a private window.
+    private func offerToSave(origin: String, username: String, password: String) {
+        guard offeredLogin == nil, let host, host.settings.offerToSavePasswords, profileID != nil, let passwords = host.passwordManager,
+              passwords.shouldOffer(origin: origin, username: username, password: password) else { return }
+        offeredLogin = OfferedLogin(origin: origin, username: username)
+        Task { [weak self] in
+            guard let self = await TabRuntime.shown(WeakTab(value: self)) else { return }
+            defer { offeredLogin = nil }
+            let site = SavedLogin.site(of: origin)
+            let update = passwords.logins(for: origin).contains { $0.username == username }
+            // The page chose the user name; the site is Chromium's.
+            let name = username.count > 60 ? username.prefix(60) + "…" : username
+            let alert = NSAlert()
+            alert.messageText = update ? "Update the saved password for \(site)?" : "Save your password for \(site)?"
+            alert.informativeText = (name.isEmpty ? "" : "For \(name). ") + "Cosmos can fill it in the next time you sign in."
+            alert.addButton(withTitle: update ? "Update Password" : "Save Password")
+            alert.addButton(withTitle: "Not Now")
+            if !update { alert.addButton(withTitle: "Never for This Site") }
+            switch await sheet(alert) {
+            case .alertFirstButtonReturn: passwords.save(origin: origin, username: username, password: password)
+            case .alertThirdButtonReturn: passwords.neverSave(origin)
+            default: break
+            }
+        }
+    }
+
+    /// The saved sign-ins for the sign-in forms this page has shown, most recently used first.
+    public var savedLogins: [SavedLogin] {
+        guard profileID != nil, let passwords = host?.passwordManager else { return [] }
+        return loginFormOrigins.sorted().flatMap { passwords.logins(for: $0) }
+    }
+
+    /// Fills `login` into the page's sign-in form, in a frame of the login's own origin only.
+    @discardableResult
+    public func fill(_ login: SavedLogin) async -> Bool {
+        guard await page.fillLogin(username: login.username, password: login.password, origin: login.origin) else { return false }
+        host?.passwordManager?.markUsed(login.id)
+        return true
+    }
 
     /// What the agent needs to know about this tab: whether a link to another site opens in Peek.
     private func sendConfig() {
@@ -362,6 +428,19 @@ public final class TabRuntime: NSObject {
         if let window = view.window { alert.beginSheetModal(for: window, completionHandler: done) } else { done(alert.runModal()) }
     }
 
+    /// Waits as `waitUntilShown` does, for work of the tab's own that nothing else waits on, without keeping the tab
+    /// meanwhile, so that a tab closed first goes at once: the tab, or nil once it is torn down or gone.
+    private static func shown(_ tab: WeakTab) async -> TabRuntime? {
+        while true {
+            switch tab.value.map({ $0.isTornDown ? 0 : $0.view.window == nil ? 1 : 2 }) {
+            case 1?: try? await Task.sleep(nanoseconds: 250_000_000)
+            case 2?: return tab.value
+            default: return nil
+            }
+        }
+    }
+    private struct WeakTab { weak var value: TabRuntime? }
+
     /// Waits until the page is on screen: a tab in the background does not get to put up a dialog over whatever the user is
     /// looking at. False if the tab went away first.
     private func waitUntilShown() async -> Bool {
@@ -401,7 +480,7 @@ extension TabRuntime: EnginePageDelegate {
         lastActivity = Date()
         mirror()
         if pendingBoostZoom, let h = url?.host, let z = host?.tab(self, boostZoomFor: h) {
-            page.zoom = Self.clampedZoom(z)
+            setZoom(z)
         }
         pendingBoostZoom = false
         if isMuted { applyMute() }

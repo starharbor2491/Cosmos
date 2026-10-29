@@ -1,35 +1,6 @@
 import SwiftUI
 import CosmosCore
 
-/// The Library's main area, beside its rail in the sidebar: the section chosen there (Downloads, History, Archive or
-/// System Resources), each with a search field and its controls along the top.
-struct LibraryView: View {
-    let store: BrowserStore
-    let window: WindowState
-    @Environment(\.palette) private var palette
-
-    var body: some View {
-        let shape = RoundedRectangle(cornerRadius: WebContentHostView.corner, style: .continuous)
-        ZStack {
-            shape.fill(palette.isDark ? Color.black.opacity(0.22) : Color.white.opacity(0.35))
-                .overlay(shape.strokeBorder(palette.stroke, lineWidth: 0.5))
-            // One section at a time; each starts fresh, so a search typed in one does not follow you to the next.
-            Group {
-                switch window.librarySection {
-                case .downloads: DownloadsSection(store: store, window: window)
-                case .history: HistorySection(store: store, window: window)
-                case .resources: ResourcesSection(store: store, window: window)
-                }
-            }
-            .id(window.librarySection)
-            .transition(.opacity)
-            .frame(maxWidth: 820)
-        }
-        .clipShape(shape)
-        .animation(Motion.quick, value: window.librarySection)
-    }
-}
-
 /// The row along the top of a section: a search field (or the section's name when there is nothing to search) and the
 /// section's controls at the right.
 struct LibraryHeader<Controls: View>: View {

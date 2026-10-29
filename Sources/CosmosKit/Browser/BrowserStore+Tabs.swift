@@ -175,7 +175,7 @@ extension BrowserStore {
     // MARK: Closing & archiving
 
     func closeSelected(in window: WindowState) {
-        // ⌘W with the Library over the page closes the Library, not a tab that cannot be seen.
+        // ⌘W with the Library in the sidebar closes the Library, not a tab whose row cannot be seen.
         if window.libraryOpen { leaveLibrary(in: window); return }
         guard let id = currentTabItemID(in: window) else {
             if window.selectedItemID == nil { closeWindowRequested(window) }
@@ -414,19 +414,15 @@ extension BrowserStore {
             // Its sections are chosen on the sidebar's rail, so a hidden sidebar comes back with it.
             if !window.sidebarVisible { window.sidebarVisible = true; window.sidebarPeeking = false }
             guard !window.libraryOpen else { return }
-            // The page under it is not being looked at: a find bar over it would be searching nothing anyone can see, and a
-            // playing video goes to Picture in Picture the way it does when you switch to another tab.
-            if window.overlay == .find { window.overlay = nil }
-            if settings.autoPictureInPicture, let rt = currentRuntime(in: window), rt.hasPlayingVideo, !BehaviorConfig.shared.disallowsAutoPiP(rt.url) {
-                rt.enterPictureInPicture()
-            }
+            // The Library is in the sidebar, which widens for it; the page stays beside it (its find bar and its video too).
             window.libraryOpen = true
             haptics.levelChange()
         case .space(let id): switchSpace(to: id, in: window)
         }
     }
 
-    /// Brings the page back if the Library is over it. For what is about the page: it should not happen out of sight.
+    /// Brings the space back into the sidebar if the Library is there. For what is about the space's tabs: it should not
+    /// happen out of sight.
     func leaveLibrary(in window: WindowState) {
         if window.libraryOpen { show(.space(window.focusedSpaceID), in: window) }
     }
@@ -704,6 +700,8 @@ extension BrowserStore {
         if let host = url.host?.lowercased() { dangerousSitesVisitedAnyway.insert(host) }
     }
     public func tabDidLeavePictureInPicture(_ tab: TabRuntime) { onPictureInPictureEnded?(tab) }
+
+    public var passwordManager: PasswordManager? { isIncognito ? nil : passwords }
 
     public func tab(_ tab: TabRuntime, remember allowed: Bool?, forPermission key: String) {
         guard !isIncognito else { return }

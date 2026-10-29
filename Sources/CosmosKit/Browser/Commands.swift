@@ -13,15 +13,14 @@ enum BrowserCommand: String, CaseIterable {
     case newWindow, newIncognito, newProbe
     case resetPinned, collapseFolders, expandFolders, resetTab
     case setDefaultBrowser, importFromArc, toggleDeveloperTools, openInDefaultBrowser, manageExtensions, showSiteControls
+    case fillPassword, showPasswords, toggleUtilities
 
-    /// Whether the command is about what the Library is covering: the page that is showing, the tab that holds it, or the
-    /// space it is in. It would happen out of sight, so the page comes back first. (Picture in Picture is not: the page can
-    /// go to it from under the Library.)
-    var needsThePageInView: Bool {
+    /// Whether the command is about what the Library takes the place of in the sidebar: the space's tabs, folders and sky.
+    /// It would happen out of sight, so the sidebar goes back to the space first. (What is about the page alone, reloading
+    /// it or finding in it, happens with the Library open: the page is beside it.)
+    var needsTheSpaceInView: Bool {
         switch self {
-        case .reload, .hardReload, .stopLoading, .goBack, .goForward, .copyLink, .copyLinkMarkdown, .find, .print, .zoomIn, .zoomOut, .resetZoom,
-             .muteTab, .viewSource, .toggleDeveloperTools, .openInDefaultBrowser, .showSiteControls, .showBoosts,
-             .togglePin, .toggleFavorite, .addSplit, .closeSplitPane, .separateSplit, .resetTab,
+        case .togglePin, .toggleFavorite, .addSplit, .closeSplitPane, .separateSplit, .resetTab,
              .editTheme, .deleteSpace, .clearUnpinned, .resetPinned, .newFolder, .collapseFolders, .expandFolders:
             return true
         default:
@@ -82,6 +81,9 @@ enum BrowserCommand: String, CaseIterable {
         case .openInDefaultBrowser: return "Open Page in Another Browser"
         case .manageExtensions: return "Manage Extensions"
         case .showSiteControls: return "Site Controls"
+        case .fillPassword: return "Fill Saved Password"
+        case .showPasswords: return "Passwords"
+        case .toggleUtilities: return "Show / Hide Utilities"
         }
     }
 
@@ -122,6 +124,9 @@ enum BrowserCommand: String, CaseIterable {
         case .manageExtensions: return "puzzlepiece.extension"
         case .showSiteControls: return "shield.lefthalf.filled"
         case .openInDefaultBrowser: return "arrow.up.forward.app"
+        case .fillPassword: return "key.fill"
+        case .showPasswords: return "key"
+        case .toggleUtilities: return "sidebar.right"
         }
     }
 
@@ -133,6 +138,9 @@ enum BrowserCommand: String, CaseIterable {
         case .clearUnpinned: return ["clear", "archive", "close all"]
         case .addSplit: return ["split", "side by side"]
         case .showBoosts: return ["boost", "zap", "css", "dark mode", "custom"]
+        case .fillPassword: return ["password", "login", "sign in", "autofill"]
+        case .showPasswords: return ["saved passwords", "logins", "keychain"]
+        case .toggleUtilities: return ["utilities", "tools", "translate", "zoom", "files", "right sidebar"]
         case .showSettings: return ["preferences", "options"]
         case .showArchive: return ["closed tabs", "old tabs"]
         case .showLibrary: return ["archive", "history", "downloads", "utilities"]
@@ -190,7 +198,7 @@ enum BrowserCommand: String, CaseIterable {
 
 extension BrowserStore {
     func perform(_ command: BrowserCommand, in window: WindowState) {
-        if command.needsThePageInView { leaveLibrary(in: window) }
+        if command.needsTheSpaceInView { leaveLibrary(in: window) }
         let rt = currentRuntime(in: window)
         let curID = currentTabItemID(in: window)
         switch command {
@@ -239,6 +247,11 @@ extension BrowserStore {
         case .showSettings: onShowSettings?()
         case .manageExtensions: onShowSettingsTab?(.extensions)
         case .showSiteControls: window.overlay = .siteControls
+        case .fillPassword:
+            guard let rt, let login = rt.savedLogins.first else { window.showToast("No saved password for this page", symbol: "key"); break }
+            Task { if await rt.fill(login) { window.showToast("Filled the password for \(login.site)", symbol: "key.fill") } }
+        case .showPasswords: onShowSettingsTab?(.passwords)
+        case .toggleUtilities: window.utilitiesVisible.toggle()
         case .showShortcuts: window.overlay = .shortcuts
         case .showWelcome, .importFromArc: window.overlay = .welcome
         case .newWindow: onNewWindow?()

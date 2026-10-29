@@ -41,6 +41,8 @@ FOUNDATION_EXPORT int CosmosCEFAnswerDescriptor(void);
 /// Puts settings of the whole browser (what `Local State` holds) into the running Chromium, as `setPreferences:` does.
 + (void)setGlobalPreferences:(NSDictionary<NSString *, id> *)preferences;
 @property (class, readonly) BOOL isRunning;
+/// The browsers CEF has made for Cosmos and not yet closed, and those asked for and not made yet.
+@property (class, readonly) NSInteger openBrowserCount;
 @property (class, readonly, nullable) NSString *lastError;
 @property (class, readonly) NSString *chromiumVersion;
 @end
@@ -59,6 +61,21 @@ typedef NS_ENUM(NSInteger, CosmosCEFPermissionSetting) {
   CosmosCEFPermissionSettingBlock,
 };
 
+/// A cookie to put into a profile.
+@interface CosmosCEFCookie : NSObject
+/// "example.com" for a cookie only that host gets, ".example.com" for one its subdomains get too.
+@property (nonatomic, copy) NSString *domain;
+@property (nonatomic, copy) NSString *name;
+@property (nonatomic, copy) NSString *value;
+@property (nonatomic, copy) NSString *path;
+/// Nil for a cookie that ends with the session.
+@property (nonatomic, copy, nullable) NSDate *expires;
+@property (nonatomic) BOOL secure;
+@property (nonatomic) BOOL httpOnly;
+/// Chromium's numbers: -1 unspecified, 0 none, 1 lax, 2 strict.
+@property (nonatomic) NSInteger sameSite;
+@end
+
 /// A profile: its cookies, storage and cache in its own folder inside the root cache, or in memory only. The DevTools
 /// protocol finds only the global one by its browser context id, so what is set per profile is set here.
 @interface CosmosCEFContext : NSObject
@@ -72,6 +89,9 @@ typedef NS_ENUM(NSInteger, CosmosCEFPermissionSetting) {
 - (void)setPermission:(CosmosCEFPermission)permission origin:(NSString *)origin to:(CosmosCEFPermissionSetting)setting;
 /// Deletes every cookie of the profile; `done` runs on the main thread after.
 - (void)deleteCookies:(dispatch_block_t)done;
+/// Puts `cookies` into the profile; `done` runs on the main thread with how many Chromium took (it refuses one that is
+/// not valid for its site, such as a SameSite=None cookie that is not secure).
+- (void)setCookies:(NSArray<CosmosCEFCookie *> *)cookies done:(void (^)(NSInteger taken))done;
 /// Asked about each request of the profile's pages before it is made, on CEF's network thread (not the main one): YES
 /// stops it. It gets the request's address, its kind ("main_frame", "script", … as declarativeNetRequest names them), the
 /// origin that made it, and the address of the document it is for and of each document that one is in, nearest first.

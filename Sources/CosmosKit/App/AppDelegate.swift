@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import SwiftUI
 import CosmosCore
 import CosmosEngine
@@ -30,6 +31,16 @@ struct LaunchOptions {
         if env["COSMOS_DEMO"] == "1" { o.demo = true }
         if env["COSMOS_OFFLINE"] == "1" { o.offline = true }
         return o
+    }
+
+    /// A demo in a data folder that is its own (the temporary one, or a new or empty one it was given): nothing there is
+    /// anyone's, so its passwords' key and Chromium's are made up for the run and no Keychain question stops it. A demo
+    /// pointed at a folder that has data in it uses the real keys, so that it neither locks away the passwords there nor
+    /// garbles the cookies. Asked before the store writes anything.
+    var usesThrowawayKeys: Bool {
+        guard demo else { return false }
+        guard let dataDirectory else { return true }
+        return ((try? FileManager.default.contentsOfDirectory(atPath: dataDirectory.path)) ?? []).isEmpty
     }
 
     var resolvedDataDirectory: URL {
@@ -82,12 +93,16 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
         SpatialProbe.isRecording = options.automationScript != nil
         NSApp.applicationIconImage = AppIcon.image
         engine = ChromiumEngine()
-        store = BrowserStore(directory: options.resolvedDataDirectory, engine: engine)
+        let throwaway = options.usesThrowawayKeys
+        let demoKey = SymmetricKey(size: .bits256)
+        store = BrowserStore(directory: options.resolvedDataDirectory, engine: engine,
+                             passwordKey: throwaway ? { demoKey } : PasswordManager.keychainKey)
         engine.settings = store.settings.engine
         // Every profile's data is in the data folder's `Engine Profiles`; the first profile's is the one extensions run in.
         let first = store.workspace.profiles[0].id
         if let folder = store.engineFolder(forProfile: first) {
-            ChromiumEngine.configure(root: folder.deletingLastPathComponent(), defaultProfileID: first, defaultProfile: folder)
+            ChromiumEngine.configure(root: folder.deletingLastPathComponent(), defaultProfileID: first, defaultProfile: folder,
+                                     switches: throwaway ? ["--use-mock-keychain"] : [])
         }
         var wasReady = engine.status.isReady
         engine.onStatusChange = { [weak self] in

@@ -130,20 +130,22 @@ import Testing
         #expect(!rig.window.libraryOpen)
     }
 
+    /// The page is beside the Library (which is in the sidebar): what is about the page alone happens with it open.
     @Test(arguments: [BrowserCommand.reload, .hardReload, .stopLoading, .goBack, .goForward, .find, .zoomIn, .zoomOut, .resetZoom, .muteTab,
-                      .copyLink, .togglePin, .toggleFavorite, .addSplit, .resetTab, .showSiteControls, .toggleDeveloperTools])
-    func commandsAboutThePageLeaveTheLibrary(command: BrowserCommand) {
+                      .copyLink, .showSiteControls, .toggleDeveloperTools, .showBoosts, .fillPassword])
+    func commandsAboutThePageKeepTheLibraryBesideIt(command: BrowserCommand) {
         let rig = Rig(seed: true)
         _ = rig.store.newTab(url: URL(string: "about:blank?a"), in: rig.window)
         rig.store.show(.library, in: rig.window)
         rig.store.perform(command, in: rig.window)
-        #expect(!rig.window.libraryOpen, "\(command)")
+        #expect(rig.window.libraryOpen, "\(command)")
     }
 
-    /// What is about the focused space (its sky, its tabs, its folders, deleting it) is about something the Library is covering
-    /// too: it comes back first.
-    @Test(arguments: [BrowserCommand.showBoosts, .editTheme, .deleteSpace, .clearUnpinned, .resetPinned, .newFolder, .collapseFolders, .expandFolders])
-    func commandsAboutTheSpaceLeaveTheLibraryToo(command: BrowserCommand) {
+    /// What is about the tab's row or the focused space (pinning, splits, its sky, its folders, deleting it) is about what
+    /// the Library took the place of in the sidebar: the space comes back first.
+    @Test(arguments: [BrowserCommand.togglePin, .toggleFavorite, .addSplit, .resetTab, .editTheme, .deleteSpace, .clearUnpinned, .resetPinned,
+                      .newFolder, .collapseFolders, .expandFolders])
+    func commandsAboutTheSpaceLeaveTheLibrary(command: BrowserCommand) {
         let rig = Rig(seed: true)
         rig.store.show(.library, in: rig.window)
         rig.store.perform(command, in: rig.window)
@@ -165,8 +167,7 @@ import Testing
         #expect(!rig.window.libraryOpen)
     }
 
-    /// The rail is in the sidebar. With the sidebar hidden the page controls in the bar over the page (Back, Forward, Reload)
-    /// are what is left, and they act on the page, so the Library goes with the sidebar.
+    /// The Library is in the sidebar: with the sidebar hidden it has nowhere to be, and goes with it.
     @Test func hidingTheSidebarLeavesTheLibrary() {
         let rig = Rig(seed: true)
         rig.store.show(.library, in: rig.window)
@@ -178,7 +179,7 @@ import Testing
         #expect(!rig.window.libraryOpen && !rig.window.sidebarVisible)
     }
 
-    /// ⌘W is "Archive Tab": with the Library over the page it would archive a tab that cannot be seen.
+    /// ⌘W is "Archive Tab": with the Library in the sidebar it would archive a tab whose row cannot be seen.
     @Test func closingWithTheLibraryUpOnlyLeavesIt() throws {
         let rig = Rig(seed: true)
         let tab = try #require(rig.today.first)
@@ -190,15 +191,14 @@ import Testing
         #expect(rig.store.archive.entries.isEmpty)
     }
 
-    @Test func theFindBarDoesNotStayUpOverTheLibrary() {
+    @Test func theFindBarStaysOnThePageBesideTheLibrary() {
         let rig = Rig(seed: true)
         rig.window.overlay = .find
         rig.store.show(.library, in: rig.window)
-        #expect(rig.window.overlay == nil)
+        #expect(rig.window.overlay == .find)
     }
 
-    /// The page under the Library is not looked at, so a playing video goes to Picture in Picture as it would when you switch
-    /// tabs. (There is no video here: this checks only that the way out and back does not fall over.)
+    /// Opening the Library and leaving it again, with a page beside it.
     @Test func leavingAndComingBackWithNoVideoIsQuiet() {
         let rig = Rig(seed: true)
         _ = rig.store.newTab(url: URL(string: "about:blank?a"), in: rig.window)

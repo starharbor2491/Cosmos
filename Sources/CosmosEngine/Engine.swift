@@ -65,6 +65,9 @@ public protocol EngineProfile: AnyObject {
     func clearHistory(since date: Date?) async
     /// Forgets the engine's own history of a page, with or without a fragment.
     func deleteHistory(of url: URL) async
+    /// Puts cookies into the profile (another browser's, so its sites keep you signed in). Returns how many it took: it
+    /// refuses one that is not valid for its site.
+    func setCookies(_ cookies: [EngineCookie]) async -> Int
     /// The engine's own processes for this profile, for the Resources view.
     func processIDs() async -> [Int32]
     /// Stops the profile's engine and starts it again with the current settings; its pages come back through
@@ -72,6 +75,27 @@ public protocol EngineProfile: AnyObject {
     func restart()
     /// Ends the profile and everything in it.
     func close()
+}
+
+/// A cookie to give a profile.
+public struct EngineCookie: Equatable, Sendable {
+    /// Chromium's numbers for it.
+    public enum SameSite: Int, Sendable { case unspecified = -1, none = 0, lax = 1, strict = 2 }
+    /// "example.com" for a cookie only that host gets, ".example.com" for one its subdomains get too.
+    public var domain: String
+    public var name: String
+    public var value: String
+    public var path: String
+    /// Nil for a cookie that ends with the session.
+    public var expires: Date?
+    public var isSecure: Bool
+    public var isHTTPOnly: Bool
+    public var sameSite: SameSite
+    public init(domain: String, name: String, value: String, path: String = "/", expires: Date? = nil, isSecure: Bool = false,
+                isHTTPOnly: Bool = false, sameSite: SameSite = .unspecified) {
+        self.domain = domain; self.name = name; self.value = value; self.path = path; self.expires = expires
+        self.isSecure = isSecure; self.isHTTPOnly = isHTTPOnly; self.sameSite = sameSite
+    }
 }
 
 /// A compiled filter list in the engine's own format, as `CosmosBlocking` makes it.
@@ -260,6 +284,9 @@ public protocol EnginePage: AnyObject {
     func recentContextClick() -> ContextClick?
     /// Shows the engine's inspector, when it has one Cosmos can show.
     func showInspector() -> Bool
+    /// Fills a sign-in into the page's form with a password field, in the frames whose origin is `origin` ("https://host")
+    /// and no others. False when there is no such form.
+    func fillLogin(username: String, password: String, origin: String) async -> Bool
     /// Takes the video in Picture in Picture back into the page.
     func leavePictureInPicture()
     /// The user clicked or closed one of the page's notifications: its own events fire.

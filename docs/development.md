@@ -112,6 +112,7 @@ The script is a JSON array of steps; the log goes to `script.json.log`. A snapsh
 | `open` `navigate` `reload` `select` | new tab, same tab, reload, select the nth tab |
 | `overlay` `closeOverlay` `type` `key` `chord` | open a panel (`commandBar`, `boosts`, `welcome`, `shortcuts`, `siteControls`, `find`, `theme`; `archive` (History narrowed to archived tabs), `history`, `downloads` and `resources` open the Library on that section), type into the focused field, press keys |
 | `library` `swipe` | slide the sidebar to the Library (`"section"` picks Downloads, History, Resources, or `archive`, which is History narrowed to the archived tabs; `"back": true` returns to the space); `swipe` feeds two-finger scroll samples (`dx` in all, `steps`, `pause`) to the sidebar's swipe view the way a trackpad's would arrive, past the part that reads system events |
+| `utility` | open a quick utility's panel at the window's right (`"name"`: `translate`, `zoom`, `files`, `passwords` or `site`; no name closes it) |
 | `space` `sidebar` `split` `peek` `closePeek` `menu` `resize` | switch space, toggle sidebar, add a split, open Peek, run a menu item, set window size |
 | `external` | open a link as if from another app (exercises link routing) |
 | `boost` `downloadsDir` | create a Boost; choose where downloads go |

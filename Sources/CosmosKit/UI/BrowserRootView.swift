@@ -11,6 +11,7 @@ struct BrowserRootView: View {
 
     var body: some View {
         let palette = Palette(theme: space.theme)
+        let floats = PaneFit.utilityFloats(window)
         ZStack(alignment: .topLeading) {
             ThemeBackground(theme: space.theme)
                 .id(space.id)
@@ -23,9 +24,25 @@ struct BrowserRootView: View {
                     SidebarResizeHandle(window: window, store: store)
                 }
                 ContentArea(store: store, window: window)
+                    .overlay(alignment: .topTrailing) {
+                        // No room beside the page: over its edge instead.
+                        if floats, window.utilitiesVisible, let utility = window.utility {
+                            UtilityPanel(store: store, window: window, utility: utility, floating: true)
+                                .shadow(color: .black.opacity(0.25), radius: 18, y: 6)
+                                .padding(.trailing, Metrics.Space.s)
+                                .transition(.move(edge: .trailing).combined(with: .opacity))
+                        }
+                    }
                 if let panel = window.sidePanel {
                     ExtensionSidePanelView(store: store, window: window, panel: panel)
                         .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
+                if window.utilitiesVisible {
+                    if !floats, let utility = window.utility {
+                        UtilityPanel(store: store, window: window, utility: utility)
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                    }
+                    UtilitiesRail(store: store, window: window)
                 }
             }
 
@@ -45,9 +62,41 @@ struct BrowserRootView: View {
         .animation(Motion.glide, value: space.id)
         .animation(Motion.standard, value: window.sidebarVisible)
         .animation(Motion.standard, value: window.sidePanel?.extensionID)
+        .animation(Motion.standard, value: window.utility)
+        .animation(Motion.standard, value: window.utilitiesVisible)
         .animation(Motion.quick, value: window.overlay)
         .preferredColorScheme(palette.isDark ? .dark : .light)
         .frame(minWidth: 760, minHeight: 480)
+        .background(GeometryReader { g in
+            Color.clear
+                .onAppear { window.contentWidth = g.size.width }
+                .onChange(of: g.size.width) { _, width in window.contentWidth = width }
+        })
+    }
+}
+
+/// What fits beside the page in a window, so that the page keeps at least `minimumPage`: the Library's wider sidebar
+/// narrows (never below the user's own width), and a utility panel with no room beside the page floats over its edge.
+@MainActor
+enum PaneFit {
+    static let minimumPage = 360.0
+
+    /// What is always beside the page on the right: the utilities rail, an extension's side panel.
+    static func besidePage(_ window: WindowState) -> Double {
+        (window.utilitiesVisible ? Double(UtilitiesRail.width) : 0)
+            + (window.sidePanel != nil ? Double(ExtensionSidePanelView.width) + 2 * Double(Metrics.Space.s) : 0)
+    }
+
+    static func sidebarWidth(_ window: WindowState) -> Double {
+        guard window.libraryOpen else { return window.sidebarWidth }
+        let room = window.contentWidth > 0 ? window.contentWidth - besidePage(window) - minimumPage : LibraryPage.width
+        return max(window.sidebarWidth, min(LibraryPage.width, room))
+    }
+
+    static func utilityFloats(_ window: WindowState) -> Bool {
+        guard window.contentWidth > 0, window.utility != nil else { return false }
+        let sidebar = window.sidebarVisible ? sidebarWidth(window) : 0
+        return window.contentWidth - sidebar - besidePage(window) - Double(UtilityPanel.width) < minimumPage
     }
 }
 
@@ -102,10 +151,7 @@ struct ContentArea: View {
         VStack(spacing: 0) {
             if !window.sidebarVisible { CompactTopBar(store: store, window: window) }
             ZStack {
-                if window.libraryOpen {
-                    // The Library takes the page's place; the tab's page stays loaded behind it, out of the hierarchy.
-                    LibraryView(store: store, window: window).transition(Motion.lift)
-                } else if panes.isEmpty {
+                if panes.isEmpty {
                     EmptyStateView(store: store, window: window)
                 } else {
                     WebContentRepresentable(
@@ -120,14 +166,13 @@ struct ContentArea: View {
                     )
                 }
 
-                if !store.engineStatus.isReady, !window.libraryOpen { EngineStatusCard(store: store).transition(.opacity) }
-                if window.overlay == .find, !window.libraryOpen { FindBar(store: store, window: window).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing).padding(14) }
-                if !window.libraryOpen, let rt = panes.first(where: { $0.danger != nil }) { DangerBar(runtime: rt).transition(.opacity) }
+                if !store.engineStatus.isReady { EngineStatusCard(store: store).transition(.opacity) }
+                if window.overlay == .find { FindBar(store: store, window: window).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing).padding(14) }
+                if let rt = panes.first(where: { $0.danger != nil }) { DangerBar(runtime: rt).transition(.opacity) }
                 if let peek = window.peek { PeekOverlay(store: store, window: window, peek: peek) }
                 StatusBubble(store: store, window: window)
                 ToastView(window: window)
             }
-            .animation(Motion.slide, value: window.libraryOpen)
             .padding(EdgeInsets(top: window.sidebarVisible ? 8 : 0, leading: window.sidebarVisible ? 0 : 8, bottom: 8, trailing: 8))
             .background(alignment: .top) { if window.sidebarVisible { WindowDragArea().frame(height: 8) } }
         }
@@ -175,7 +220,7 @@ struct StatusBubble: View {
 
     var body: some View {
         // A link under the pointer when the Library came up stays "hovered" (the page never hears the pointer leave).
-        let text = window.libraryOpen ? nil : store.currentRuntime(in: window)?.hoverURL?.absoluteString
+        let text = store.currentRuntime(in: window)?.hoverURL?.absoluteString
         VStack {
             Spacer()
             HStack {

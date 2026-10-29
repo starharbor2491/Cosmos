@@ -24,6 +24,9 @@ struct SidebarView: View {
 
     var pages: [SidebarPage] { SidebarPage.all(spaces: store.workspace.spaces.map(\.id)) }
 
+    /// The Library makes the sidebar wider (never narrower than the width the user gave it), as far as the window has room.
+    var width: Double { PaneFit.sidebarWidth(window) }
+
     var body: some View {
         VStack(spacing: 0) {
             // The Library is a rail of its own: the address and the page's controls go quiet above it (and stay in place,
@@ -43,7 +46,7 @@ struct SidebarView: View {
             }
             .animation(Motion.slide, value: window.libraryOpen)
 
-            SidebarPager(slide: slide, width: window.sidebarWidth) { page in
+            SidebarPager(slide: slide, width: width) { page in
                 switch page {
                 case .library:
                     LibraryPage(store: store, window: window)
@@ -55,7 +58,8 @@ struct SidebarView: View {
             }
             SpacesBar(store: store, window: window)
         }
-        .frame(width: window.sidebarWidth)
+        .frame(width: width)
+        .animation(Motion.slide, value: window.libraryOpen)
         .environment(\.palette, palette)
         .background(SwipeCatcher(isEnabled: window.overlay == nil, onMove: swipeMoved, onEnd: swipeEnded))
         .onChange(of: window.sidebarPage) { _, page in slideTo(page) }
