@@ -19,6 +19,8 @@ final class ChromiumRuntime {
         var defaultProfileID: UUID
         var defaultCache: URL
         var switches: [String]
+        /// The Keychain item Chromium keeps its key in is "<name> Safe Storage"; nil: Chromium's own, which other apps share.
+        var keychainName: String?
         /// Chromium's helpers run in its sandbox, which only works when this process is the app they are in (not a test).
         var sandboxed = true
 
@@ -30,7 +32,7 @@ final class ChromiumRuntime {
             return Configuration(mainBundle: nil, framework: framework,
                                  helper: frameworks.appendingPathComponent("Cosmos Helper.app/Contents/MacOS/Cosmos Helper"),
                                  root: root, defaultProfileID: defaultProfileID, defaultCache: defaultProfile,
-                                 switches: switches)
+                                 switches: switches, keychainName: "Cosmos")
         }
     }
 
@@ -97,7 +99,8 @@ final class ChromiumRuntime {
         let switches = ["--disable-blink-features=AutomationControlled"] + configuration.switches + ChromiumPreferences.flags(settings: settings)
         guard CosmosCEFRuntime.start(withMainBundle: configuration.mainBundle?.path, framework: configuration.framework.path,
                                      helper: configuration.helper.path, rootCache: configuration.root.path, globalCache: defaultCache.path,
-                                     switches: switches, sandboxed: configuration.sandboxed) else {
+                                     switches: switches, keychainName: configuration.keychainName,
+                                     sandboxed: configuration.sandboxed) else {
             failure = CosmosCEFRuntime.lastError ?? "Chromium did not start"
             return false
         }

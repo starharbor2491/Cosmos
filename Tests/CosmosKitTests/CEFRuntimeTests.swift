@@ -141,7 +141,8 @@ enum CEFTestRuntime {
         do { try makeApp(at: app, identifier: "dev.cosmos.tests", executable: nil) } catch {
             return "could not make the helper apps: \(error)"
         }
-        // The Keychain is left alone in tests (a second test binary would be asked about the first one's item), and a fake
+        // The Keychain is left alone here (a second test binary would be asked about the first one's item; the one check of
+        // it is an engine check's, with an item of its own), and a fake
         // camera and microphone stand in for the Mac's, so macOS never asks about them. Names under cosmos.test are this
         // Mac, for tests that need a site with subdomains. The helpers cannot be sandboxed: the sandbox lets them read only
         // the app the browser process is, and this process is the test runner.
@@ -521,13 +522,13 @@ struct CEFRuntimeTests {
 
     /// Runs the engine check app on `address` for `seconds`, with its data in `folder`: the lines it printed. One that has
     /// not ended in 30 seconds is stopped, with its helpers.
-    private func runEngineCheck(_ folder: URL, _ address: String, seconds: Double = 2) async throws -> [String] {
+    private func runEngineCheck(_ folder: URL, _ address: String, seconds: Double = 2, keychainName: String? = nil) async throws -> [String] {
         let program = try CEFTestRuntime.engineCheck.get()
         let output = folder.appendingPathComponent("check-\(UUID().uuidString).txt")
         FileManager.default.createFile(atPath: output.path, contents: nil)
         let check = Process()
         check.executableURL = program
-        check.arguments = [folder.appendingPathComponent("Engine", isDirectory: true).path, address, String(seconds)]
+        check.arguments = [folder.appendingPathComponent("Engine", isDirectory: true).path, address, String(seconds)] + (keychainName.map { [$0] } ?? [])
         // A file, not a pipe: Chromium's helpers have the check's output too, and a pipe stays open while one lives.
         check.standardOutput = try FileHandle(forWritingTo: output)
         check.standardError = FileHandle.nullDevice
@@ -580,6 +581,23 @@ struct CEFRuntimeTests {
         let cookies = server.requestHeads(of: "/look").flatMap { $0 }.filter { $0.lowercased().hasPrefix("cookie:") }
         #expect(cookies.contains { $0.contains("kept=yes") }, "\(cookies)")
         #expect(!cookies.contains { $0.contains("session=yes") }, "\(cookies)")
+    }
+
+    /// Chromium keeps the key it encrypts cookies with in a Keychain item of Cosmos's own ("Cosmos Safe Storage"), not
+    /// in "Chromium Safe Storage", which other Chromium-based apps share. Here under a name of the test's, which no item
+    /// can have had before; the check deletes the item, and asks nothing on screen.
+    @Test func chromiumKeepsItsKeyInAKeychainItemOfCosmossOwn() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-cef-keychain-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let server = try await SiteServer(routes: [
+            "/set": .init(type: "text/html", body: Data("<title>Set</title>".utf8), headers: ["Set-Cookie: kept=yes; Max-Age=3600; Path=/"]),
+        ])
+        let name = "Cosmos Test \(UUID().uuidString)"
+        let lines = try await runEngineCheck(folder, "http://127.0.0.1:\(server.port)/set", keychainName: name)
+        #expect(lines.contains("stopped"), "\(lines)")
+        #expect(lines.contains("keychain item made"), "\(lines)")
+        #expect(lines.contains("keychain item deleted"), "\(lines)")
     }
 
     /// The addresses in Chromium's own history of a profile whose folder is `profile` (read once Chromium has stopped).

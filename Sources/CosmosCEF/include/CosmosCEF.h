@@ -22,7 +22,9 @@ FOUNDATION_EXPORT int CosmosCEFAnswerDescriptor(void);
 /// process's own; the helpers find the browser by that app's bundle identifier). `framework` is the Chromium Embedded
 /// Framework.framework, `helper` the executable of `Cosmos Helper.app` (its GPU, renderer, plugin and alerts siblings sit
 /// next to it), `rootCache` the folder every profile's folder is inside, `globalCache` the folder of the profile CEF
-/// starts with (inside `rootCache`), `switches` Chromium switches ("--name" or "--name=value"). With `sandboxed`, the
+/// starts with (inside `rootCache`), `switches` Chromium switches ("--name" or "--name=value"). `keychainName` names the
+/// Keychain item Chromium keeps the key of cookies and saved data in, "<name> Safe Storage" (account <name>); nil leaves
+/// Chromium's own, "Chromium Safe Storage", which other Chromium-based apps share. With `sandboxed`, the
 /// helpers run in Chromium's sandbox, which lets them read only the app this process is: NO only where this process is not
 /// that app (a test runner). The DevTools pipe is always on. NO, with the reason in `lastError`, when CEF did not start.
 + (BOOL)startWithMainBundle:(nullable NSString *)mainBundle
@@ -31,6 +33,7 @@ FOUNDATION_EXPORT int CosmosCEFAnswerDescriptor(void);
                   rootCache:(NSString *)rootCache
                 globalCache:(NSString *)globalCache
                    switches:(NSArray<NSString *> *)switches
+               keychainName:(nullable NSString *)keychainName
                   sandboxed:(BOOL)sandboxed;
 /// Closes every page and stops CEF, so that what Chromium has not written yet (cookies, settings) reaches the disk, then
 /// runs `done` on the main thread with YES. A page that does not close within three seconds leaves CEF running, and

@@ -219,6 +219,7 @@ class CosmosCefApp : public CefApp, public CefBrowserProcessHandler {
                   rootCache:(NSString *)rootCache
                 globalCache:(NSString *)globalCache
                    switches:(NSArray<NSString *> *)switches
+               keychainName:(NSString *)keychainName
                   sandboxed:(BOOL)sandboxed {
   if (gRunning) return YES;
   if (gStopped) { gLastError = @"Chromium has stopped"; return NO; }
@@ -241,6 +242,10 @@ class CosmosCefApp : public CefApp, public CefBrowserProcessHandler {
   CefString(&settings.root_cache_path) = rootCache.UTF8String;
   CefString(&settings.cache_path) = globalCache.UTF8String;
   CefString(&settings.log_file) = [rootCache stringByAppendingPathComponent:@"engine.log"].UTF8String;
+  if (keychainName) {
+    CefString(&settings.keychain_service_name) = [keychainName stringByAppendingString:@" Safe Storage"].UTF8String;
+    CefString(&settings.keychain_account_name) = keychainName.UTF8String;
+  }
   std::vector<std::string> list;
   for (NSString *item in switches) list.push_back(item.UTF8String);
   if (!CefInitialize(args, settings, new CosmosCefApp(std::move(list)), nullptr)) {
