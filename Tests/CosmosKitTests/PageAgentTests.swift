@@ -983,6 +983,72 @@ struct PageAgentTests {
         #expect(popup.state.title == expected, "the click gave it the tab (activeTab), address and all")
     }
 
+    /// An extension's popup shows what its page draws, under its button (with none, in the tab's top-right corner) and at
+    /// the page's size, and closes when the keyboard goes elsewhere. macOS shows Chromium's drawing in a window of Cosmos's
+    /// but not in a popover, which stays white. The picture is the window server's, of the popup's own window, which stays
+    /// off screen here as the button's window is.
+    @Test func anExtensionsPopupShowsWhatItsPageDraws() async throws {
+        defer { stop() }
+        let folder = try extensionFolder([
+            "manifest.json": """
+            {"manifest_version": 3, "name": "Cosmos Red", "version": "1.0", "action": {"default_title": "Red", "default_popup": "popup.html"}}
+            """,
+            "popup.html": "<!doctype html><html><head><title>red</title></head><body style='margin:0;background:#d00;width:420px;height:480px'></body></html>",
+        ])
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let profile = try #require(rig.store.environment(forProfile: rig.space.profileID).engineProfile as? ChromiumProfile)
+        let host = try #require(profile.extensions as? ChromiumExtensionHost)
+        let id = try await host.load(folder: folder)
+        let server = try await SiteServer(routes: ["/": html("<title>Here</title>here")])
+        let here = try await open(URL(string: "http://127.0.0.1:\(server.port)/")!)
+        let buttons = NSWindow(contentRect: NSRect(x: -3000, y: -3000, width: 900, height: 700), styleMask: [.borderless], backing: .buffered, defer: false)
+        buttons.isReleasedWhenClosed = false
+        let tab = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 700))
+        let button = NSView(frame: NSRect(x: 200, y: 600, width: 30, height: 30))
+        buttons.contentView?.addSubview(tab)
+        buttons.contentView?.addSubview(button)
+        buttons.orderBack(nil)
+        defer { buttons.orderOut(nil) }
+        func onScreen(_ view: NSView) -> CGRect { buttons.convertToScreen(view.convert(view.bounds, to: nil)) }
+        /// The share of the popup's window, as the window server shows it, that is the page's red.
+        func red(_ window: NSWindow) -> Double {
+            guard let image = CGWindowListCreateImage(.null, .optionIncludingWindow, CGWindowID(window.windowNumber), [.boundsIgnoreFraming]) else { return 0 }
+            let picture = NSBitmapImageRep(cgImage: image)
+            var red = 0, all = 0
+            for x in stride(from: 8, to: picture.pixelsWide - 8, by: 8) {
+                for y in stride(from: 8, to: picture.pixelsHigh - 8, by: 8) {
+                    all += 1
+                    if let c = picture.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB), c.redComponent > 0.6, c.greenComponent < 0.3, c.blueComponent < 0.3 { red += 1 }
+                }
+            }
+            return all == 0 ? 0 : Double(red) / Double(all)
+        }
+
+        for under in [button, nil] {
+            let page = try #require(await host.performAction(id, on: here.page))
+            let popup = ExtensionPopup(page: page)
+            var closed = false
+            popup.onClose = { closed = true }
+            defer { popup.close() }
+            popup.show(under: under, in: tab)
+            try await waitFor { page.state.title == "red" && !page.state.isLoading }
+            let window = try #require(page.view.window)
+            try await waitFor(5) { window.frame.size == NSSize(width: 420, height: 480) }
+            #expect(window.frame.size == NSSize(width: 420, height: 480), "the page's size")
+            if let under {
+                #expect(window.frame.maxY <= onScreen(under).minY && abs(window.frame.midX - onScreen(under).midX) < 1, "under the button")
+            } else {
+                #expect(window.frame.maxX == onScreen(tab).maxX - PopupPlacement.margin && window.frame.maxY == onScreen(tab).maxY - PopupPlacement.margin,
+                        "in the tab's top-right corner")
+            }
+            try? await waitFor(10) { red(window) > 0.95 }
+            #expect(red(window) > 0.95, "the page's red, as the window server shows it")
+
+            NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
+            #expect(closed && !window.isVisible && page.view.window == nil, "the keyboard went elsewhere: it closed")
+        }
+    }
+
     /// A newer copy of an extension, in another folder but with the same key (as Cosmos writes the Web Store's into it),
     /// takes the older one's place in Chromium under the same id, and finds what the older one stored.
     @Test func aNewerCopyOfAnExtensionKeepsItsIDAndItsData() async throws {

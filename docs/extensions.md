@@ -50,7 +50,7 @@ that end in browser UI:
 | Extension API | In Cosmos |
 |---|---|
 | `chrome.action` / `chrome.browserAction`: title, icon, badge text and colour, enable / disable, per-tab values | the button in a row under the address pill, with its badge |
-| the action's popup (`default_popup`, `setPopup`) | the popup page in a popover under the button, sized to what the page lays out (within Chrome's limits) |
+| the action's popup (`default_popup`, `setPopup`) | the popup page in a panel under the button (from a shortcut, in the tab's top-right corner), grown to what the page lays out (within Chrome's limits); it closes when the keyboard goes elsewhere, as a click outside it does. (Not a popover: macOS shows none of Chromium's drawing in one, only a white box.) |
 | `action.onClicked` (no popup) | clicking the button; Cosmos starts the extension's worker if it is not running, and the listeners get the tab |
 | `chrome.contextMenus` / `chrome.menus`: items, children, `update`, `remove`, contexts `page` `link` `image` `selection` `editable` `video` `audio` `all`, `%s` in titles | the items appear in the page's right-click menu (in the radial menu under More); a click reaches `onClicked` with the click's `info` and the tab |
 | `chrome.commands` (`commands` in the manifest, `_execute_action`) | the shortcut works in Cosmos windows; `onCommand` gets the command and the tab |
@@ -145,7 +145,10 @@ for its tab, and the `chrome.tabs` events. The tests below were first written fo
   (`anExtensionsNotificationIsPostedAndItsClickReachesTheExtension`); its side panel opens as a page with the
   extension's APIs (`anExtensionsSidePanelOpensAsAPageCosmosShows`); an interactive `launchWebAuthFlow` opens a window
   and resolves with the address the site sent it to (`anExtensionsSignInOpensAWindowAndEndsWhereTheSiteSendsBack`).
-  `getAuthToken` against Google itself was not tried.
+  `getAuthToken` against Google itself was not tried. A popup shows what its page draws, under its button or with none in
+  the tab's top-right corner, at the page's size, and closes when its window loses the keyboard
+  (`anExtensionsPopupShowsWhatItsPageDraws`, from the window server's picture of the popup's window, kept off screen);
+  in a popover it was white.
 - `ChromiumExtensionHostTests`: the mirror of buttons, badges, icons, popups and menus from what the shim reports, and
   that icons are only read from inside the extension's own folder.
 - `ExtensionTests`, `ExtensionShortcutTests` (on the fake engine): adding, the permission summary, enabling, removing,
@@ -165,8 +168,9 @@ for its tab, and the `chrome.tabs` events. The tests below were first written fo
   from another site or from a frame. `aSecondAddToChromeWhileTheFirstIsAskedAddsNothing`: one question, one copy.
   Checked once by hand (2026-10-30), not in the tests: a real Web Store package (uBlock Origin Lite) passes the signature
   check and installs, and on the real store page Add to Chrome reaches Cosmos with its id.
-- Not checked: real extensions from the Web Store one by one, popups, side panels and notifications on screen, and
-  anything that needs a person at the keyboard.
+- Not checked: real extensions from the Web Store one by one; side panels and notifications on screen; popups on a
+  real screen in the app (a click elsewhere closing one, typing into one, their corners and shadow); and anything that
+  needs a person at the keyboard.
 
 ## For developers
 
@@ -174,7 +178,7 @@ for its tab, and the `chrome.tabs` events. The tests below were first written fo
 |---|---|
 | `CosmosImport/Browsers/ChromiumExtensions.swift` | finds extensions in Chromium-family profiles |
 | `CosmosImport/Browsers/ChromeWebStore.swift` | id and link parsing, download address, `.crx` unwrapping |
-| `CosmosKit/Extensions/ExtensionCenter.swift` | the list of installed extensions, install and remove, permission summary, shortcuts, the popup popover |
+| `CosmosKit/Extensions/ExtensionCenter.swift` | the list of installed extensions, install and remove, permission summary, shortcuts, the popup's panel |
 | `CosmosKit/UI/ExtensionButtons.swift` | the button row |
 | `CosmosEngine/Engine.swift` (`EngineExtensions`) | what the browser asks of an engine's extensions: load, unload, buttons, menu items, commands |
 | `CosmosChromium/ChromiumExtensionHost.swift` | loads extensions over the pipe (`Extensions.loadUnpacked`), attaches to their service workers, mirrors their UI, answers `chrome.tabs`, `chrome.windows` and `chrome.scripting` by Cosmos's tabs and the extension's permissions, delivers clicks |

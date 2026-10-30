@@ -460,16 +460,16 @@ final class ExtensionCenter {
         guard let runtime, let engineID = engineIDs[id], let engine = engine(for: runtime) else { return }
         Task {
             guard let page = await engine.performAction(engineID, on: runtime.page) else { actionRevision += 1; return }
-            showPopup(page, anchor: anchor ?? runtime.view)
+            showPopup(page, under: anchor, in: runtime.view)
         }
     }
 
-    private func showPopup(_ page: EnginePage, anchor: NSView) {
+    private func showPopup(_ page: EnginePage, under button: NSView?, in tab: NSView) {
         popup?.close()
         let popup = ExtensionPopup(page: page)
         popup.onClose = { [weak self, weak popup] in if self?.popup === popup { self?.popup = nil } }
         self.popup = popup
-        popup.show(from: anchor)
+        popup.show(under: button, in: tab)
     }
 
     // MARK: Menus and shortcuts
@@ -496,7 +496,7 @@ final class ExtensionCenter {
             guard let shortcut = ExtensionShortcut(command.shortcut), shortcut.matches(event) else { continue }
             Task {
                 // `_execute_action` opens the popup, as the button does.
-                if let popup = await engine.performCommand(command, on: runtime.page) { showPopup(popup, anchor: runtime.view) }
+                if let popup = await engine.performCommand(command, on: runtime.page) { showPopup(popup, under: nil, in: runtime.view) }
             }
             return true
         }
@@ -538,46 +538,93 @@ struct ExtensionShortcut: Equatable {
     }
 }
 
-/// An extension's popup: its page in a popover under the button, sized to what the page lays out.
+/// The window an extension's popup is in. A popover would be the natural one, but macOS does not show Chromium's drawing
+/// in a popover (it stays white), so the popup is a panel of its own.
+final class ExtensionPopupPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+}
+
+/// An extension's popup: its page in a panel under the button (with none, in the tab's top-right corner), sized to what
+/// the page lays out. Like a popover, it goes with the button's window and closes when the keyboard goes elsewhere (a
+/// click outside it, another app).
 @MainActor
-final class ExtensionPopup: NSObject, EnginePageDelegate, NSPopoverDelegate {
+final class ExtensionPopup: NSObject, EnginePageDelegate {
     let page: EnginePage
-    private let popover = NSPopover()
+    private let panel = ExtensionPopupPanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 420), styleMask: [.borderless],
+                                            backing: .buffered, defer: false)
+    /// What it hangs from: the button, or with none the tab's page.
+    private weak var button: NSView?
+    private weak var tab: NSView?
+    private var hasButton = false
+    private var resignObserver: NSObjectProtocol?
+    private var closed = false
     var onClose: (() -> Void)?
 
     init(page: EnginePage) {
         self.page = page
         super.init()
         page.delegate = self
-        let controller = NSViewController()
-        controller.view = page.view
-        popover.contentViewController = controller
-        popover.contentSize = NSSize(width: 360, height: 420)
-        popover.behavior = .transient
-        popover.delegate = self
+        panel.isReleasedWhenClosed = false
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        // Going to another app takes the keyboard away, which closes it; hiding it as well is not needed.
+        panel.hidesOnDeactivate = false
+        let content = NSView(frame: panel.contentLayoutRect)
+        content.wantsLayer = true
+        content.layer?.cornerRadius = 10
+        content.layer?.masksToBounds = true
+        page.view.frame = content.bounds
+        page.view.autoresizingMask = [.width, .height]
+        content.addSubview(page.view)
+        panel.contentView = content
     }
 
-    func show(from anchor: NSView) {
-        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
-        page.view.window?.makeFirstResponder(page.view)
+    func show(under button: NSView?, in tab: NSView) {
+        self.button = button?.window == nil ? nil : button
+        self.tab = tab
+        hasButton = self.button != nil
+        guard let window = (self.button ?? tab).window else { close(); return }
+        place(panel.frame.size)
+        window.addChildWindow(panel, ordered: .above)
+        panel.makeKeyAndOrderFront(nil)
+        panel.makeFirstResponder(page.view)
+        resignObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: panel, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.close() }
+        }
         fit()
     }
 
-    func close() { popover.close() }
+    func close() {
+        guard !closed else { return }
+        closed = true
+        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
+        panel.parent?.removeChildWindow(panel)
+        panel.orderOut(nil)
+        page.delegate = nil
+        page.close()
+        onClose?()
+    }
+
+    /// Where the button (or the tab) is now: its window may have moved since the popup opened. A button that has gone
+    /// since leaves the popup where it is.
+    private func place(_ size: CGSize) {
+        let view = hasButton ? button : tab
+        guard let view, let window = view.window else { return }
+        let rect = window.convertToScreen(view.convert(view.bounds, to: nil))
+        let visible = window.screen?.visibleFrame
+        panel.setFrame(view === button ? PopupPlacement.frame(under: rect, size: size, visible: visible)
+                                       : PopupPlacement.frame(inTopRightOf: rect, size: size, visible: visible), display: true)
+    }
 
     /// Chromium sizes a popup to its page; here the page is asked how big it laid itself out, within Chrome's limits.
     private func fit() {
         Task {
             let size = await page.evaluate("[document.documentElement.scrollWidth, document.documentElement.scrollHeight]", in: .page) as? [Double]
-            guard let size, size.count == 2, size[0] > 0, size[1] > 0 else { return }
-            popover.contentSize = NSSize(width: min(800, max(25, size[0])), height: min(600, max(25, size[1])))
+            guard !closed, let size, size.count == 2, size[0] > 0, size[1] > 0 else { return }
+            place(CGSize(width: min(800, max(25, size[0])), height: min(600, max(25, size[1]))))
         }
-    }
-
-    func popoverDidClose(_ notification: Notification) {
-        page.delegate = nil
-        page.close()
-        onClose?()
     }
 
     func pageStateDidChange(_ page: EnginePage) {}
@@ -597,8 +644,8 @@ final class ExtensionPopup: NSObject, EnginePageDelegate, NSPopoverDelegate {
     func page(_ page: EnginePage, closeNotification id: String) {}
     func pageDidLeavePictureInPicture(_ page: EnginePage) {}
     func pageDidForceClick(_ page: EnginePage) {}
-    func pageRequestsClose(_ page: EnginePage) { popover.close() }
-    func pageRendererDidTerminate(_ page: EnginePage) { popover.close() }
+    func pageRequestsClose(_ page: EnginePage) { close() }
+    func pageRendererDidTerminate(_ page: EnginePage) { close() }
 }
 
 /// What an extension asks for, in a form the "Add extension?" prompt can show.
