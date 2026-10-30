@@ -683,6 +683,25 @@ extension BrowserStore {
 
     public func tab(_ tab: TabRuntime, closeNotification id: String) { notifier.close(key: Self.notificationKey(tab, id)) }
 
+    /// The Chrome Web Store's Add to Chrome: the extension is added as Settings adds one, after the same question, asked
+    /// over the tab. A private window has no extensions.
+    public func tab(_ tab: TabRuntime, wantsExtensionFromWebStore id: String) {
+        guard let center = extensionCenter else {
+            tab.tell("Extensions can't be added here", "Private windows run no extensions. Add it from a normal window.")
+            return
+        }
+        Task {
+            do {
+                guard let item = try await center.addFromStorePage(id, confirm: { await tab.confirmAdding($0) }) else { return }
+                // A tab in Peek or a popup is in no window's list: the toast goes to the window in front.
+                (window(showing: tab.itemID) ?? activeWindow)?.showToast("Added “\(item.name)”.", symbol: "puzzlepiece.extension.fill")
+            } catch ExtensionError.declined {
+            } catch {
+                tab.tell("The extension wasn't added", error.localizedDescription)
+            }
+        }
+    }
+
     static func notificationKey(_ tab: TabRuntime, _ id: String) -> String { "page/\(tab.itemID.uuidString)/\(id)" }
 
     public func tab(_ tab: TabRuntime, dangerAt url: URL) -> PageDanger? { danger(at: url) }

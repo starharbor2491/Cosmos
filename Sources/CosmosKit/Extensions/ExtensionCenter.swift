@@ -78,6 +78,8 @@ final class ExtensionCenter {
     @ObservationIgnored private var popup: ExtensionPopup?
     @ObservationIgnored private var keyMonitor: Any?
     @ObservationIgnored private var updating: Task<Void, Never>?
+    /// The Web Store ids a store page's Add to Chrome is adding now.
+    @ObservationIgnored private var adding: Set<String> = []
 
     private struct Library: Codable { var items: [InstalledExtension] = [] }
     private struct WeakEnvironment { weak var value: ProfileEnvironment? }
@@ -243,6 +245,14 @@ final class ExtensionCenter {
         return try await withPackage(from: url, id: id) { unpacked in
             try await install(from: unpacked, origin: "Chrome Web Store", webStoreID: id, confirm: confirm)
         }
+    }
+
+    /// A Chrome Web Store page's Add to Chrome: as `installFromWebStore`, but clicked again for an extension that is still
+    /// being downloaded or asked about, it adds nothing and answers nil.
+    func addFromStorePage(_ id: String, confirm: (ExtensionRequestSummary) async -> Bool) async throws -> InstalledExtension? {
+        guard adding.insert(id).inserted else { return nil }
+        defer { adding.remove(id) }
+        return try await installFromWebStore(id, confirm: confirm)
     }
 
     /// Downloads the package at `url`, checks that it is extension `id`'s, signed by its developer (and, when the update

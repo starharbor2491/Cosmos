@@ -40,6 +40,12 @@ FOUNDATION_EXPORT int CosmosCEFAnswerDescriptor(void);
 + (void)whenReady:(dispatch_block_t)block;
 /// Puts settings of the whole browser (what `Local State` holds) into the running Chromium, as `setPreferences:` does.
 + (void)setGlobalPreferences:(NSDictionary<NSString *, id> *)preferences;
+/// Loads the framework (once). Loading it puts Chromium's memory allocator in place of the system's for the whole process,
+/// and another thread freeing memory while that happens can crash: load it before other threads start.
++ (BOOL)loadFramework:(NSString *)framework;
+/// True while CEF does its work on the main thread. What runs then (a key Chromium hands back to the menus, say) must not
+/// wait for CEF: nothing CEF has to do runs until its work returns.
+@property (class, readonly) BOOL isDoingWork;
 @property (class, readonly) BOOL isRunning;
 /// The browsers CEF has made for Cosmos and not yet closed, and those asked for and not made yet.
 @property (class, readonly) NSInteger openBrowserCount;

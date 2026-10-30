@@ -4,6 +4,7 @@
 // ahead, so what the page gets is still Chromium's decision. A page that gets around this only meets Chromium's refusal.
 // Picture in Picture: Cosmos shows the video in a window of its own; the page sees the element and events Chrome gives.
 // Notifications: Chromium "shows" them where nobody sees; Cosmos posts them to macOS, and clicks come back as their events.
+// The Chrome Web Store: its Add to Chrome asks Cosmos to add the extension.
 (function () {
   'use strict';
   if (window.__cosmosPageBridge) return;
@@ -32,6 +33,20 @@
     const replacement = make(original);
     Object.defineProperty(owner, name, { value: { [name](...args) { return replacement.apply(this, args); } }[name], writable: true, configurable: true });
   };
+
+  // The Chrome Web Store's Add to Chrome. Chromium has the store's API on the store's pages, but would ask with a
+  // window of Chrome's own that it has no place for here, and fail. Cosmos adds the extension itself, after asking as
+  // Settings does; the page is told the person cancelled, so that its button is back.
+  try {
+    const store = window.chrome && window.chrome.webstorePrivate;
+    if (store) {
+      replace(store, 'beginInstallWithManifest3', () => function (details, callback) {
+        if (details && typeof details.id === 'string') ask(details.id, 'webStoreInstall');
+        if (typeof callback === 'function') { callback('user_cancelled'); return; }
+        return Promise.resolve('user_cancelled');
+      });
+    }
+  } catch (e) {}
 
   if (window.MediaDevices) {
     replace(MediaDevices.prototype, 'getUserMedia', original => function (constraints) {

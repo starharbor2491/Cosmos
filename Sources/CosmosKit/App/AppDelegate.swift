@@ -152,6 +152,13 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // ⌘Q while a page has the keyboard comes back from Chromium inside its work on the main thread: waiting there for
+        // Chromium to stop would wait forever, as nothing Chromium has to do, nor the answer, runs until that work
+        // returns. So this quit is called off and made again from the run loop, a moment later.
+        if ChromiumEngine.isDoingWork {
+            sender.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0)
+            return .terminateCancel
+        }
         store.saveSession()
         store.saveNow()
         store.isTerminating = true

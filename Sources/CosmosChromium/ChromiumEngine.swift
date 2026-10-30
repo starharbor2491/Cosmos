@@ -20,12 +20,20 @@ public final class ChromiumEngine: BrowserEngine {
 
     public init() {}
 
-    /// Sets this process up for Chromium, first thing in `main`: the descriptors of Chromium's DevTools pipe, and the
-    /// application class CEF needs. Returns the application.
+    /// Sets this process up for Chromium, first thing in `main`: the descriptors of Chromium's DevTools pipe, the
+    /// framework (loading it swaps the process's memory allocator for Chromium's, which must happen while no other thread
+    /// runs), and the application class CEF needs. Returns the application.
     public static func prepareApplication() -> NSApplication {
         CosmosCEFReservePipe()
+        if let frameworks = Bundle.main.privateFrameworksURL {
+            let framework = frameworks.appendingPathComponent("Chromium Embedded Framework.framework", isDirectory: true)
+            if FileManager.default.fileExists(atPath: framework.path) { CosmosCEFRuntime.loadFramework(framework.path) }
+        }
         return CosmosApplication.shared
     }
+
+    /// True while Chromium does its work on the main thread (`CosmosCEFRuntime.isDoingWork`).
+    public static var isDoingWork: Bool { CosmosCEFRuntime.isDoingWork }
 
     /// Where Chromium keeps its data: every profile's folder is inside `root`. The profile `defaultProfileID`, whose
     /// folder is `defaultProfile`, is the one Chromium starts with and the one extensions run in. False when this Cosmos

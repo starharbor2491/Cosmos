@@ -452,6 +452,9 @@ final class ChromiumPage: EnginePage {
         return PageLoadError(kind: kind, detail: c.isEmpty ? "The page could not be loaded." : c)
     }
 
+    /// The Chrome Web Store, whose Add to Chrome comes to Cosmos (page-bridge.js). A test points it at a page of its own.
+    static var webStoreOrigin = "https://chromewebstore.google.com"
+
     private func binding(_ p: [String: Any], session: String) {
         guard (p["name"] as? String) == "__cosmosPost", let payload = p["payload"] as? String, let contextID = p["executionContextId"] as? Int,
               let message = (try? JSONSerialization.jsonObject(with: Data(payload.utf8))) as? [String: Any] else { return }
@@ -468,6 +471,15 @@ final class ChromiumPage: EnginePage {
                 if let kind = PermissionRequest.Kind(rawValue: message["kind"] as? String ?? "") { askPermission(kind, id: id, context: key) }
             case "pictureInPicture": enterPictureInPicture(id: id, context: key, frameID: context.frameID)
             case "leavePictureInPicture": endPictureInPicture(); evaluate("__cosmosAnswer(\(id), true)", in: key)
+            case "webStoreInstall":
+                // From the store's own page only, as Chromium knows the frame: another site, or a frame in the store's
+                // page, cannot start it.
+                let extensionID = message["kind"] as? String ?? ""
+                if fromMain, context.origin == Self.webStoreOrigin, extensionID.utf8.count == 32,
+                   extensionID.utf8.allSatisfy({ $0 >= UInt8(ascii: "a") && $0 <= UInt8(ascii: "p") }) {
+                    delegate?.page(self, wantsExtensionFromWebStore: extensionID)
+                }
+                evaluate("__cosmosAnswer(\(id))", in: key)
             default: evaluate("__cosmosAnswer(\(id))", in: key)
             }
         case "__pipRect":

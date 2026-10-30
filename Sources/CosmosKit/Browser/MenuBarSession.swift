@@ -127,6 +127,7 @@ final class MenuBarHost: TabHost {
     func tab(_ tab: TabRuntime, showPictureInPicture view: NSView) -> Bool { store.onPictureInPicture?(tab, view) ?? false }
     func tabDidLeavePictureInPicture(_ tab: TabRuntime) { store.onPictureInPictureEnded?(tab) }
     var passwordManager: PasswordManager? { store.passwordManager }
+    func tab(_ tab: TabRuntime, wantsExtensionFromWebStore id: String) { store.tab(tab, wantsExtensionFromWebStore: id) }
     func tab(_ tab: TabRuntime, showNotification note: EngineNotification) { store.tab(tab, showNotification: note) }
     func tab(_ tab: TabRuntime, closeNotification id: String) { store.tab(tab, closeNotification: id) }
     func tab(_ tab: TabRuntime, dangerAt url: URL) -> PageDanger? { store.tab(tab, dangerAt: url) }

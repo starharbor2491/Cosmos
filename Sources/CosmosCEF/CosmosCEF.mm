@@ -223,9 +223,8 @@ class CosmosCefApp : public CefApp, public CefBrowserProcessHandler {
   if (gRunning) return YES;
   if (gStopped) { gLastError = @"Chromium has stopped"; return NO; }
   if (!CosmosCEFReservePipe()) { gLastError = @"No pipe for the DevTools protocol could be made"; return NO; }
-  NSString *library = [framework stringByAppendingPathComponent:@"Chromium Embedded Framework"];
-  if (!cef_load_library(library.fileSystemRepresentation)) {
-    gLastError = [NSString stringWithFormat:@"Could not load %@", library];
+  if (![self loadFramework:framework]) {
+    gLastError = [NSString stringWithFormat:@"Could not load %@", framework];
     return NO;
   }
   // Chromium reads its switches from the App below, not from Cosmos's own arguments.
@@ -268,6 +267,13 @@ class CosmosCefApp : public CefApp, public CefBrowserProcessHandler {
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ FinishShutdown(false); });
 }
 
++ (BOOL)loadFramework:(NSString *)framework {
+  static BOOL loaded = NO;
+  if (!loaded) loaded = cef_load_library([framework stringByAppendingPathComponent:@"Chromium Embedded Framework"].fileSystemRepresentation);
+  return loaded;
+}
+
++ (BOOL)isDoingWork { return gPumping; }
 + (BOOL)isRunning { return gRunning; }
 + (NSInteger)openBrowserCount { return (NSInteger)gOpenBrowsers.size() + gBeingMade; }
 + (NSString *)lastError { return gLastError; }

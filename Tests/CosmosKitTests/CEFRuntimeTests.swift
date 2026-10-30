@@ -391,6 +391,32 @@ struct CEFRuntimeTests {
         #expect(server.requests.filter { $0.hasPrefix("/ad.js") }.count == before)
     }
 
+    /// What Chromium calls Cosmos about from inside its own work on the main thread runs while `isDoingWork` says so: a quit
+    /// that comes in then (⌘Q on a page: Chromium hands the key back to the menus from inside its work) must not wait for
+    /// Chromium there, as nothing Chromium has to do to stop would run.
+    @Test func whatChromiumCallsCosmosAboutFromItsWorkKnowsIt() async throws {
+        if let failure = await CEFTestRuntime.start() { Issue.record(Comment(rawValue: failure)); return }
+        #expect(!ChromiumEngine.isDoingWork, "not between Chromium's turns")
+        let engine = ChromiumEngine()
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("cosmos-cef-work-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let profile = try #require(engine.makeProfile(id: UUID(), directory: folder) as? ChromiumProfile)
+        defer { profile.close() }
+        let server = try await SiteServer(routes: ["/": .init(type: "text/html", body: Data("<title>Here</title>".utf8))])
+        let earlier = CosmosCEFBrowser.navigation
+        defer { CosmosCEFBrowser.navigation = earlier }
+        var seen: [Bool] = []
+        CosmosCEFBrowser.navigation = { browser, address, mainFrame in
+            seen.append(ChromiumEngine.isDoingWork)
+            return earlier?(browser, address, mainFrame) ?? true
+        }
+        let page = try #require(profile.makePage() as? ChromiumPage)
+        defer { page.close() }
+        page.load(try #require(URL(string: "http://127.0.0.1:\(server.port)/")))
+        try await waitFor { page.state.title == "Here" }
+        #expect(!seen.isEmpty && seen.allSatisfy { $0 }, "\(seen)")
+    }
+
     /// Another browser's cookies go into a profile and are sent to their own sites from then on, and to no others; a
     /// cookie Chromium would not have taken from the site itself (SameSite=None that is not secure) is refused.
     @Test func cookiesFromAnotherBrowserReachTheirSitesOnly() async throws {

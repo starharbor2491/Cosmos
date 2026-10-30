@@ -351,6 +351,12 @@ public protocol EnginePageDelegate: AnyObject {
     func pageRequestsClose(_ page: EnginePage)
     /// The process drawing the page died.
     func pageRendererDidTerminate(_ page: EnginePage)
+    /// The Chrome Web Store's own page asked to add extension `id` ("Add to Chrome"), which Chromium cannot do here.
+    func page(_ page: EnginePage, wantsExtensionFromWebStore id: String)
+}
+
+public extension EnginePageDelegate {
+    func page(_ page: EnginePage, wantsExtensionFromWebStore id: String) {}
 }
 
 /// One file coming down, as the engine reports it.

@@ -67,6 +67,7 @@ Open **Cosmos ▸ Extensions…** (or type "extensions" in the Command Bar).
 | Way | What it does |
 |---|---|
 | **Find in Arc and Other Browsers** | Lists the extensions installed in Arc, Chrome, Brave, Edge, Vivaldi, Opera and Chromium on this Mac. Tick the ones you want and choose Add Selected. |
+| **Add to Chrome, on the Chrome Web Store** | Browse the Web Store in Cosmos and choose Add to Chrome: Cosmos asks, over the tab, what Settings would ask, then adds it the way a pasted link does. (Chromium has the store's install API on the store's pages but would ask with a window of Chrome's own, which it has no place for here; Cosmos's page script hands the request to Cosmos instead, and only the store's own top-level page can make it, right after a click, as in Chrome. Clicking again while Cosmos still asks adds nothing more.) The store's "Switch to Chrome?" note can be dismissed. |
 | **Chrome Web Store link or id** | Paste `https://chromewebstore.google.com/detail/…/<id>` or the 32-letter id. Cosmos downloads the package from Google's update service (asking as the Chromium it runs, so it gets the version made for it), checks that its developer signed it for that id, and unpacks it. |
 | **Choose a Folder** | Any unpacked extension folder that contains `manifest.json`. Handy for extensions you are writing. |
 
@@ -159,9 +160,13 @@ for its tab, and the `chrome.tabs` events. The tests below were first written fo
   comes in by itself under the same id (the engine never lets go of it), one that asks for more waits and shows what
   it asks for, and one with the wrong SHA-256 or another developer's signature stays out; a disabled one stays off.
   `aNewerCopyOfAnExtensionKeepsItsIDAndItsData` (live Chromium): a second copy with the same key, in another folder,
-  takes the first one's place under the same id and reads what it stored.
-- Not checked: real extensions from the Web Store one by one (and so the signature check against a real package),
-  popups, side panels and notifications on screen, and anything that needs a person at the keyboard.
+  takes the first one's place under the same id and reads what it stored. `onlyTheWebStoresOwnPageCanAskToAddAnExtension`
+  (live Chromium): Add to Chrome reaches Cosmos from a click on the store's top-level page only, not without a click,
+  from another site or from a frame. `aSecondAddToChromeWhileTheFirstIsAskedAddsNothing`: one question, one copy.
+  Checked once by hand (2026-10-30), not in the tests: a real Web Store package (uBlock Origin Lite) passes the signature
+  check and installs, and on the real store page Add to Chrome reaches Cosmos with its id.
+- Not checked: real extensions from the Web Store one by one, popups, side panels and notifications on screen, and
+  anything that needs a person at the keyboard.
 
 ## For developers
 

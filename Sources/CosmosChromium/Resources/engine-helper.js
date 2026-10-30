@@ -32,6 +32,8 @@
   window.addEventListener('message', e => {
     const d = e.data;
     if (e.source !== window || !d || typeof d.__cosmosAsk !== 'string' || typeof d.id !== 'number' || typeof d.kind !== 'string') return;
+    // The Web Store's Add to Chrome counts only right after a click, as in Chrome; the page's scripts can't make one.
+    if (d.__cosmosAsk === 'webStoreInstall' && !(navigator.userActivation && navigator.userActivation.isActive)) return;
     post({ type: '__ask', what: d.__cosmosAsk, id: d.id, kind: d.kind });
   });
   window.__cosmosAnswer = (id, value) => window.postMessage({ __cosmosAnswer: id, value }, '*');

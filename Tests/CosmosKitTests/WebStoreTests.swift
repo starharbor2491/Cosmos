@@ -293,6 +293,24 @@ import Testing
         #expect(center.message == "Cosmos couldn't reach the Web Store to look for updates.")
     }
 
+    /// Add to Chrome clicked again while the first is still being asked about adds nothing more: one question, one copy.
+    @Test func aSecondAddToChromeWhileTheFirstIsAskedAddsNothing() async throws {
+        let (rig, center, _, served) = try started()
+        defer { withExtendedLifetime(rig) {} }
+        let developer = try Developer()
+        served.answers["response=redirect"] = try developer.package(files: Self.manifest("1.0"))
+        var answer: CheckedContinuation<Bool, Never>?
+        let first = Task { try await center.addFromStorePage(developer.id) { _ in await withCheckedContinuation { answer = $0 } } }
+        for _ in 0..<100 where answer == nil { try await Task.sleep(for: .milliseconds(10)) }
+        var asked = 0
+        #expect(try await center.addFromStorePage(developer.id) { _ in asked += 1; return true } == nil)
+        #expect(asked == 0)
+        answer?.resume(returning: true)
+        #expect(try await first.value?.version == "1.0")
+        #expect(center.items.count == 1)
+        #expect(try await center.addFromStorePage(developer.id) { _ in true } != nil, "once it is done, the store's button works again")
+    }
+
     /// A disabled extension is updated too, and stays off.
     @Test func aDisabledExtensionIsUpdatedAndStaysOff() async throws {
         let (rig, center, engine, served) = try started()

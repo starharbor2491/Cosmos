@@ -50,6 +50,8 @@ public protocol TabHost: AnyObject {
     func tabDidLeavePictureInPicture(_ tab: TabRuntime)
     /// Where saved passwords are kept and offered; nil where none are (a private window).
     var passwordManager: PasswordManager? { get }
+    /// The Chrome Web Store's Add to Chrome, on the store's page in `tab`.
+    func tab(_ tab: TabRuntime, wantsExtensionFromWebStore id: String)
 }
 
 public extension TabHost {
@@ -66,6 +68,7 @@ public extension TabHost {
     func tab(_ tab: TabRuntime, allowDangerous url: URL) {}
     func tab(_ tab: TabRuntime, closeNotification id: String) {}
     var passwordManager: PasswordManager? { nil }
+    func tab(_ tab: TabRuntime, wantsExtensionFromWebStore id: String) {}
 }
 
 /// One live page: owns the engine's page, mirrors its state into observable properties and answers what the page asks
@@ -428,6 +431,30 @@ public final class TabRuntime: NSObject {
         if let window = view.window { alert.beginSheetModal(for: window, completionHandler: done) } else { done(alert.runModal()) }
     }
 
+    /// Asks, over the tab, whether to add the extension `summary` describes: what it may do, in the words Settings uses.
+    func confirmAdding(_ summary: ExtensionRequestSummary) async -> Bool {
+        guard await waitUntilShown() else { return false }
+        let alert = NSAlert()
+        alert.messageText = "Add “\(summary.name)”?"
+        let lines = (summary.lines + summary.problems.prefix(3)).map { "• " + $0 }
+        alert.informativeText = (["From \(summary.origin)." + (summary.lines.isEmpty ? " It doesn't ask for any special access." : " It will be able to:")]
+                                 + lines).joined(separator: "\n")
+        alert.addButton(withTitle: "Add Extension")
+        alert.addButton(withTitle: "Cancel")
+        return await sheet(alert) == .alertFirstButtonReturn
+    }
+
+    /// Says over the tab why something it asked for did not happen.
+    func tell(_ title: String, _ detail: String) {
+        Task {
+            guard await waitUntilShown() else { return }
+            let alert = NSAlert()
+            alert.messageText = title
+            alert.informativeText = detail
+            _ = await sheet(alert)
+        }
+    }
+
     /// Waits as `waitUntilShown` does, for work of the tab's own that nothing else waits on, without keeping the tab
     /// meanwhile, so that a tab closed first goes at once: the tab, or nil once it is torn down or gone.
     private static func shown(_ tab: WeakTab) async -> TabRuntime? {
@@ -576,6 +603,7 @@ extension TabRuntime: EnginePageDelegate {
     public func pageWantsLocation(_ page: EnginePage) async -> PageLocation? { await host?.tabWantsLocation(self) }
 
     public func page(_ page: EnginePage, showNotification note: EngineNotification) { host?.tab(self, showNotification: note) }
+    public func page(_ page: EnginePage, wantsExtensionFromWebStore id: String) { host?.tab(self, wantsExtensionFromWebStore: id) }
 
     public func page(_ page: EnginePage, dangerAt url: URL) -> PageDanger? { host?.tab(self, dangerAt: url) }
 

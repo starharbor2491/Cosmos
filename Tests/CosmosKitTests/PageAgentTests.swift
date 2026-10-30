@@ -1115,6 +1115,81 @@ struct PageAgentTests {
         #expect(framed.offeredLogin == .init(origin: frame, username: "framed"), "the frame's site, not the page's")
     }
 
+    // MARK: The Chrome Web Store
+
+    /// The Chrome Web Store's Add to Chrome comes to Cosmos from the store's own page only, as Chromium knows the frame:
+    /// not from another site, not from a frame of another site inside the store's page, only for an extension id, and only
+    /// from a click, as in Chrome (the page's scripts can't fake one).
+    @Test func onlyTheWebStoresOwnPageCanAskToAddAnExtension() async throws {
+        defer { stop() }
+        final class Recorder: EnginePageDelegate {
+            var asked: [String] = []
+            func page(_ page: EnginePage, wantsExtensionFromWebStore id: String) { asked.append(id) }
+            func page(_ page: EnginePage, wantsPermission request: PermissionRequest) async -> Bool { false }
+            func pageStateDidChange(_ page: EnginePage) {}
+            func pageDidStartNavigation(_ page: EnginePage) {}
+            func pageDidCommitNavigation(_ page: EnginePage) {}
+            func pageDidFinishLoading(_ page: EnginePage) {}
+            func page(_ page: EnginePage, didFailLoading url: URL, error: PageLoadError) {}
+            func page(_ page: EnginePage, agentMessage: [String: Any], fromMainFrame: Bool) {}
+            func page(_ page: EnginePage, runDialog dialog: PageDialog) async -> PageDialog.Answer { PageDialog.Answer(accepted: false) }
+            func page(_ page: EnginePage, chooseFiles chooser: FileChooser) async -> [URL]? { nil }
+            func page(_ page: EnginePage, dangerAt url: URL) -> PageDanger? { nil }
+            func page(_ page: EnginePage, wantsCredentialsFor challenge: AuthChallenge) async -> PageCredentials? { nil }
+            func page(_ page: EnginePage, showNotification note: EngineNotification) {}
+            func page(_ page: EnginePage, closeNotification id: String) {}
+            func page(_ page: EnginePage, wantsPictureInPicture view: NSView) async -> Bool { false }
+            func pageDidLeavePictureInPicture(_ page: EnginePage) {}
+            func pageWantsLocation(_ page: EnginePage) async -> PageLocation? { nil }
+            func pageDidForceClick(_ page: EnginePage) {}
+            func pageRequestsClose(_ page: EnginePage) {}
+            func pageRendererDidTerminate(_ page: EnginePage) {}
+        }
+        func ask(_ id: String) -> String { "window.postMessage({ __cosmosAsk: 'webStoreInstall', id: 1, kind: '\(id)' }, '*');" }
+        /// A button over the page's (or frame's) top-left, at `top`, that asks for `ids` when clicked.
+        func button(_ ids: String..., top: Int = 0) -> String {
+            "<button style='position:fixed;left:0;top:\(top)px;width:200px;height:100px' onclick=\"\(ids.map(ask).joined())\">Add</button>"
+        }
+        func frame(_ src: String, top: Int) -> String {
+            "<iframe src=\"\(src)\" style='position:fixed;left:0;top:\(top)px;width:200px;height:100px;border:0'></iframe>"
+        }
+        let fromStore = String(repeating: "a", count: 32), fromFrame = String(repeating: "b", count: 32), fromElsewhere = String(repeating: "c", count: 32)
+        let fromOwnFrame = String(repeating: "d", count: 32), unclicked = String(repeating: "e", count: 32)
+        let body = "<body style='margin:0'>"
+        let server = try await SiteServer(routes: [
+            "/store": html("\(body)<script>onload = () => document.title = 'Store'; \(ask(unclicked))</script>"
+                           + button(fromStore, "not an id")
+                           + "<script>document.write(`\(frame("http://localhost:${location.port}/frame", top: 100))`)</script>"
+                           + frame("/own-frame", top: 200)),
+            "/frame": html(body + button(fromFrame)),
+            "/own-frame": html(body + button(fromOwnFrame)),
+            "/other": html("\(body)<title>Other</title>" + button(fromElsewhere)),
+        ])
+        let earlier = ChromiumPage.webStoreOrigin
+        ChromiumPage.webStoreOrigin = "http://127.0.0.1:\(server.port)"
+        defer { ChromiumPage.webStoreOrigin = earlier }
+        let profile = try #require(rig.store.environment(forProfile: rig.space.profileID).engineProfile as? ChromiumProfile)
+        let recorder = Recorder()
+        for (address, buttons) in [("http://127.0.0.1:\(server.port)/store", [50, 150, 250]), ("http://localhost:\(server.port)/other", [50])] {
+            let page = try #require(profile.makePage() as? ChromiumPage)
+            defer { page.close() }
+            page.delegate = recorder
+            page.view.setFrameSize(NSSize(width: 800, height: 600))
+            page.load(try #require(URL(string: address)))
+            try await waitFor { !page.state.isLoading && !page.state.title.isEmpty }
+            // Chromium drops input that comes before the page has drawn: two frames, and it has.
+            _ = await page.evaluate("new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(1))))", in: .page)
+            for y in buttons {
+                for type in ["mouseMoved", "mousePressed", "mouseReleased"] {
+                    page.input("Input.dispatchMouseEvent", ["type": type, "x": 100, "y": y, "button": type == "mouseMoved" ? "none" : "left",
+                                                            "buttons": type == "mousePressed" ? 1 : 0, "clickCount": 1])
+                }
+            }
+            try await Task.sleep(for: .milliseconds(800))
+        }
+        #expect(recorder.asked == [fromStore], "only from a click on the store's own page")
+    }
+
     // MARK: Boosts and blocking
 
     @Test func aBoostStylesThePagesOfItsSite() async throws {
