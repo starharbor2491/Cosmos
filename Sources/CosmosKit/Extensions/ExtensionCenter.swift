@@ -75,7 +75,9 @@ final class ExtensionCenter {
     /// True while Cosmos asks the Web Store about updates.
     private(set) var checking = false
     @ObservationIgnored private var environments: [WeakEnvironment] = []
-    @ObservationIgnored private var popup: ExtensionPopup?
+    @ObservationIgnored private(set) var popup: ExtensionPopup?
+    /// Popups dragged away from their buttons: open until they are closed, whatever popup opens next.
+    @ObservationIgnored private(set) var detachedPopups: [ExtensionPopup] = []
     @ObservationIgnored private var keyMonitor: Any?
     @ObservationIgnored private var updating: Task<Void, Never>?
     /// The Web Store ids a store page's Add to Chrome is adding now.
@@ -419,14 +421,21 @@ final class ExtensionCenter {
             Task { _ = await loadEverywhere(item) }
         } else {
             loadErrors[id] = nil
+            closePopups(of: id)
             Task { await unloadEverywhere(id) }
         }
+    }
+
+    /// An extension turned off or removed takes its popups with it, the ones dragged away too.
+    private func closePopups(of id: UUID) {
+        for open in [popup].compactMap({ $0 }) + detachedPopups where open.extensionID == id { open.close() }
     }
 
     func remove(_ id: UUID) {
         guard let item = items.first(where: { $0.id == id }) else { return }
         items.removeAll { $0.id == id }
         loadErrors[id] = nil
+        closePopups(of: id)
         save()
         Task {
             await unloadEverywhere(id)
@@ -460,14 +469,24 @@ final class ExtensionCenter {
         guard let runtime, let engineID = engineIDs[id], let engine = engine(for: runtime) else { return }
         Task {
             guard let page = await engine.performAction(engineID, on: runtime.page) else { actionRevision += 1; return }
-            showPopup(page, under: anchor, in: runtime.view)
+            showPopup(page, of: id, under: anchor, in: runtime.view)
         }
     }
 
-    private func showPopup(_ page: EnginePage, under button: NSView?, in tab: NSView) {
+    private func showPopup(_ page: EnginePage, of id: UUID?, under button: NSView?, in tab: NSView) {
         popup?.close()
         let popup = ExtensionPopup(page: page)
-        popup.onClose = { [weak self, weak popup] in if self?.popup === popup { self?.popup = nil } }
+        popup.extensionID = id
+        popup.onClose = { [weak self, weak popup] in
+            guard let self else { return }
+            if self.popup === popup { self.popup = nil }
+            self.detachedPopups.removeAll { $0 === popup }
+        }
+        popup.onDetach = { [weak self, weak popup] in
+            guard let self, let popup, self.popup === popup else { return }
+            self.popup = nil
+            self.detachedPopups.append(popup)
+        }
         self.popup = popup
         popup.show(under: button, in: tab)
     }
@@ -496,7 +515,9 @@ final class ExtensionCenter {
             guard let shortcut = ExtensionShortcut(command.shortcut), shortcut.matches(event) else { continue }
             Task {
                 // `_execute_action` opens the popup, as the button does.
-                if let popup = await engine.performCommand(command, on: runtime.page) { showPopup(popup, under: nil, in: runtime.view) }
+                if let popup = await engine.performCommand(command, on: runtime.page) {
+                    showPopup(popup, of: item(forEngineID: command.extensionID)?.id, under: nil, in: runtime.view)
+                }
             }
             return true
         }
@@ -541,25 +562,102 @@ struct ExtensionShortcut: Equatable {
 /// The window an extension's popup is in. A popover would be the natural one, but macOS does not show Chromium's drawing
 /// in a popover (it stays white), so the popup is a panel of its own.
 final class ExtensionPopupPanel: NSPanel {
+    /// ⌘W with the popup in front: it has no close button of AppKit's for `performClose` to press.
+    var onCloseRequest: (() -> Void)?
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+    override func performClose(_ sender: Any?) { onCloseRequest?() }
+}
+
+/// The strip along the top of a popup that it is dragged by (the page takes every click), with the close button that a
+/// popup dragged away from its button needs.
+final class ExtensionPopupBar: NSView {
+    static let height: CGFloat = 18
+    let closeButton = NSButton(image: NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close")?
+                                   .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold)) ?? NSImage(),
+                               target: nil, action: nil)
+    /// How far the pointer goes before a press on the bar is a drag (a click wobbles a point or two).
+    static let threshold: CGFloat = 4
+    /// Each move of a drag.
+    var onDrag: (() -> Void)?
+    /// The screen a point is on, without the menu bar and Dock: a drag keeps the bar there.
+    var visibleScreen: (NSPoint) -> CGRect? = { point in
+        PopupPlacement.visibleFrame(at: point, screens: NSScreen.screens.map { ($0.frame, $0.visibleFrame) })
+    }
+    private var grabbed: (mouse: NSPoint, topLeft: NSPoint)?
+    private var dragging = false
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        closeButton.isBordered = false
+        closeButton.contentTintColor = .secondaryLabelColor
+        closeButton.toolTip = "Close"
+        closeButton.isHidden = true
+        closeButton.frame = NSRect(x: frame.width - Self.height - 4, y: 0, width: Self.height, height: Self.height)
+        closeButton.autoresizingMask = [.minXMargin]
+        addSubview(closeButton)
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.windowBackgroundColor.setFill()
+        bounds.fill()
+        NSColor.tertiaryLabelColor.setFill()
+        NSBezierPath(roundedRect: NSRect(x: bounds.midX - 18, y: bounds.midY - 2, width: 36, height: 4), xRadius: 2, yRadius: 2).fill()
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(closeButton.isHidden ? bounds : NSRect(x: 0, y: 0, width: closeButton.frame.minX, height: bounds.height), cursor: .openHand)
+    }
+    // A popup that is not the key window is dragged by its first click too.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    // Where the pointer is on the screen, not in the window: the window moves under it.
+    override func mouseDown(with event: NSEvent) { grab(at: NSEvent.mouseLocation) }
+    override func mouseDragged(with event: NSEvent) { drag(to: NSEvent.mouseLocation) }
+    override func mouseUp(with event: NSEvent) { grabbed = nil }
+
+    func grab(at mouse: NSPoint) {
+        guard let window else { return }
+        grabbed = (mouse, NSPoint(x: window.frame.minX, y: window.frame.maxY))
+        dragging = false
+    }
+
+    // By the top-left corner: the popup can change height (its page laid out again) in the middle of a drag.
+    func drag(to mouse: NSPoint) {
+        guard let window, let grabbed else { return }
+        let dx = mouse.x - grabbed.mouse.x, dy = mouse.y - grabbed.mouse.y
+        guard dragging || hypot(dx, dy) >= Self.threshold else { return }
+        dragging = true
+        onDrag?()
+        let size = window.frame.size
+        let frame = CGRect(x: grabbed.topLeft.x + dx, y: grabbed.topLeft.y + dy - size.height, width: size.width, height: size.height)
+        window.setFrameOrigin(PopupPlacement.dragged(frame, bar: Self.height, visible: visibleScreen(mouse)).origin)
+    }
 }
 
 /// An extension's popup: its page in a panel under the button (with none, in the tab's top-right corner), sized to what
 /// the page lays out. Like a popover, it goes with the button's window and closes when the keyboard goes elsewhere (a
-/// click outside it, another app).
+/// click outside it, another app). Dragged by its bar, it leaves the button and stays where it is put until it is closed.
 @MainActor
 final class ExtensionPopup: NSObject, EnginePageDelegate {
     let page: EnginePage
-    private let panel = ExtensionPopupPanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 420), styleMask: [.borderless],
-                                            backing: .buffered, defer: false)
+    let bar = ExtensionPopupBar(frame: NSRect(x: 0, y: 0, width: 360, height: ExtensionPopupBar.height))
+    private let panel = ExtensionPopupPanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 420 + ExtensionPopupBar.height),
+                                            styleMask: [.borderless], backing: .buffered, defer: false)
     /// What it hangs from: the button, or with none the tab's page.
     private weak var button: NSView?
     private weak var tab: NSView?
     private var hasButton = false
     private var resignObserver: NSObjectProtocol?
     private var closed = false
+    private(set) var isDetached = false
+    var isOpen: Bool { !closed }
+    /// The extension it is of (`InstalledExtension.id`): turning that off or removing it closes the popup.
+    var extensionID: UUID?
     var onClose: (() -> Void)?
+    var onDetach: (() -> Void)?
 
     init(page: EnginePage) {
         self.page = page
@@ -575,9 +673,17 @@ final class ExtensionPopup: NSObject, EnginePageDelegate {
         content.wantsLayer = true
         content.layer?.cornerRadius = 10
         content.layer?.masksToBounds = true
-        page.view.frame = content.bounds
+        let height = content.bounds.height - ExtensionPopupBar.height
+        page.view.frame = NSRect(x: 0, y: 0, width: content.bounds.width, height: height)
         page.view.autoresizingMask = [.width, .height]
+        bar.frame = NSRect(x: 0, y: height, width: content.bounds.width, height: ExtensionPopupBar.height)
+        bar.autoresizingMask = [.width, .minYMargin]
+        bar.onDrag = { [weak self] in self?.detach() }
+        bar.closeButton.target = self
+        bar.closeButton.action = #selector(closeClicked)
+        panel.onCloseRequest = { [weak self] in self?.close() }
         content.addSubview(page.view)
+        content.addSubview(bar)
         panel.contentView = content
     }
 
@@ -586,7 +692,7 @@ final class ExtensionPopup: NSObject, EnginePageDelegate {
         self.tab = tab
         hasButton = self.button != nil
         guard let window = (self.button ?? tab).window else { close(); return }
-        place(panel.frame.size)
+        place(page.view.frame.size)
         window.addChildWindow(panel, ordered: .above)
         panel.makeKeyAndOrderFront(nil)
         panel.makeFirstResponder(page.view)
@@ -607,9 +713,33 @@ final class ExtensionPopup: NSObject, EnginePageDelegate {
         onClose?()
     }
 
-    /// Where the button (or the tab) is now: its window may have moved since the popup opened. A button that has gone
-    /// since leaves the popup where it is.
-    private func place(_ size: CGSize) {
+    @objc private func closeClicked() { close() }
+
+    /// Dragged away from its button: it stays where it is put, over Cosmos's windows (not other apps'), and open until its
+    /// close button or the page closes it.
+    func detach() {
+        guard !isDetached, !closed else { return }
+        isDetached = true
+        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
+        resignObserver = nil
+        panel.parent?.removeChildWindow(panel)
+        panel.level = .floating
+        panel.hidesOnDeactivate = true
+        bar.closeButton.isHidden = false
+        panel.invalidateCursorRects(for: bar)
+        onDetach?()
+    }
+
+    /// Puts the panel, at `pageSize` and the bar over it, under the button (or in the tab's corner) where that is now: its
+    /// window may have moved since the popup opened. A button that has gone since leaves it where it is; one that was
+    /// dragged away stays where it was put, keeping its top edge.
+    private func place(_ pageSize: CGSize) {
+        let size = CGSize(width: pageSize.width, height: pageSize.height + ExtensionPopupBar.height)
+        if isDetached {
+            let frame = CGRect(x: panel.frame.minX, y: panel.frame.maxY - size.height, width: size.width, height: size.height)
+            panel.setFrame(PopupPlacement.dragged(frame, bar: ExtensionPopupBar.height, visible: panel.screen?.visibleFrame), display: true)
+            return
+        }
         let view = hasButton ? button : tab
         guard let view, let window = view.window else { return }
         let rect = window.convertToScreen(view.convert(view.bounds, to: nil))

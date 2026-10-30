@@ -1010,13 +1010,15 @@ struct PageAgentTests {
         buttons.orderBack(nil)
         defer { buttons.orderOut(nil) }
         func onScreen(_ view: NSView) -> CGRect { buttons.convertToScreen(view.convert(view.bounds, to: nil)) }
-        /// The share of the popup's window, as the window server shows it, that is the page's red.
-        func red(_ window: NSWindow) -> Double {
+        /// The share of the page's part of the popup's window (below its bar), or of its bar, as the window server shows it,
+        /// that is the page's red.
+        func red(_ window: NSWindow, inBar: Bool = false) -> Double {
             guard let image = CGWindowListCreateImage(.null, .optionIncludingWindow, CGWindowID(window.windowNumber), [.boundsIgnoreFraming]) else { return 0 }
             let picture = NSBitmapImageRep(cgImage: image)
+            let bar = Int(ExtensionPopupBar.height * CGFloat(picture.pixelsHigh) / window.frame.height)
             var red = 0, all = 0
             for x in stride(from: 8, to: picture.pixelsWide - 8, by: 8) {
-                for y in stride(from: 8, to: picture.pixelsHigh - 8, by: 8) {
+                for y in inBar ? stride(from: 2, to: bar - 2, by: 4) : stride(from: bar + 8, to: picture.pixelsHigh - 8, by: 8) {
                     all += 1
                     if let c = picture.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB), c.redComponent > 0.6, c.greenComponent < 0.3, c.blueComponent < 0.3 { red += 1 }
                 }
@@ -1033,8 +1035,9 @@ struct PageAgentTests {
             popup.show(under: under, in: tab)
             try await waitFor { page.state.title == "red" && !page.state.isLoading }
             let window = try #require(page.view.window)
-            try await waitFor(5) { window.frame.size == NSSize(width: 420, height: 480) }
-            #expect(window.frame.size == NSSize(width: 420, height: 480), "the page's size")
+            let size = NSSize(width: 420, height: 480 + ExtensionPopupBar.height)
+            try await waitFor(5) { window.frame.size == size }
+            #expect(window.frame.size == size && page.view.frame.size == NSSize(width: 420, height: 480), "the page's size, and the bar over it")
             if let under {
                 #expect(window.frame.maxY <= onScreen(under).minY && abs(window.frame.midX - onScreen(under).midX) < 1, "under the button")
             } else {
@@ -1043,6 +1046,7 @@ struct PageAgentTests {
             }
             try? await waitFor(10) { red(window) > 0.95 }
             #expect(red(window) > 0.95, "the page's red, as the window server shows it")
+            #expect(red(window, inBar: true) < 0.05, "the bar is drawn above the page, not covered by it")
 
             NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
             #expect(closed && !window.isVisible && page.view.window == nil, "the keyboard went elsewhere: it closed")

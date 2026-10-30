@@ -85,6 +85,74 @@ import CosmosEngine
         try await until { !FileManager.default.fileExists(atPath: folder.path) }
     }
 
+    /// A popup dragged by its bar moves with the pointer and leaves its button: it no longer goes with the button's window
+    /// or closes when the keyboard goes elsewhere, and another popup does not close it; its close button, ⌘W and turning
+    /// its extension off do. A click's wobble is not a drag, and a drag keeps the bar on the screen. A popup still under
+    /// its button is closed by the next one, as before.
+    @Test func aPopupDraggedByItsBarStaysOpenWhereItIsPut() async throws {
+        let (rig, center, runtime, engine) = try started()
+        let source = rig.dir.appendingPathComponent("src-ext", isDirectory: true)
+        try writeTestExtension(to: source)
+        let installed = try await center.install(from: source, origin: "a test folder") { _ in true }
+        engine.opensPopups = true
+        let window = NSWindow(contentRect: NSRect(x: -3000, y: -3000, width: 600, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let button = NSView(frame: NSRect(x: 100, y: 500, width: 28, height: 28))
+        window.contentView?.addSubview(button)
+        window.orderBack(nil)
+        defer { window.orderOut(nil) }
+        func open() async throws -> ExtensionPopup {
+            let before = center.popup
+            center.performAction(installed.id, runtime: runtime, anchor: button)
+            try await until { center.popup != nil && center.popup !== before }
+            return try #require(center.popup)
+        }
+
+        let first = try await open()
+        let panel = try #require(first.page.view.window)
+        #expect(panel.parent === window, "under its button, it goes with the button's window")
+        #expect(first.bar.closeButton.isHidden)
+        let start = panel.frame.origin
+        // Off every screen here: the drag has no screen to keep the bar on (the real screens' turn is the fifth popup's).
+        first.bar.visibleScreen = { _ in nil }
+        let hold = NSPoint(x: start.x + 50, y: panel.frame.maxY - 5)
+        first.bar.grab(at: hold)
+        first.bar.drag(to: NSPoint(x: hold.x + 2, y: hold.y + 1))
+        #expect(panel.frame.origin == start && !first.isDetached, "a click's wobble is not a drag")
+        first.bar.drag(to: NSPoint(x: hold.x - 120, y: hold.y + 40))
+        #expect(panel.frame.origin == NSPoint(x: start.x - 120, y: start.y + 40), "it follows the pointer")
+        #expect(panel.parent == nil && panel.level == .floating && !first.bar.closeButton.isHidden)
+        let close = first.bar.closeButton.frame
+        #expect(first.bar.hitTest(first.bar.convert(NSPoint(x: close.midX, y: close.midY), to: first.bar.superview)) === first.bar.closeButton,
+                "a click on the close button reaches it, not the drag")
+        NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: panel)
+        #expect(first.isOpen && panel.isVisible, "the keyboard going elsewhere does not close it")
+
+        let second = try await open()
+        #expect(first.isOpen, "nor does another popup")
+        #expect(center.detachedPopups.count == 1 && center.detachedPopups.first === first)
+        let third = try await open()
+        #expect(!second.isOpen && third.isOpen, "one still under its button is closed by the next")
+        third.close()
+
+        first.bar.closeButton.performClick(nil)
+        #expect(!first.isOpen && !panel.isVisible && center.detachedPopups.isEmpty)
+
+        let fourth = try await open()
+        fourth.page.view.window?.performClose(nil)
+        #expect(!fourth.isOpen, "⌘W closes the popup in front")
+
+        let fifth = try await open()
+        let top = try #require(fifth.page.view.window).frame
+        let screen = CGRect(x: top.minX - 500, y: top.maxY - 1000, width: 2000, height: 1000)
+        fifth.bar.visibleScreen = { _ in screen }
+        fifth.bar.grab(at: NSPoint(x: top.minX + 50, y: top.maxY - 5))
+        fifth.bar.drag(to: NSPoint(x: top.minX + 50, y: top.maxY - 5 + 300))
+        #expect(fifth.page.view.window?.frame.maxY == screen.maxY && fifth.isDetached, "its bar stays below the menu bar")
+        center.setEnabled(installed.id, false)
+        #expect(!fifth.isOpen && center.detachedPopups.isEmpty, "turning its extension off closes it")
+    }
+
     @Test func anExtensionTheEngineCannotLoadIsNotKept() async throws {
         let (rig, center, _, engine) = try started()
         let source = rig.dir.appendingPathComponent("src-ext", isDirectory: true)

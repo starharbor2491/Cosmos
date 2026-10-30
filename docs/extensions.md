@@ -50,7 +50,7 @@ that end in browser UI:
 | Extension API | In Cosmos |
 |---|---|
 | `chrome.action` / `chrome.browserAction`: title, icon, badge text and colour, enable / disable, per-tab values | the button in a row under the address pill, with its badge |
-| the action's popup (`default_popup`, `setPopup`) | the popup page in a panel under the button (from a shortcut, in the tab's top-right corner), grown to what the page lays out (within Chrome's limits); it closes when the keyboard goes elsewhere, as a click outside it does. (Not a popover: macOS shows none of Chromium's drawing in one, only a white box.) |
+| the action's popup (`default_popup`, `setPopup`) | the popup page in a panel under the button (from a shortcut, in the tab's top-right corner), grown to what the page lays out (within Chrome's limits); it closes when the keyboard goes elsewhere, as a click outside it does. Dragged by the bar along its top, it leaves the button and stays where it is put, over Cosmos's windows, until its close button, ⌘W or turning its extension off (a drag keeps the bar below the menu bar and on the screen). (Not a popover: macOS shows none of Chromium's drawing in one, only a white box.) |
 | `action.onClicked` (no popup) | clicking the button; Cosmos starts the extension's worker if it is not running, and the listeners get the tab |
 | `chrome.contextMenus` / `chrome.menus`: items, children, `update`, `remove`, contexts `page` `link` `image` `selection` `editable` `video` `audio` `all`, `%s` in titles | the items appear in the page's right-click menu (in the radial menu under More); a click reaches `onClicked` with the click's `info` and the tab |
 | `chrome.commands` (`commands` in the manifest, `_execute_action`) | the shortcut works in Cosmos windows; `onCommand` gets the command and the tab |
@@ -148,7 +148,10 @@ for its tab, and the `chrome.tabs` events. The tests below were first written fo
   `getAuthToken` against Google itself was not tried. A popup shows what its page draws, under its button or with none in
   the tab's top-right corner, at the page's size, and closes when its window loses the keyboard
   (`anExtensionsPopupShowsWhatItsPageDraws`, from the window server's picture of the popup's window, kept off screen);
-  in a popover it was white.
+  in a popover it was white. Dragged by its bar, a popup follows the pointer (not for a click's wobble), keeps the bar on
+  the screen, leaves its button's window, stays open when the keyboard goes elsewhere or another popup opens, and
+  closes from its close button, ⌘W or its extension being turned off (`ExtensionTests.aPopupDraggedByItsBarStaysOpenWhereItIsPut`,
+  which moves the bar's grab point itself rather than the mouse; `PopupPlacementTests`).
 - `ChromiumExtensionHostTests`: the mirror of buttons, badges, icons, popups and menus from what the shim reports, and
   that icons are only read from inside the extension's own folder.
 - `ExtensionTests`, `ExtensionShortcutTests` (on the fake engine): adding, the permission summary, enabling, removing,
@@ -169,7 +172,8 @@ for its tab, and the `chrome.tabs` events. The tests below were first written fo
   Checked once by hand (2026-10-30), not in the tests: a real Web Store package (uBlock Origin Lite) passes the signature
   check and installs, and on the real store page Add to Chrome reaches Cosmos with its id.
 - Not checked: real extensions from the Web Store one by one; side panels and notifications on screen; popups on a
-  real screen in the app (a click elsewhere closing one, typing into one, their corners and shadow); and anything that
+  real screen in the app (a click elsewhere closing one, typing into one, a drag with the mouse, the bar, corners and
+  shadow); and anything that
   needs a person at the keyboard.
 
 ## For developers

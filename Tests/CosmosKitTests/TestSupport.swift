@@ -188,7 +188,12 @@ final class FakeExtensions: EngineExtensions {
     }
     func unload(id: String) async { loaded[id] = nil; unloaded.append(id) }
     func actions(for page: EnginePage?) -> [ExtensionAction] { buttons.filter { loaded[$0.extensionID] != nil } }
-    func performAction(_ extensionID: String, on page: EnginePage) async -> EnginePage? { performed.append(extensionID); return nil }
+    /// Its buttons open popups (a page each), as an extension with `default_popup` does.
+    var opensPopups = false
+    func performAction(_ extensionID: String, on page: EnginePage) async -> EnginePage? {
+        performed.append(extensionID)
+        return opensPopups ? FakePage() : nil
+    }
     func menuItems(for page: EnginePage?) -> [ExtensionMenuItem] { items }
     func performMenuItem(_ item: ExtensionMenuItem, context: ExtensionClickContext, on page: EnginePage) async { clicked.append((item, context)) }
     func performCommand(_ command: ExtensionCommand, on page: EnginePage?) async -> EnginePage? { performed.append(command.name); return nil }

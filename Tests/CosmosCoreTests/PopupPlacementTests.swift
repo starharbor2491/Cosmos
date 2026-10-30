@@ -52,6 +52,37 @@ import Testing
                 "no bigger than the page")
     }
 
+    /// A popup dragged too far keeps its bar where it can be taken hold of again: below the menu bar, above the bottom of
+    /// the screen, and at least `grip` of it across on the screen.
+    @Test func aDraggedPopupKeepsItsBarOnTheScreen() {
+        let bar: CGFloat = 18
+        let up = PopupPlacement.dragged(CGRect(x: 100, y: 700, width: 360, height: 438), bar: bar, visible: visible)
+        #expect(up == CGRect(x: 100, y: visible.maxY - 438, width: 360, height: 438))
+        let down = PopupPlacement.dragged(CGRect(x: 100, y: -900, width: 360, height: 438), bar: bar, visible: visible)
+        #expect(down.maxY == visible.minY + bar)
+        let left = PopupPlacement.dragged(CGRect(x: -1000, y: 200, width: 360, height: 438), bar: bar, visible: visible)
+        #expect(left.maxX == visible.minX + PopupPlacement.grip)
+        let right = PopupPlacement.dragged(CGRect(x: 2000, y: 200, width: 360, height: 438), bar: bar, visible: visible)
+        #expect(right.minX == visible.maxX - PopupPlacement.grip)
+        let inside = CGRect(x: 300, y: 200, width: 360, height: 438)
+        #expect(PopupPlacement.dragged(inside, bar: bar, visible: visible) == inside)
+        #expect(PopupPlacement.dragged(up, bar: bar, visible: nil) == up, "on no screen, as it is")
+    }
+
+    /// The screen a drag keeps the bar on is the one under the pointer, edges included (a pointer pushed against the top
+    /// of the screen is at its very edge), or with none under it the nearest.
+    @Test func theScreenOfADragIsTheOneUnderThePointerOrTheNearest() {
+        let main = (frame: CGRect(x: 0, y: 0, width: 1440, height: 900), visible: CGRect(x: 0, y: 0, width: 1440, height: 875))
+        let side = (frame: CGRect(x: 1440, y: 0, width: 1920, height: 1080), visible: CGRect(x: 1440, y: 0, width: 1920, height: 1055))
+        let screens = [main, side]
+        #expect(PopupPlacement.visibleFrame(at: CGPoint(x: 700, y: 900), screens: screens) == main.visible, "the top edge")
+        #expect(PopupPlacement.visibleFrame(at: CGPoint(x: 1440, y: 500), screens: screens) != nil, "between two screens")
+        #expect(PopupPlacement.visibleFrame(at: CGPoint(x: 3360, y: 1080), screens: screens) == side.visible, "the far corner")
+        #expect(PopupPlacement.visibleFrame(at: CGPoint(x: 700, y: 1200), screens: screens) == main.visible, "above every screen")
+        #expect(PopupPlacement.visibleFrame(at: CGPoint(x: 5000, y: 500), screens: screens) == side.visible)
+        #expect(PopupPlacement.visibleFrame(at: .zero, screens: []) == nil)
+    }
+
     /// A button on no screen (a window off every screen) has the popup under it, as it is.
     @Test func withNoScreenItIsJustUnderTheButton() {
         let button = CGRect(x: -3000, y: -3000, width: 28, height: 28)
