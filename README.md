@@ -2,7 +2,7 @@
 
 A space-themed web browser for macOS, made for people leaving Arc. It keeps the parts of Arc that were hard to give up (a vertical sidebar of **spaces**, Favorites, pinned tabs and a Today list that tidies itself, the **Command Bar**, **Peek**, split view, **Boosts**) and gives each space its own gradient sky. Underneath it runs regular Chromium, which it downloads and keeps up to date by itself, so sites and Chrome extensions behave as in Chrome. It imports your Arc sidebar, history, bookmarks and extensions.
 
-Arc stops working on 22 December 2026. [`arc-teardown/`](arc-teardown/) is the study of how Arc works that Cosmos was built from.
+Arc stops working on 22 December 2026.
 
 > **Status.** Cosmos 1.0 and 1.1 were built and checked end to end on WebKit, on one Mac (macOS 27). The move to Chromium that this README describes (Chromium's stable release through CEF, drawn in Cosmos's own windows) is checked by the test suite, including tests that run real Chromium in the test process (pages, popups, the page agent, Boosts, permissions, sign-in, dangerous sites, blocking), but it has **not yet been used in the running app**. Extensions run in the first profile's spaces only (see [docs/extensions.md](docs/extensions.md)). The 1.1.1 download on the Releases page is the WebKit version. Cosmos is not notarized, has had no users but its author, and has gaps listed under [What is not here](#what-is-not-here). Read that before you trust it with your only browser.
 
@@ -122,4 +122,4 @@ Cosmos is MIT licensed ([LICENSE](LICENSE)). Its own code uses only Apple framew
 - **Filter lists are not included.** Cosmos downloads EasyList and EasyPrivacy (GPLv3+ / CC BY-SA 3.0, easylist.to), the Fanboy cookie list (CC BY 3.0) and, if you turn them on, uBlock Origin's lists (GPLv3) from their publishers. Settings ▸ Blocking shows each list's license.
 - **The dangerous-site lists are not included either.** Cosmos downloads two hosts lists of the malware-filter project (<https://gitlab.com/malware-filter>): URLhaus malicious hosts (CC0, data from abuse.ch URLhaus) and phishing hosts (CC BY-SA 4.0, data from OpenPhish, IPThreat and PhishTank).
 - Icons are Apple's SF Symbols. The app icon and the menu-bar mark are the artwork in `cosmos icon/`.
-- Arc is a product of The Browser Company. Cosmos contains no Arc code, binaries, assets or strings; [arc-teardown/](arc-teardown/) describes Arc's behaviour from the outside.
+- Arc is a product of The Browser Company. Cosmos contains no Arc code, binaries, assets or strings.

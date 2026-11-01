@@ -1,8 +1,8 @@
 import AppKit
 import CosmosCore
 
-/// The menu bar. Shortcuts follow Arc's own (see arc-teardown/appendix/keybinding-and-type-travel-ids.md) so muscle
-/// memory carries over.
+/// The menu bar. Shortcuts follow Arc's own so muscle memory carries
+/// over.
 extension CosmosAppDelegate {
     private typealias Mods = NSEvent.ModifierFlags
 

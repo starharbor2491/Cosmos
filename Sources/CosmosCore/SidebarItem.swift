@@ -1,7 +1,7 @@
 import Foundation
 
 /// Every node in the sidebar is a `SidebarItem` in one flat table, linked by `parentID` / `childIDs`.
-/// This is deliberately the same shape as Arc's `StorableSidebar` items (see arc-teardown/data-and-sync.md)
+/// This is deliberately the same shape as Arc's `StorableSidebar` items
 /// so that importing is a field-for-field mapping and nothing about the tree has to be re-derived.
 public struct SidebarItem: Codable, Hashable, Identifiable, Sendable {
     public var id: UUID

@@ -11,8 +11,7 @@ the request leaves, and again for each hop of a redirect), and the same hiding i
 (`BlockerExtension.hidingScript`). CEF does not show Cosmos a WebSocket's opening, so `websocket` rules work in the
 default profile and in private windows only.
 
-Arc ships EasyList, EasyPrivacy, AdGuard, uBlock and cookie-banner lists inside Chromium (see
-`arc-teardown/web-behaviors-and-boosts.md`). Cosmos offers the same coverage by compiling the same public lists.
+Arc ships EasyList, EasyPrivacy, AdGuard, uBlock and cookie-banner lists inside Chromium. Cosmos offers the same coverage by compiling the same public lists.
 
 ```
  public filter lists (ABP / uBO syntax)
