@@ -273,8 +273,8 @@ import CosmosEngine
         #expect(back.appearance == .dark, "the rest of the file still loads")
     }
 
-    /// Private windows take the ring and haptics choices over when they open, and again when those choices change while
-    /// they are open: the app is told, and passes them on.
+    /// Private windows take the ring and haptics choices and the feature switches over when they open, and again when
+    /// those change while they are open: the app is told, once a change, and passes them on.
     @Test func changingTheRingOrHapticsChoicesTellsTheApp() {
         let rig = Rig()
         var told = 0
@@ -283,7 +283,8 @@ import CosmosEngine
         rig.store.settings.trackpadHaptics = false
         rig.store.settings.showSearchSuggestions = false
         rig.store.settings.menuBar.remember(URL(string: "https://example.com/"))
-        #expect(told == 2, "only the choices a private window inherits")
+        rig.store.settings.closeWindowOnLastTab.toggle()
+        #expect(told == 3, "only the choices a private window inherits (search suggestions is one of the feature switches)")
     }
 
     @Test func changingTheMenuBarSettingsTellsTheApp() {

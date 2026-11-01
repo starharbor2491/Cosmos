@@ -24,29 +24,38 @@ struct SidebarView: View {
 
     var pages: [SidebarPage] { SidebarPage.all(spaces: store.workspace.spaces.map(\.id)) }
 
-    /// The Library makes the sidebar wider (never narrower than the width the user gave it), as far as the window has room.
-    var width: Double { PaneFit.sidebarWidth(window) }
+    /// The space whose sky the Library shows: the one it was opened from.
+    var librarySpace: UUID {
+        if case .space(let id)? = slide.returnPage { return id }
+        return window.focusedSpaceID
+    }
+
+    /// How the window looks with the strip where it is (pages are the user's sidebar width apart, as the fingers count them).
+    var look: SidebarLook { slide.look(unit: window.sidebarWidth, librarySpace: librarySpace) }
 
     var body: some View {
+        let look = self.look
+        // The Library makes the sidebar wider (never narrower than the width the user gave it, as far as the window has
+        // room), and the sidebar widens as the Library comes in.
+        let width = look.width(space: window.sidebarWidth, library: PaneFit.libraryWidth(window))
         VStack(spacing: 0) {
-            // The Library is a rail of its own: the address and the page's controls go quiet above it (and stay in place,
-            // so nothing below them moves).
+            // The Library is a rail of its own: the address and the page's controls go quiet above it as it comes in (and
+            // stay in place, so nothing below them moves).
             VStack(spacing: 0) {
-                SidebarToolbar(store: store, window: window, compact: window.libraryOpen)
+                SidebarToolbar(store: store, window: window, compact: window.libraryOpen, fade: look.library)
                 Group {
                     URLPill(store: store, window: window)
                         .padding(.horizontal, Metrics.Sidebar.gutter)
                         .padding(.bottom, Metrics.Space.s)
                     ExtensionButtons(store: store, window: window)
                 }
-                .opacity(window.libraryOpen ? 0 : 1)
+                .opacity(1 - look.library)
                 .allowsHitTesting(!window.libraryOpen)
                 .disabled(window.libraryOpen)
                 .accessibilityHidden(window.libraryOpen)
             }
-            .animation(Motion.slide, value: window.libraryOpen)
 
-            SidebarPager(slide: slide, width: width) { page in
+            SidebarPager(slide: slide, unit: window.sidebarWidth, width: width) { page in
                 switch page {
                 case .library:
                     LibraryPage(store: store, window: window)
@@ -59,11 +68,14 @@ struct SidebarView: View {
             SpacesBar(store: store, window: window)
         }
         .frame(width: width)
-        .animation(Motion.slide, value: window.libraryOpen)
         .environment(\.palette, palette)
-        .background(SwipeCatcher(isEnabled: window.overlay == nil, onMove: swipeMoved, onEnd: swipeEnded))
+        .background(SwipeCatcher(isEnabled: window.overlay == nil && store.settings.isOn(.spaceSwipe), onMove: swipeMoved, onEnd: swipeEnded))
         .onChange(of: window.sidebarPage) { _, page in slideTo(page) }
-        .onChange(of: pages) { _, pages in slide.repair(pages: pages, current: window.sidebarPage) }
+        .onChange(of: pages) { _, pages in slide.repair(pages: pages, current: window.sidebarPage); publish() }
+        .onAppear { publish() }
+        // A sidebar that goes because the other one comes (the one slid over the page, the one beside it) leaves the look
+        // to that one.
+        .onDisappear { if !window.sidebarVisible && !window.sidebarPeeking { window.sidebarLook = nil } }
         .recordsSpatialFrames()
     }
 }
@@ -139,6 +151,8 @@ struct SidebarToolbar: View {
     let window: WindowState
     /// Only the button that hides the sidebar is left (over the Library).
     var compact = false
+    /// How far the others have faded: as far as the Library has come in.
+    var fade: CGFloat = 0
     @Local private var reloadTurns = 0.0
 
     var body: some View {
@@ -159,7 +173,7 @@ struct SidebarToolbar: View {
                     }
                 }
             }
-            .opacity(compact ? 0 : 1)
+            .opacity(1 - fade)
             .allowsHitTesting(!compact)
             .disabled(compact)
             .accessibilityHidden(compact)
@@ -293,7 +307,7 @@ struct SpaceHeader: View {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(palette.tertiary)
-                    .frame(width: 22, height: 18)
+                    .frame(width: 28, height: Metrics.Height.header)
                     .contentShape(Rectangle())
             }
             .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
@@ -324,8 +338,8 @@ struct SpaceMenuItems: View {
     let space: Space
 
     var body: some View {
-        Button("Edit Theme…") { window.overlay = .themeEditor(space.id) }
-        Button("Rename Space…") { window.overlay = .themeEditor(space.id) }
+        // Its name and its sky are edited in the same panel: one item, which says both.
+        Button("Edit Name and Theme…") { window.overlay = .themeEditor(space.id) }
         if store.workspace.profiles.count > 1 {
             Menu("Change Profile") {
                 ForEach(store.workspace.profiles) { p in

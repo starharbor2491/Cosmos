@@ -31,7 +31,7 @@ enum BrowserCommand: String, CaseIterable {
     var title: String {
         switch self {
         case .newSpace: return "New Space"
-        case .editTheme: return "Edit Space Theme"
+        case .editTheme: return "Edit Space Name and Theme"
         case .deleteSpace: return "Delete Space"
         case .nextSpace: return "Next Space"
         case .previousSpace: return "Previous Space"
@@ -83,7 +83,7 @@ enum BrowserCommand: String, CaseIterable {
         case .showSiteControls: return "Site Controls"
         case .fillPassword: return "Fill Saved Password"
         case .showPasswords: return "Passwords"
-        case .toggleUtilities: return "Show / Hide Utilities"
+        case .toggleUtilities: return "Toggle Utilities"
         }
     }
 
@@ -172,7 +172,7 @@ enum BrowserCommand: String, CaseIterable {
         case .hardReload: return "⇧⌘R"
         case .find: return "⌘F"
         case .print: return "⌘P"
-        case .zoomIn: return "⌘+"
+        case .zoomIn: return "⌘="
         case .zoomOut: return "⌘-"
         case .resetZoom: return "⌘0"
         case .showHistory: return "⌘Y"
@@ -191,6 +191,17 @@ enum BrowserCommand: String, CaseIterable {
         }
     }
 
+    /// The feature the command belongs to: while that is switched off the command is not offered and does nothing.
+    var feature: Feature? {
+        switch self {
+        case .showBoosts: return .boosts
+        case .manageExtensions: return .extensions
+        case .fillPassword: return .passwords
+        case .toggleUtilities: return .utilities
+        default: return nil
+        }
+    }
+
     var candidate: CommandCandidate {
         CommandCandidate(id: "cmd:\(rawValue)", kind: .command(rawValue), title: title, subtitle: shortcut, symbol: symbol, frecency: 1, keywords: keywords)
     }
@@ -198,6 +209,7 @@ enum BrowserCommand: String, CaseIterable {
 
 extension BrowserStore {
     func perform(_ command: BrowserCommand, in window: WindowState) {
+        if let feature = command.feature, !settings.isOn(feature) { return }
         if command.needsTheSpaceInView { leaveLibrary(in: window) }
         let rt = currentRuntime(in: window)
         let curID = currentTabItemID(in: window)

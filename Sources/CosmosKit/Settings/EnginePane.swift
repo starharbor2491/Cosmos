@@ -22,7 +22,7 @@ struct EnginePane: View {
                 SettingRow(title: "Cookies", detail: "Third-party cookies let sites follow you from one site to the next.", symbol: "lock.shield") {
                     Dropdown(selection: $store.settings.engine.cookies, options: [
                         Option(value: .allowAll, label: "Allow all"),
-                        Option(value: .blockThirdPartyInPrivate, label: "Block third-party in Incognito"),
+                        Option(value: .blockThirdPartyInPrivate, label: "Block third-party in private"),
                         Option(value: .blockThirdParty, label: "Block third-party"),
                     ])
                 }

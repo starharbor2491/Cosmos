@@ -87,7 +87,15 @@ See [importing-from-arc.md](importing-from-arc.md).
 
 ## Looking at the UI without screen recording
 
-Granting a tool permission to record the screen is a lot to ask for a build script, so the app can photograph itself. Run it with a script:
+Without launching the app at all: `UISnapshotTests` draws the browser window (sidebar, Library, Command Bar, the rail, a swipe held halfway, six and nine spaces) and every Settings pane in windows off every screen, in the test process, and writes PNGs to the folder in `COSMOS_UI_SNAPSHOTS`. Pages are the fake engine's, so they are blank; nothing comes to the front.
+
+```bash
+COSMOS_UI_SNAPSHOTS=/tmp/cosmos-ui scripts/test.sh --filter UISnapshotTests
+```
+
+The app can also photograph itself, pages included:
+
+Granting a tool permission to record the screen is a lot to ask for a build script. Run the app with a script:
 
 ```bash
 build/Cosmos.app/Contents/MacOS/Cosmos --demo --automation script.json

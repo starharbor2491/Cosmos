@@ -59,7 +59,7 @@ Cosmos uses Arc's keys wherever the feature exists. Like Arc, its shortcuts win 
 | ⌘R / ⇧⌘R / ⌘. | Reload / reload ignoring cache / stop |
 | ⌘[ / ⌘] | Back / forward |
 | ⌘F, ⌘G, ⇧⌘G | Find, next, previous |
-| ⌘+ / ⌘- / ⌘0 | Zoom in / out / actual size |
+| ⌘= / ⌘- / ⌘0 | Zoom in / out / actual size |
 | ⇧⌘C | Copy the page address |
 | ⌥⇧⌘C | Copy the address as a Markdown link |
 | ⌥⌘P | Picture in Picture |
@@ -79,10 +79,10 @@ Cosmos uses Arc's keys wherever the feature exists. Like Arc, its shortcuts win 
 
 | Gesture | Does |
 |---|---|
-| Two-finger swipe sideways anywhere over the sidebar | Changes space. The list follows your fingers, resists at the first and last space, ticks when the swipe has gone far enough, and springs back if you let go early |
+| Two-finger swipe sideways anywhere over the sidebar | Changes space (switch it off in Settings ▸ Features). The window's sky and colours, and the sidebar's width toward the Library, follow your fingers too. The list follows your fingers, resists at the first and last space, ticks when the swipe has gone far enough, and springs back if you let go early |
 | Two-finger swipe sideways over a page | Back and forward. Not yet on Chromium: use ⌘[ and ⌘] |
 | Pinch, or two-finger double-tap, on a page | Zoom (smart zoom). Not yet on Chromium: use ⌘+ and ⌘− |
-| Press hard on a link (Force Touch) | Opens it in Peek, like ⇧-click. Hard presses a page fakes for itself are ignored |
+| Press hard on a link (Force Touch) | Opens it in Peek, like ⇧-click (nothing while Peek is switched off in Settings ▸ Features). Hard presses a page fakes for itself are ignored |
 | Drag a tab, folder or Favorite | A small card with its icon and name follows the pointer, a marker shows where it will land, and the trackpad ticks each time the marker moves to a new place. Dropped on anything outside Cosmos, a tab arrives as its web address and nothing else |
 
 Haptics (Settings ▸ General ▸ Trackpad haptics) are used sparingly: a tap when a drag lifts or a tab closes, a tick when something snaps (a drop marker, an opened folder, a swipe reaching its threshold), and a heavier click when something changes level (a drop lands, a space changes, a tab is pinned, favorited or split, Peek opens). On a trackpad without Force Touch they do nothing. Motion follows macOS Reduce Motion.

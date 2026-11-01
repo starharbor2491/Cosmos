@@ -76,6 +76,8 @@ public final class BrowserStore: TabHost {
     @ObservationIgnored var downloadStarter: ((URL, TabRuntime) -> Void)?
     /// The choices a private window inherits (the ring, haptics) changed: the app passes them on to the open ones.
     @ObservationIgnored var onPreferencesChanged: (() -> Void)?
+    /// A feature was switched on or off (Settings ▸ Features): the menus show only the items of those that are on.
+    @ObservationIgnored var onFeaturesChanged: (() -> Void)?
     /// History was cleared: whatever the app keeps of where you have been (the menu-bar browser's page) goes too.
     @ObservationIgnored var onHistoryCleared: (() -> Void)?
     /// The menu-bar browser's settings changed: the app shows, hides or rebuilds it.
@@ -299,6 +301,8 @@ public final class BrowserStore: TabHost {
     func inheritPreferences(from parent: BrowserStore) {
         settings.radialMenu = parent.settings.radialMenu
         settings.trackpadHaptics = parent.settings.trackpadHaptics
+        // A feature switched off is off in private windows too. (The menu-bar browser is the regular browser's alone.)
+        for feature in Feature.allCases where feature != .menuBarBrowser { settings.set(feature, on: parent.settings.isOn(feature)) }
     }
 
     func saveSession() {
@@ -331,6 +335,7 @@ public final class BrowserStore: TabHost {
     // MARK: Windows
 
     func register(_ window: WindowState) {
+        window.utilitiesAllowed = settings.isOn(.utilities)
         windows.append(window)
         if activeWindow == nil { activeWindow = window }
     }
@@ -390,7 +395,7 @@ public final class BrowserStore: TabHost {
         let e = ProfileEnvironment(profileID: profile.id, engineProfile: engine.makeProfile(id: profile.id, directory: engineFolder(forProfile: profile.id)),
                                    store: self)
         e.engineProfile.setPermissionDecisions(permissionDecisionList)
-        e.installBoosts(boosts)
+        e.installBoosts(activeBoosts)
         if let blocker { blocker.attach(to: e) }
         if let extensions = e.engineProfile.extensions {
             extensions.tabsHost = ExtensionTabs(store: self, profileID: profile.id, extensions: extensions)
@@ -456,8 +461,11 @@ public final class BrowserStore: TabHost {
     }
 
     func reinstallBoosts() {
-        for e in environments.values { e.installBoosts(boosts) }
+        for e in environments.values { e.installBoosts(activeBoosts) }
     }
+
+    /// The Boosts pages get: none while Boosts are switched off (they are kept for when they are back on).
+    var activeBoosts: BoostLibrary { settings.isOn(.boosts) ? boosts : BoostLibrary() }
 
     private func settingsChanged(old: Settings) {
         if old.adBlockingEnabled != settings.adBlockingEnabled || old.enabledFilterLists != settings.enabledFilterLists
@@ -472,11 +480,36 @@ public final class BrowserStore: TabHost {
         // Not remembering the page forgets the one that was: the copies the file made while it was there go too.
         if old.menuBar.rememberPage && !settings.menuBar.rememberPage { try? settingsFile?.rewriteDiscardingBackups(settings) }
         haptics.isEnabled = settings.trackpadHaptics
-        if old.radialMenu != settings.radialMenu || old.trackpadHaptics != settings.trackpadHaptics { onPreferencesChanged?() }
+        // What private windows take over (`inheritPreferences`): told once, whichever of them changed.
+        if old.radialMenu != settings.radialMenu || old.trackpadHaptics != settings.trackpadHaptics || old.featuresOn != settings.featuresOn {
+            onPreferencesChanged?()
+        }
         // The page the panel is on is saved as it loads; that is bookkeeping, not a change anyone has to act on.
         var before = old.menuBar
         before.lastAddress = settings.menuBar.lastAddress
         if before != settings.menuBar { onMenuBarChange?() }
+        if old.featuresOn != settings.featuresOn { featuresChanged(old: old) }
+    }
+
+    /// What a feature switched off leaves behind goes with it at once: its panels, its pages' scripts, its extensions.
+    private func featuresChanged(old: Settings) {
+        if old.isOn(.boosts) != settings.isOn(.boosts) {
+            reinstallBoosts()
+            // Pages already open lose their Boosts' styles at once, and get them back; what a Boost's script did stays
+            // until the page reloads.
+            for boost in boosts.boosts { if settings.isOn(.boosts) { applyBoostLive(boost) } else { removeBoostLive(boost) } }
+        }
+        if old.isOn(.peek) != settings.isOn(.peek) { for tab in runtimes.values { tab.sendConfig() } }
+        for window in windows {
+            if !settings.isOn(.peek) { closePeek(in: window) }
+            window.utilitiesAllowed = settings.isOn(.utilities)
+            if !settings.isOn(.utilities) { window.utility = nil }
+            if !settings.isOn(.passwords), window.utility == .passwords { window.utility = nil }
+            if !settings.isOn(.boosts), window.overlay == .boosts { window.overlay = nil }
+            if !settings.isOn(.extensions), let panel = window.sidePanel { panel.runtime.tearDown(); window.sidePanel = nil }
+        }
+        if old.isOn(.extensions) != settings.isOn(.extensions) { extensionCenter?.featureSwitched() }
+        onFeaturesChanged?()
     }
 
     // MARK: Timers (auto-archive, memory saver)

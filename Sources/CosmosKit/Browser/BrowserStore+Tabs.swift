@@ -224,12 +224,14 @@ extension BrowserStore {
         else { deselect(in: window) }
     }
 
-    func archiveItems(_ ids: [UUID], reason: ArchiveReason, in window: WindowState?) {
+    /// What went to the Archive, in the order it was in the sidebar (a private window keeps none).
+    @discardableResult
+    func archiveItems(_ ids: [UUID], reason: ArchiveReason, in window: WindowState?) -> [ArchivedItem] {
         let toRemove = ids.filter { workspace.item($0) != nil }
         for id in toRemove { discardRuntimes(under: id) }
         let removed = edit { $0.archive(toRemove, reason: reason) }
-        guard !removed.isEmpty else { return }
-        if isIncognito { return }
+        guard !removed.isEmpty else { return [] }
+        if isIncognito { return [] }
         // A blank "New Tab" that never loaded anything isn't worth keeping.
         let entries = removed.filter { !($0.root?.isTab == true && $0.url == nil) }
         for e in entries.reversed() { archive.add(e) }
@@ -238,16 +240,31 @@ extension BrowserStore {
         for w in windows {
             for (space, sel) in w.selection where workspace.item(sel) == nil { w.selection[space] = nil }
         }
+        return entries
     }
 
     func clearUnpinned(in window: WindowState) {
         guard let space = workspace.space(window.focusedSpaceID) else { return }
         let keep = Set(window.selectedItemID.map { workspace.tabs(under: $0).map(\.id) } ?? [])
-        let ids = workspace.unpinned(in: space).map(\.id).filter { id in workspace.tabs(under: id).allSatisfy { !keep.contains($0.id) } }
+        let order = workspace.unpinned(in: space).map(\.id)
+        let ids = order.filter { id in workspace.tabs(under: id).allSatisfy { !keep.contains($0.id) } }
         guard !ids.isEmpty else { window.showToast("Nothing to clear", symbol: "tray"); return }
-        archiveItems(ids, reason: .cleared, in: window)
+        let archived = archiveItems(ids, reason: .cleared, in: window)
         haptics.levelChange()
-        window.showToast("Archived \(ids.count) tab\(ids.count == 1 ? "" : "s")", symbol: "archivebox.fill")
+        let text = "Archived \(ids.count) tab\(ids.count == 1 ? "" : "s")"
+        guard !archived.isEmpty else { window.showToast(text, symbol: "archivebox.fill"); return }
+        // One click took them all, so one click brings them all back, where they were, with the tab that was showing.
+        let selected = window.selectedItemID, root = space.unpinnedRootID
+        window.showToast(text, symbol: "archivebox.fill", actionTitle: "Undo") { [weak self, weak window] in
+            guard let self, let window else { return }
+            // Top first, each at the place it had, so the list comes back as it was.
+            func place(_ entry: ArchivedItem) -> Int? { entry.root.flatMap { order.firstIndex(of: $0.id) } }
+            for entry in archived.sorted(by: { (place($0) ?? 0) < (place($1) ?? 0) }) {
+                guard let kept = self.archive.entries.first(where: { $0.id == entry.id }) else { continue }
+                self.restore(kept, in: window, to: (root, place(entry)))
+            }
+            if let selected, self.workspace.item(selected) != nil { self.select(selected, in: window) }
+        }
     }
 
     func reopenLastClosed(in window: WindowState) {
@@ -257,12 +274,14 @@ extension BrowserStore {
         restore(entry, in: window)
     }
 
-    func restore(_ entry: ArchivedItem, in window: WindowState) {
+    /// Back from the Archive: at the top of Today (a folder under Pinned), or at `place` when it is known where it was.
+    func restore(_ entry: ArchivedItem, in window: WindowState, to place: (parent: UUID, index: Int?)? = nil) {
         let spaceID = entry.spaceID.flatMap { workspace.space($0) }?.id ?? window.focusedSpaceID
         guard let space = workspace.space(spaceID) else { return }
         let isFolder = entry.root?.isFolder == true
-        let parent = isFolder ? space.pinnedRootID : space.unpinnedRootID
-        guard let rid = edit({ $0.restore(entry.items, under: parent, at: isFolder ? nil : 0) }) else { return }
+        let parent = place?.parent ?? (isFolder ? space.pinnedRootID : space.unpinnedRootID)
+        let index = place.map { $0.index } ?? (isFolder ? nil : 0)
+        guard let rid = edit({ $0.restore(entry.items, under: parent, at: index) }) else { return }
         archive.remove(entry.id)
         recentlyClosed.removeAll { $0 == entry.id }
         select(rid, in: window)
@@ -663,7 +682,7 @@ extension BrowserStore {
     }
 
     public func tab(_ tab: TabRuntime, boostZoomFor host: String) -> Double? {
-        boosts.boosts(for: host, profileID: tab.profileID).compactMap(\.zoom).first
+        activeBoosts.boosts(for: host, profileID: tab.profileID).compactMap(\.zoom).first
     }
 
     public func tabWantsLocation(_ tab: TabRuntime) async -> PageLocation? { await locate() }
@@ -694,7 +713,8 @@ extension BrowserStore {
             do {
                 guard let item = try await center.addFromStorePage(id, confirm: { await tab.confirmAdding($0) }) else { return }
                 // A tab in Peek or a popup is in no window's list: the toast goes to the window in front.
-                (window(showing: tab.itemID) ?? activeWindow)?.showToast("Added “\(item.name)”.", symbol: "puzzlepiece.extension.fill")
+                let text = center.isOn ? "Added “\(item.name)”." : "Added “\(item.name)”. It runs when extensions are switched on in Settings ▸ Features."
+                (window(showing: tab.itemID) ?? activeWindow)?.showToast(text, symbol: "puzzlepiece.extension.fill")
             } catch ExtensionError.declined {
             } catch {
                 tab.tell("The extension wasn't added", error.localizedDescription)
@@ -732,6 +752,8 @@ extension BrowserStore {
 
 extension BrowserStore {
     func openPeek(_ url: URL, from itemID: UUID?, in window: WindowState) {
+        // With Peek switched off, what would have opened in it is an ordinary tab.
+        guard settings.isOn(.peek) else { newTab(url: url, in: window); return }
         closePeek(in: window)
         let pid = isIncognito ? nil : (itemID.flatMap { profileID(forItem: $0, in: window) } ?? workspace.space(window.focusedSpaceID)?.profileID)
         let rt = TabRuntime(itemID: UUID(), profileID: pid, environment: environment(forProfile: pid), host: self)

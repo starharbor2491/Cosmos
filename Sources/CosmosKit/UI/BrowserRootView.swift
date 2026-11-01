@@ -9,13 +9,17 @@ struct BrowserRootView: View {
 
     private var space: Space { store.workspace.space(window.focusedSpaceID) ?? store.workspace.spaces[0] }
 
+    private func theme(_ id: UUID) -> SpaceTheme { (store.workspace.space(id) ?? space).theme }
+
+    /// While the sidebar is on screen the window goes by where its strip is (`SidebarLook`), so the sky and colours move
+    /// toward the next space under the fingers; with it hidden, by the space the window is on.
+    private var look: SidebarLook? { window.sidebarVisible || window.sidebarPeeking ? window.sidebarLook : nil }
+
     var body: some View {
-        let palette = Palette(theme: space.theme)
+        let look = self.look
         let floats = PaneFit.utilityFloats(window)
         ZStack(alignment: .topLeading) {
-            ThemeBackground(theme: space.theme)
-                .id(space.id)
-                .transition(.opacity)
+            sky(look)
 
             HStack(spacing: 0) {
                 if window.sidebarVisible {
@@ -26,7 +30,7 @@ struct BrowserRootView: View {
                 ContentArea(store: store, window: window)
                     .overlay(alignment: .topTrailing) {
                         // No room beside the page: over its edge instead.
-                        if floats, window.utilitiesVisible, let utility = window.utility {
+                        if floats, window.railShown, let utility = window.utility {
                             UtilityPanel(store: store, window: window, utility: utility, floating: true)
                                 .shadow(color: .black.opacity(0.25), radius: 18, y: 6)
                                 .padding(.trailing, Metrics.Space.s)
@@ -37,7 +41,7 @@ struct BrowserRootView: View {
                     ExtensionSidePanelView(store: store, window: window, panel: panel)
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
-                if window.utilitiesVisible {
+                if window.railShown {
                     if !floats, let utility = window.utility {
                         UtilityPanel(store: store, window: window, utility: utility)
                             .transition(.move(edge: .trailing).combined(with: .opacity))
@@ -57,21 +61,57 @@ struct BrowserRootView: View {
                     .zIndex(20)
             }
         }
-        .environment(\.palette, palette)
+        .modifier(Colours(from: theme(look?.space ?? space.id), to: look?.other.map(theme), mix: Double(look?.mix ?? 0)))
         .environment(\.haptics, store.haptics)
-        .animation(Motion.glide, value: space.id)
         .animation(Motion.standard, value: window.sidebarVisible)
         .animation(Motion.standard, value: window.sidePanel?.extensionID)
         .animation(Motion.standard, value: window.utility)
-        .animation(Motion.standard, value: window.utilitiesVisible)
+        .animation(Motion.standard, value: window.railShown)
         .animation(Motion.quick, value: window.overlay)
-        .preferredColorScheme(palette.isDark ? .dark : .light)
         .frame(minWidth: 760, minHeight: 480)
         .background(GeometryReader { g in
             Color.clear
                 .onAppear { window.contentWidth = g.size.width }
                 .onChange(of: g.size.width) { _, width in window.contentWidth = width }
         })
+    }
+}
+
+extension BrowserRootView {
+    /// The window's backdrop. With the sidebar's strip between two spaces, the other space's sky over this one's, as clear
+    /// as the strip is far from it (the strip settling animates it). With no sidebar, a change of space dissolves one sky
+    /// into the next.
+    private func sky(_ look: SidebarLook?) -> some View {
+        // One layer for the sky on show, the same view whether the sidebar's look or the window's space says which it is,
+        // so the sidebar going away (⌘S) changes nothing on screen.
+        let shown = look?.space ?? space.id
+        return ZStack {
+            ThemeBackground(theme: theme(shown))
+                .id(shown)
+                .transition(.opacity)
+            if let look, let other = look.other { ThemeBackground(theme: theme(other)).opacity(look.mix) }
+        }
+        .animation(look == nil ? Motion.glide : nil, value: shown)
+    }
+
+    /// The colours of everything over the sky: `mix` of the way from `from`'s to `to`'s. Animatable, so the colours follow
+    /// the strip's settling frame by frame, as the sky does.
+    private struct Colours: ViewModifier, Animatable {
+        let from: SpaceTheme
+        let to: SpaceTheme?
+        var mix: Double
+
+        var animatableData: Double {
+            get { mix }
+            set { mix = newValue }
+        }
+
+        func body(content: Content) -> some View {
+            let palette = to.map { Palette(theme: from, $0, t: mix) } ?? Palette(theme: from)
+            content
+                .environment(\.palette, palette)
+                .preferredColorScheme(palette.isDark ? .dark : .light)
+        }
     }
 }
 
@@ -83,12 +123,16 @@ enum PaneFit {
 
     /// What is always beside the page on the right: the utilities rail, an extension's side panel.
     static func besidePage(_ window: WindowState) -> Double {
-        (window.utilitiesVisible ? Double(UtilitiesRail.width) : 0)
+        (window.railShown ? Double(UtilitiesRail.width) : 0)
             + (window.sidePanel != nil ? Double(ExtensionSidePanelView.width) + 2 * Double(Metrics.Space.s) : 0)
     }
 
     static func sidebarWidth(_ window: WindowState) -> Double {
-        guard window.libraryOpen else { return window.sidebarWidth }
+        window.libraryOpen ? libraryWidth(window) : window.sidebarWidth
+    }
+
+    /// The sidebar's width while it shows the Library.
+    static func libraryWidth(_ window: WindowState) -> Double {
         let room = window.contentWidth > 0 ? window.contentWidth - besidePage(window) - minimumPage : LibraryPage.width
         return max(window.sidebarWidth, min(LibraryPage.width, room))
     }
@@ -367,6 +411,7 @@ struct EmptyStateView: View {
                     Tip(keys: "⌥⌘←  ⌥⌘→", text: "Travel between spaces")
                     Tip(keys: "⌘D", text: "Pin a tab")
                     Tip(keys: "⌃⇧=", text: "Split the view")
+                    if store.settings.isOn(.spaceSwipe) { Tip(keys: "Two fingers", text: "Swipe the sidebar to the next space") }
                 }
                 .padding(.top, 6)
                 if store.isFirstLaunch || !store.settings.hasCompletedOnboarding {
@@ -450,13 +495,26 @@ struct SidebarRevealLayer: View {
     let window: WindowState
     @Environment(\.palette) private var palette
     @Local private var hideTask: Task<Void, Never>?
+    @Local private var revealTask: Task<Void, Never>?
+    /// How long the pointer rests on the edge before the sidebar comes: one passing by on its way to the Dock or another
+    /// window does not slide it over the page.
+    static let dwell: Duration = .milliseconds(150)
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             if store.settings.revealSidebarOnHover && !window.sidebarPeeking {
                 Color.clear.frame(width: 6).frame(maxHeight: .infinity)
                     .contentShape(Rectangle())
-                    .onHover { inside in if inside { hideTask?.cancel(); window.sidebarPeeking = true } }
+                    .onHover { inside in
+                        revealTask?.cancel()
+                        guard inside else { return }
+                        revealTask = Task { @MainActor in
+                            try? await Task.sleep(for: Self.dwell)
+                            guard !Task.isCancelled else { return }
+                            hideTask?.cancel()
+                            window.sidebarPeeking = true
+                        }
+                    }
             }
             if window.sidebarPeeking {
                 SidebarView(store: store, window: window)

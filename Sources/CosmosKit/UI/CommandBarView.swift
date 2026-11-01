@@ -8,6 +8,10 @@ struct CommandBarView: View {
     let window: WindowState
     @Environment(\.palette) private var palette
     @Local private var modelBox: ModelBox?
+    /// Where the pointer was when a row last took the selection from it (at first, where it was when the bar opened). A
+    /// pointer that has not moved since has chosen nothing: rows that open or move in under it while you type leave the
+    /// selection where the keys put it.
+    @Local private var pointer: NSPoint?
     @Namespace private var highlightNamespace
 
     final class ModelBox {
@@ -21,7 +25,10 @@ struct CommandBarView: View {
             if let model { content(model) }
         }
         .frame(width: 640)
-        .onAppear { if modelBox == nil, case .commandBar(let mode)? = window.overlay { modelBox = ModelBox(CommandBarModel(store: store, window: window, mode: mode)) } }
+        .onAppear {
+            pointer = NSEvent.mouseLocation
+            if modelBox == nil, case .commandBar(let mode)? = window.overlay { modelBox = ModelBox(CommandBarModel(store: store, window: window, mode: mode)) }
+        }
     }
 
     @ViewBuilder
@@ -40,7 +47,7 @@ struct CommandBarView: View {
                     .background(Capsule().fill(palette.accent.opacity(0.28)))
                     .overlay(Capsule().strokeBorder(palette.accent.opacity(0.5), lineWidth: 0.5))
                 } else {
-                    Image(systemName: model.mode == .newTab ? "plus.magnifyingglass" : "magnifyingglass")
+                    Image(systemName: model.mode == .newTab ? "plus" : "magnifyingglass")
                         .font(.system(size: 16, weight: .medium))
                         .foregroundStyle(palette.secondary)
                 }
@@ -55,6 +62,14 @@ struct CommandBarView: View {
                         Text("to search \(model.tabHint?.name ?? "")").font(.system(size: 12))
                     }
                     .foregroundStyle(palette.secondary)
+                } else if model.site == nil {
+                    // Where Enter goes: ⌘T and ⌘L look alike, and ⌘↩ goes the other way.
+                    Text(model.mode == .newTab ? "New Tab" : "This Tab")
+                        .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                        .foregroundStyle(palette.secondary)
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .background(RoundedRectangle(cornerRadius: Metrics.Radius.chip, style: .continuous).fill(palette.hoverStrong))
+                        .help(model.mode == .newTab ? "Enter opens a new tab; ⌘↩ opens it here" : "Enter opens it here; ⌘↩ opens a new tab")
                 }
             }
             .padding(.horizontal, 18).padding(.vertical, 14)
@@ -69,7 +84,12 @@ struct CommandBarView: View {
                         CommandRow(store: store, row: row, selected: index == model.selected, query: model.text, namespace: highlightNamespace)
                             .contentShape(Rectangle())
                             .onTapGesture { model.activate(row, newTabOverride: NSEvent.modifierFlags.contains(.command)) }
-                            .onHover { inside in if inside, model.selected != index, NSEvent.pressedMouseButtons == 0 { model.selected = index } }
+                            .onHover { inside in
+                                let now = NSEvent.mouseLocation
+                                guard inside, model.selected != index, NSEvent.pressedMouseButtons == 0, now != pointer else { return }
+                                pointer = now
+                                model.selected = index
+                            }
                     }
                 }
                 .padding(8)

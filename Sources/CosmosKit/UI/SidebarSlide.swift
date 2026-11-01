@@ -31,6 +31,23 @@ struct PageLook: Equatable {
     }
 }
 
+/// What the window looks like while the sidebar is between two pages: the sky and colours of the space it shows, mixed
+/// toward the other page's as far as the strip has got, and the sidebar as wide as the share of the Library in it. So they
+/// change under the fingers (and with the strip as it settles), not after.
+struct SidebarLook: Equatable {
+    /// The space whose sky the page that is shown has.
+    var space: UUID
+    /// The other page's space, while the strip moves between two skies.
+    var other: UUID?
+    /// How much of `other`'s sky is in the mix: 0...1.
+    var mix: CGFloat
+    /// How much of the Library is on show: 0 on a space, 1 on the Library, in between while the strip moves to or from it.
+    var library: CGFloat
+
+    /// The sidebar's width, between a space's and the Library's.
+    func width(space: Double, library: Double) -> Double { space + (library - space) * Double(self.library) }
+}
+
 /// Where the sidebar's pages sit while it slides from one to another. At rest only `shown` is on screen. While it moves,
 /// `other` is the page it is coming from or going to, one width to the side of `shown`.
 ///
@@ -61,6 +78,24 @@ struct SidebarSlide: Equatable {
     var isPending: Bool { pending }
 
     func otherOffset(width: CGFloat) -> CGFloat? { other.map { offset + CGFloat($0.side) * width } }
+
+    /// How far `other` has come in, 0...1, when `offset` is measured in pages `unit` wide. 0 with no other page.
+    func progress(unit: CGFloat) -> CGFloat {
+        guard other != nil, unit > 0, offset.isFinite else { return 0 }
+        return min(abs(offset) / unit, 1)
+    }
+
+    /// How the window looks with the strip where it is (`offset` in pages `unit` wide). The Library has no sky of its own:
+    /// it shows `librarySpace`'s, the space it was opened from.
+    func look(unit: CGFloat, librarySpace: UUID) -> SidebarLook {
+        func space(_ page: SidebarPage) -> UUID { if case .space(let id) = page { return id }; return librarySpace }
+        let t = progress(unit: unit)
+        let here = space(shown), there = other.map { space($0.page) }
+        let library = (shown == .library ? 1 - t : 0) + (other?.page == .library ? t : 0)
+        return there == nil || there == here
+            ? SidebarLook(space: here, other: nil, mix: 0, library: library)
+            : SidebarLook(space: here, other: there, mix: t, library: library)
+    }
 
     /// The page a swipe in `direction` (+1 for the next page, -1 for the previous one) would arrive at.
     func neighbour(direction: Int, in pages: [SidebarPage]) -> SidebarPage? {

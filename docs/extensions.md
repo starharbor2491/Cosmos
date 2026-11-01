@@ -107,6 +107,10 @@ it had stored under the old id is left behind.
 - Every enabled extension is loaded into the default profile (the first one) as it opens. Spaces with a profile of
   their own have no extensions: Chromium's DevTools protocol loads them into the default profile only.
 - Turn an extension off (it unloads at once) or remove it (its files are deleted) in Settings ▸ Extensions.
+- Settings ▸ Features ▸ Extensions turns them all off at once: each enabled one is unloaded as if turned off, no button,
+  popup, menu item, shortcut or side panel of theirs is left, and they are not checked for updates; each keeps its own on
+  or off and loads again when the switch is back on. Flipped quickly, the switch's moves are done one after another, so
+  it ends as the last one says (`FeatureTests.flippingExtensionsQuicklyEndsAsTheLastSwitchSays`).
 - Extensions never load in Incognito windows.
 
 ## What does not work
@@ -171,7 +175,9 @@ for its tab, and the `chrome.tabs` events. The tests below were first written fo
   from another site or from a frame. `aSecondAddToChromeWhileTheFirstIsAskedAddsNothing`: one question, one copy.
   Checked once by hand (2026-10-30), not in the tests: a real Web Store package (uBlock Origin Lite) passes the signature
   check and installs, and on the real store page Add to Chrome reaches Cosmos with its id.
-- Not checked: real extensions from the Web Store one by one; side panels and notifications on screen; popups on a
+- Not checked: whether Chromium keeps what an extension stored (`chrome.storage`, its IndexedDB) across an unload and
+  load, that is across turning it, or all extensions, off and on (Cosmos unloads with `Extensions.uninstall`); real
+  extensions from the Web Store one by one; side panels and notifications on screen; popups on a
   real screen in the app (a click elsewhere closing one, typing into one, a drag with the mouse, the bar, corners and
   shadow); and anything that
   needs a person at the keyboard.

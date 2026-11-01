@@ -272,3 +272,54 @@ import Testing
         }
     }
 }
+
+/// What the window looks like while the strip is between two pages: the sky and colours mix toward the other space's as
+/// far as the strip has got, and the sidebar is as wide as the share of the Library in it.
+@Suite struct SidebarLookTests {
+    private let one = UUID(), two = UUID()
+    private var pages: [SidebarPage] { SidebarPage.all(spaces: [one, two]) }
+    private let unit: CGFloat = 248
+
+    @Test func atRestItIsTheSpacesOwn() {
+        let look = SidebarSlide(shown: .space(one)).look(unit: unit, librarySpace: one)
+        #expect(look == SidebarLook(space: one, other: nil, mix: 0, library: 0))
+    }
+
+    @Test func theNextSpacesSkyComesInAsFarAsThePageHas() {
+        var slide = SidebarSlide(shown: .space(one))
+        slide.drag(to: -unit / 4, in: pages)
+        #expect(slide.look(unit: unit, librarySpace: one) == SidebarLook(space: one, other: two, mix: 0.25, library: 0))
+    }
+
+    /// When the fingers lift and the strip goes on to the next page, the page shown and the other one change places; the
+    /// mix turns over with them, so the window looks the same on either side of that moment.
+    @Test func itLooksTheSameOnEitherSideOfTheFingersLifting() {
+        var slide = SidebarSlide(shown: .space(one))
+        slide.drag(to: -unit * 0.3, in: pages)
+        let before = slide.look(unit: unit, librarySpace: one)
+        slide.slide(to: .space(two), width: unit, in: pages)
+        let after = slide.look(unit: unit, librarySpace: one)
+        #expect(after.space == two && after.other == one)
+        #expect(abs(after.mix - (1 - before.mix)) < 1e-9)
+        _ = slide.arrive()
+        #expect(slide.look(unit: unit, librarySpace: one).mix == 0, "settled, it is the new space's own")
+    }
+
+    /// The Library has the sky of the space it was opened from, so going there changes only the sidebar's width.
+    @Test func theLibraryWidensTheSidebarAndKeepsTheSky() {
+        var slide = SidebarSlide(shown: .space(one))
+        slide.drag(to: unit / 2, in: pages)
+        let look = slide.look(unit: unit, librarySpace: one)
+        #expect(look == SidebarLook(space: one, other: nil, mix: 0, library: 0.5))
+        #expect(look.width(space: 248, library: 448) == 348)
+        #expect(SidebarSlide(shown: .library).look(unit: unit, librarySpace: one).width(space: 248, library: 448) == 448)
+    }
+
+    /// From the Library to a space other than the one it was opened from: that space's sky comes in over the old one.
+    @Test func leavingTheLibraryForAnotherSpaceMixesTheSkies() {
+        var slide = SidebarSlide(shown: .library)
+        slide.slide(to: .space(two), width: unit, in: pages)
+        let look = slide.look(unit: unit, librarySpace: one)
+        #expect(look == SidebarLook(space: two, other: one, mix: 1, library: 1), "it starts as the Library on the old sky")
+    }
+}

@@ -163,6 +163,11 @@ final class FakeExtensions: EngineExtensions {
     private(set) var unloaded: [String] = []
     /// While set, every load fails with this reason.
     var refusal: String?
+    /// How long a load or an unload takes, as Chromium's do, so a test can catch one half done.
+    var delay: Duration = .zero
+    /// Loads under way at once for one folder, at most: more than one is the same extension loaded twice.
+    private(set) var mostAtOnce = 0
+    private var underWay: [String: Int] = [:]
     var buttons: [ExtensionAction] = []
     var items: [ExtensionMenuItem] = []
     var commands: [ExtensionCommand] = []
@@ -183,10 +188,18 @@ final class FakeExtensions: EngineExtensions {
     func load(folder: URL) async throws -> String {
         if let refusal { throw LoadError(errorDescription: refusal) }
         let id = Self.id(for: folder)
+        underWay[id, default: 0] += 1
+        mostAtOnce = max(mostAtOnce, underWay[id]!)
+        defer { underWay[id]! -= 1 }
+        if delay > .zero { try? await Task.sleep(for: delay) }
         loaded[id] = folder
         return id
     }
-    func unload(id: String) async { loaded[id] = nil; unloaded.append(id) }
+    func unload(id: String) async {
+        if delay > .zero { try? await Task.sleep(for: delay) }
+        loaded[id] = nil
+        unloaded.append(id)
+    }
     func actions(for page: EnginePage?) -> [ExtensionAction] { buttons.filter { loaded[$0.extensionID] != nil } }
     /// Its buttons open popups (a page each), as an extension with `default_popup` does.
     var opensPopups = false

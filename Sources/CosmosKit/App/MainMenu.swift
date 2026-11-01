@@ -20,7 +20,7 @@ extension CosmosAppDelegate {
             m.addItem(withTitle: "About Cosmos", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
             m.addItem(.separator())
             add(m, "Settings…", ",", [.command], global: { $0.showSettings() })
-            add(m, "Extensions…", "", [], global: { $0.showSettings(tab: .extensions) })
+            add(m, "Extensions…", "", [], feature: .extensions, global: { $0.showSettings(tab: .extensions) })
             m.addItem(.separator())
             // Into the regular browser even when a private window is in front: a private window keeps nothing.
             add(m, "Import from Arc or Another Browser…", "", [], global: { $0.store.present(.welcome) })
@@ -57,7 +57,7 @@ extension CosmosAppDelegate {
             add(m, "Close Window", "w", [.command, .shift], global: { d in
                 if let key = NSApp.keyWindow { key.performClose(nil) } else { d.active?.window?.performClose(nil) }
             })
-            add(m, "Restore Last Closed Tab", "t", [.command, .shift], { $0.store.reopenLastClosed(in: $0.state) })
+            add(m, "Reopen Closed Tab", "t", [.command, .shift], { $0.store.reopenLastClosed(in: $0.state) })
             m.addItem(.separator())
             add(m, "Print…", "p", [.command], { $0.store.perform(.print, in: $0.state) })
         }
@@ -74,8 +74,8 @@ extension CosmosAppDelegate {
             pm.keyEquivalentModifierMask = [.command, .shift]
             m.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
             m.addItem(.separator())
-            add(m, "Copy URL", "c", [.command, .shift], { $0.store.perform(.copyLink, in: $0.state) })
-            add(m, "Copy URL as Markdown", "c", [.command, .shift, .option], { $0.store.perform(.copyLinkMarkdown, in: $0.state) })
+            add(m, "Copy Link", "c", [.command, .shift], { $0.store.perform(.copyLink, in: $0.state) })
+            add(m, "Copy Link as Markdown", "c", [.command, .shift, .option], { $0.store.perform(.copyLinkMarkdown, in: $0.state) })
             m.addItem(.separator())
             add(m, "Find…", "f", [.command], { $0.store.perform(.find, in: $0.state) })
             add(m, "Find Next", "g", [.command], { c in
@@ -87,12 +87,12 @@ extension CosmosAppDelegate {
                 rt.find(c.state.findQuery, backwards: true) { c.state.findHadMatch = $0 }
             })
             m.addItem(.separator())
-            add(m, "Fill Saved Password", "", [], { $0.store.perform(.fillPassword, in: $0.state) })
+            add(m, "Fill Saved Password", "", [], feature: .passwords, { $0.store.perform(.fillPassword, in: $0.state) })
         }
 
         top("View") { m in
             add(m, "Toggle Sidebar", "s", [.command], { $0.store.perform(.toggleSidebar, in: $0.state) })
-            add(m, "Toggle Utilities", "s", [.command, .control], { $0.store.perform(.toggleUtilities, in: $0.state) })
+            add(m, "Toggle Utilities", "s", [.command, .control], feature: .utilities, { $0.store.perform(.toggleUtilities, in: $0.state) })
             m.addItem(.separator())
             add(m, "Reload Page", "r", [.command], { $0.store.perform(.reload, in: $0.state) })
             add(m, "Reload Ignoring Cache", "r", [.command, .shift], { $0.store.perform(.hardReload, in: $0.state) })
@@ -114,22 +114,23 @@ extension CosmosAppDelegate {
             m.addItem(.separator())
             for n in 1...9 { add(m, "Space \(n)", String(n), [.control], enabled: { n <= $0.store.workspace.spaces.count }, { $0.store.switchSpace(number: n, in: $0.state) }) }
             m.addItem(.separator())
-            add(m, "Edit Space Theme…", "", [], { $0.state.overlay = .themeEditor($0.state.focusedSpaceID) })
+            add(m, "Edit Space Name and Theme…", "", [], { $0.state.overlay = .themeEditor($0.state.focusedSpaceID) })
         }
 
         top("Tabs") { m in
             add(m, "Pin / Unpin Tab", "d", [.command], { $0.store.perform(.togglePin, in: $0.state) })
             add(m, "Add to / Remove from Favorites", "d", [.command, .option], { $0.store.perform(.toggleFavorite, in: $0.state) })
             add(m, "Archive All Today Tabs", "k", [.command, .shift], { $0.store.clearUnpinned(in: $0.state) })
-            add(m, "Keep Peek Page as a Tab", "o", [.command], enabled: { $0.state.peek != nil }, { $0.store.promotePeek(in: $0.state) })
+            add(m, "Keep Peek Page as a Tab", "o", [.command], feature: .peek, enabled: { $0.state.peek != nil }, { $0.store.promotePeek(in: $0.state) })
             m.addItem(.separator())
             add(m, "Next Tab", String(UnicodeScalar(NSDownArrowFunctionKey)!), [.command, .option], { $0.store.selectAdjacentTab(1, in: $0.state) })
             add(m, "Previous Tab", String(UnicodeScalar(NSUpArrowFunctionKey)!), [.command, .option], { $0.store.selectAdjacentTab(-1, in: $0.state) })
             add(m, "Recent Tab", "\t", [.control], { $0.store.selectRecent(1, in: $0.state) })
             add(m, "Older Recent Tab", "\t", [.control, .shift], { $0.store.selectRecent(2, in: $0.state) })
             m.addItem(.separator())
-            add(m, "Add Split View", "+", [.control], { $0.store.perform(.addSplit, in: $0.state) })
-            add(m, "Close Split Pane", "_", [.control], { $0.store.perform(.closeSplitPane, in: $0.state) })
+            // ⌃⇧= and ⌃⇧- are caught by their keys before the menus (`installKeyChords`); the items show the same keys.
+            add(m, "Add Split View", "=", [.control, .shift], { $0.store.perform(.addSplit, in: $0.state) })
+            add(m, "Close Split Pane", "-", [.control, .shift], { $0.store.perform(.closeSplitPane, in: $0.state) })
             add(m, "Mute / Unmute Tab", "", [], { $0.store.perform(.muteTab, in: $0.state) })
             m.addItem(.separator())
             for n in 1...9 { add(m, "Favorite \(n)", String(n), [.command], enabled: { n <= $0.store.workspace.favorites.count }, { $0.store.selectFavorite(number: n, in: $0.state) }) }
@@ -144,9 +145,9 @@ extension CosmosAppDelegate {
             add(m, "Show Downloads", "j", [.command, .shift], { $0.store.perform(.showDownloads, in: $0.state) })
         }
 
-        top("Boosts") { m in
-            add(m, "Boost This Site…", "b", [.command, .option], { $0.store.perform(.showBoosts, in: $0.state) })
+        top("Site") { m in
             add(m, "Site Controls", "", [], { $0.store.perform(.showSiteControls, in: $0.state) })
+            add(m, "Boost This Site…", "b", [.command, .option], feature: .boosts, { $0.store.perform(.showBoosts, in: $0.state) })
         }
 
         top("Developer") { m in
@@ -175,25 +176,37 @@ extension CosmosAppDelegate {
         return main
     }
 
+    /// Shows only the items of the features that are on (Settings ▸ Features). A hidden item does not answer its shortcut
+    /// either.
+    func showFeatureItems() { Self.showFeatureItems(in: NSApp.mainMenu, settings: store.settings) }
+
+    static func showFeatureItems(in menu: NSMenu?, settings: Settings) {
+        for item in menu?.items ?? [] {
+            if let action = item.representedObject as? MenuAction, let feature = action.feature { item.isHidden = !settings.isOn(feature) }
+            if let sub = item.submenu { showFeatureItems(in: sub, settings: settings) }
+        }
+    }
+
     /// Adds an item that acts on the frontmost browser window (disabled when there is none).
     @discardableResult
-    private func add(_ menu: NSMenu, _ title: String, _ key: String, _ mods: NSEvent.ModifierFlags,
+    private func add(_ menu: NSMenu, _ title: String, _ key: String, _ mods: NSEvent.ModifierFlags, feature: Feature? = nil,
                      enabled: ((BrowserWindowController) -> Bool)? = nil, _ run: @escaping (BrowserWindowController) -> Void) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: #selector(performMenuAction(_:)), keyEquivalent: key)
         item.keyEquivalentModifierMask = mods
         item.target = self
-        item.representedObject = MenuAction(needsWindow: true, enabled: enabled) { c in if let c { run(c) } }
+        item.representedObject = MenuAction(needsWindow: true, feature: feature, enabled: enabled) { c in if let c { run(c) } }
         menu.addItem(item)
         return item
     }
 
     /// Adds an item that works without a browser window.
     @discardableResult
-    private func add(_ menu: NSMenu, _ title: String, _ key: String, _ mods: NSEvent.ModifierFlags, global run: @escaping (CosmosAppDelegate) -> Void) -> NSMenuItem {
+    private func add(_ menu: NSMenu, _ title: String, _ key: String, _ mods: NSEvent.ModifierFlags, feature: Feature? = nil,
+                     global run: @escaping (CosmosAppDelegate) -> Void) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: #selector(performMenuAction(_:)), keyEquivalent: key)
         item.keyEquivalentModifierMask = mods
         item.target = self
-        item.representedObject = MenuAction(needsWindow: false, enabled: nil) { [weak self] _ in if let self { run(self) } }
+        item.representedObject = MenuAction(needsWindow: false, feature: feature, enabled: nil) { [weak self] _ in if let self { run(self) } }
         menu.addItem(item)
         return item
     }

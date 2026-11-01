@@ -512,6 +512,20 @@ enum RadialFixture {
         session.teardown()
     }
 
+    /// With Peek switched off (Settings ▸ Features) the menu, and so the ring made from it, has no Peek item.
+    @Test func noPeekItemWhilePeekIsSwitchedOff() {
+        _ = NSApplication.shared
+        let rig = Rig()
+        rig.store.settings.set(.peek, on: false)
+        let session = MenuBarSession(store: rig.store)
+        let runtime = session.prepare()
+        report(runtime, ["link": "https://example.com/target", "x": 5.0, "y": 5.0])
+        let ids = runtime.contextMenu().items.compactMap(\.identifier?.rawValue)
+        #expect(ids.contains("cosmos.openLinkInNewTab") && !ids.contains("cosmos.openLinkInPeek"))
+        #expect(!RadialMenuBuilder.entries(from: runtime.contextMenu()).entries.contains { $0.action == .openLinkInPeek })
+        session.teardown()
+    }
+
     /// A page can link to a file or a script; Peek and Split are for web pages, as the force-click Peek is.
     @Test(arguments: ["file:///etc/hosts", "javascript:alert(1)", "ftp://example.com/a", "cosmos://settings"])
     func peekAndSplitAreOfferedOnlyForWebLinks(link: String) throws {

@@ -91,7 +91,7 @@ final class CommandBarModel {
                 guard let url = URL(string: "https://\(d.domain)") else { continue }
                 out.append(CommandCandidate(id: "top:\(d.domain)", kind: .topDomain, title: d.name, subtitle: d.domain, url: url, frecency: 0.35))
             }
-            for c in BrowserCommand.allCases { out.append(c.candidate) }
+            for c in BrowserCommand.allCases where c.feature.map(store.settings.isOn) ?? true { out.append(c.candidate) }
             for s in ws.spaces where s.id != window.focusedSpaceID {
                 out.append(CommandCandidate(id: "space:\(s.id)", kind: .space(s.id), title: "Go to \(s.title)", subtitle: "Space", symbol: "moon.stars", frecency: 0.8))
             }
@@ -105,8 +105,9 @@ final class CommandBarModel {
         let engine = cat.engine(store.settings.searchEngineID)
 
         if q.trimmingCharacters(in: .whitespaces).isEmpty && site == nil {
-            // Nothing typed: recent tabs and your most-used sites.
-            let recent = window.recent.compactMap { id -> CommandCandidate? in
+            // Nothing typed: recent tabs and your most-used sites, but for the tab that is showing: it is where you are.
+            let current = store.currentTabItemID(in: window)
+            let recent = window.recent.filter { $0 != current }.compactMap { id -> CommandCandidate? in
                 guard let item = store.workspace.item(id), let tab = item.tab else { return nil }
                 let live = store.runtime(forItem: id, in: window)
                 return CommandCandidate(id: "tab:\(id)", kind: live != nil ? .openTab(id) : .sidebarItem(id), title: store.title(forItem: id, in: window),

@@ -276,7 +276,8 @@ public final class TabRuntime: NSObject {
         case "loginForm":
             guard let origin = SavedLogin.origin(body["frameOrigin"] as? String) else { break }
             loginFormOrigins.insert(origin)
-            if profileID != nil { host?.passwordManager?.prepare() }
+            // With saving and filling switched off the vault stays shut: opening it asks the Keychain.
+            if profileID != nil, host?.settings.isOn(.passwords) == true { host?.passwordManager?.prepare() }
         case "login":
             guard let origin = SavedLogin.origin(body["frameOrigin"] as? String), let password = body["password"] as? String else { break }
             offerToSave(origin: origin, username: body["username"] as? String ?? "", password: password)
@@ -327,7 +328,7 @@ public final class TabRuntime: NSObject {
     /// page says). Cosmos asks whether to keep it, unless it has it already, the user said never for the site, saving is
     /// off, or this is a private window.
     private func offerToSave(origin: String, username: String, password: String) {
-        guard offeredLogin == nil, let host, host.settings.offerToSavePasswords, profileID != nil, let passwords = host.passwordManager,
+        guard offeredLogin == nil, let host, host.settings.offerToSavePasswords, host.settings.isOn(.passwords), profileID != nil, let passwords = host.passwordManager,
               passwords.shouldOffer(origin: origin, username: username, password: password) else { return }
         offeredLogin = OfferedLogin(origin: origin, username: username)
         Task { [weak self] in
@@ -353,21 +354,22 @@ public final class TabRuntime: NSObject {
 
     /// The saved sign-ins for the sign-in forms this page has shown, most recently used first.
     public var savedLogins: [SavedLogin] {
-        guard profileID != nil, let passwords = host?.passwordManager else { return [] }
+        guard profileID != nil, host?.settings.isOn(.passwords) == true, let passwords = host?.passwordManager else { return [] }
         return loginFormOrigins.sorted().flatMap { passwords.logins(for: $0) }
     }
 
     /// Fills `login` into the page's sign-in form, in a frame of the login's own origin only.
     @discardableResult
     public func fill(_ login: SavedLogin) async -> Bool {
-        guard await page.fillLogin(username: login.username, password: login.password, origin: login.origin) else { return false }
+        guard host?.settings.isOn(.passwords) == true, await page.fillLogin(username: login.username, password: login.password, origin: login.origin) else { return false }
         host?.passwordManager?.markUsed(login.id)
         return true
     }
 
-    /// What the agent needs to know about this tab: whether a link to another site opens in Peek.
-    private func sendConfig() {
-        let peek = host.map { $0.settings.peekFromPinned && $0.tabIsPinnedOrFavorite(self) } ?? false
+    /// What the agent needs to know about this tab: whether a link to another site opens in Peek. Sent as the page starts,
+    /// and again when Peek is switched on or off.
+    func sendConfig() {
+        let peek = host.map { $0.settings.peekFromPinned && $0.settings.isOn(.peek) && $0.tabIsPinnedOrFavorite(self) } ?? false
         evaluate("window.__cosmosConfig && window.__cosmosConfig({ peekCrossSite: \(peek) })", in: .agent)
     }
 
@@ -377,7 +379,7 @@ public final class TabRuntime: NSObject {
         if meta { host?.tab(self, open: href, as: shift ? .newTabForeground : .newTabBackground); return }
         if alt { host?.tab(self, open: href, as: .download); return }
         if shift { host?.tab(self, open: href, as: .peek); return }
-        if let host, host.settings.peekFromPinned, host.tabIsPinnedOrFavorite(self),
+        if let host, host.settings.peekFromPinned, host.settings.isOn(.peek), host.tabIsPinnedOrFavorite(self),
            let current = url, !PublicSuffixList.shared.isSameSite(current, href) {
             host.tab(self, open: href, as: .peek)
         } else {
@@ -664,7 +666,8 @@ extension TabRuntime: EnginePageDelegate {
     /// Pressing hard on a link opens it in Peek, like ⇧-click. The press ends in a click, which the agent then keeps from
     /// also following the link.
     public func pageDidForceClick(_ page: EnginePage) {
-        guard let href = hoverURL, Self.isWebLink(href) else { return }
+        // A hard press is for a quick look; with Peek off there is none, and an accidental press opens nothing else.
+        guard host?.settings.isOn(.peek) != false, let href = hoverURL, Self.isWebLink(href) else { return }
         evaluate("window.__cosmosHoldClick && window.__cosmosHoldClick()", in: .agent)
         host?.tab(self, open: href, as: .peek)
     }

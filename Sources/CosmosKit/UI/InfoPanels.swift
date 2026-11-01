@@ -74,8 +74,10 @@ struct SiteControlsPanel: View {
                             ToolbarButton(symbol: "arrow.counterclockwise", size: 12, help: "Actual Size") { rt?.resetZoom() }
                         }
                     }
-                    ControlRow(symbol: "wand.and.stars", title: "Boost this site", detail: store.boostForCurrentPageIfExists(in: window) == nil ? "Recolour, change fonts, hide things" : "You have a Boost here") {
-                        ActionButton(title: "Open", kind: .quiet) { window.overlay = .boosts }.padding(.trailing, -Metrics.Space.s)
+                    if store.settings.isOn(.boosts) {
+                        ControlRow(symbol: "wand.and.stars", title: "Boost this site", detail: store.boostForCurrentPageIfExists(in: window) == nil ? "Recolour, change fonts, hide things" : "You have a Boost here") {
+                            ActionButton(title: "Open", kind: .quiet) { window.overlay = .boosts }.padding(.trailing, -Metrics.Space.s)
+                        }
                     }
                     if let rt, rt.isAudible || rt.isMuted {
                         ControlRow(symbol: rt.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill", title: "Sound", detail: rt.isMuted ? "Muted" : "Playing") {
@@ -128,23 +130,42 @@ struct SiteControlsPanel: View {
 // MARK: - Shortcuts
 
 struct ShortcutsPanel: View {
+    let store: BrowserStore
     let window: WindowState
     @Environment(\.palette) private var palette
 
-    private static let groups: [(String, [(String, String)])] = [
-        ("Command Bar", [("⌘T", "New tab / open the Command Bar"), ("⌘L", "Search or edit the address"), ("⌘↩", "Open the result in a new tab"), ("Tab", "Search inside a site"), ("esc", "Close the Command Bar")]),
-        ("Tabs", [("⌘W", "Close tab"), ("⇧⌘T", "Reopen closed tab"), ("⌘D", "Pin or unpin"), ("⇧⌘D", "Add to Favorites"), ("⇧⌘K", "Archive all Today tabs"), ("⌃⇥", "Next recent tab"), ("⌘1–9", "Jump to a Favorite")]),
-        ("Spaces", [("⌥⌘←  ⌥⌘→", "Previous / next space"), ("⌃1–9", "Go to space"), ("⌘S", "Toggle sidebar")]),
-        ("Split View", [("⌃⇧=", "Add a split"), ("⌃⇧-", "Close the focused pane")]),
-        ("Page", [("⌘F", "Find in page"), ("⌘G", "Next match"), ("⌘R", "Reload"), ("⌘[  ⌘]", "Back / forward"), ("⌘+  ⌘−  ⌘0", "Zoom"), ("⇧⌘C", "Copy link")]),
-        ("Windows", [("⌘N", "New window"), ("⇧⌘N", "New incognito window"), ("⌥⌘N", "New Probe (a small floating window)"), ("⌘Y", "History"), ("⇧⌘J", "Downloads"), ("⌘,", "Settings")]),
+    struct Entry {
+        /// As the menus show them; several chords are two spaces apart, a run of keys is "1–9".
+        let keys: String
+        let what: String
+        /// Listed while this feature is switched on.
+        var feature: Feature?
+        init(_ keys: String, _ what: String, _ feature: Feature? = nil) { self.keys = keys; self.what = what; self.feature = feature }
+    }
+
+    /// Every chord here that the menus have is written as the menu writes it (a test holds them to it).
+    static let groups: [(String, [Entry])] = [
+        ("Command Bar", [Entry("⌘T", "New tab / open the Command Bar"), Entry("⌘L", "Search or edit the address"),
+                         Entry("⌘↩", "Open the result the other way: here, or in a new tab"), Entry("Tab", "Search inside a site"), Entry("esc", "Close the Command Bar")]),
+        ("Tabs", [Entry("⌘W", "Archive the tab (a pinned one goes to sleep)"), Entry("⇧⌘T", "Reopen closed tab"), Entry("⌘D", "Pin or unpin"),
+                  Entry("⌥⌘D", "Add to or remove from Favorites"), Entry("⇧⌘K", "Archive all Today tabs"), Entry("⌥⌘↓  ⌥⌘↑", "Next / previous tab"),
+                  Entry("⌃⇥", "Most recent tab"), Entry("⌘1–9", "Jump to a Favorite"), Entry("⌘O", "Keep a Peek page as a tab", .peek)]),
+        ("Spaces", [Entry("⌥⌘←  ⌥⌘→", "Previous / next space"), Entry("⌃1–9", "Go to space"), Entry("⌘S", "Show or hide the sidebar")]),
+        ("Split View", [Entry("⌃⇧=", "Add a split"), Entry("⌃⇧-", "Close the focused pane")]),
+        ("Page", [Entry("⌘F", "Find in page"), Entry("⌘G", "Next match"), Entry("⌘R", "Reload"), Entry("⌘[  ⌘]", "Back / forward"),
+                  Entry("⌘=  ⌘-  ⌘0", "Zoom in, out, actual size"), Entry("⇧⌘C", "Copy link"), Entry("⌥⌘P", "Picture in Picture"),
+                  Entry("⌥⌘B", "Boost this site", .boosts)]),
+        ("Windows", [Entry("⌘N", "New window"), Entry("⇧⌘N", "New incognito window"), Entry("⌥⌘N", "New Probe (a small floating window)"),
+                     Entry("⌘Y", "History"), Entry("⇧⌘A", "Archived tabs"), Entry("⇧⌘J", "Downloads"),
+                     Entry("⌃⌘S", "Show or hide the utilities", .utilities), Entry("⌘,", "Settings"), Entry("⌘/", "This list")]),
     ]
 
     var body: some View {
         PanelFrame(title: "Keyboard Shortcuts", symbol: "keyboard", width: 760, height: 560, close: { window.overlay = nil }) {
             ScrollView {
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 28, alignment: .top), GridItem(.flexible(), spacing: 28, alignment: .top)], alignment: .leading, spacing: 22) {
-                    ForEach(Self.groups, id: \.0) { title, rows in
+                    ForEach(Self.groups, id: \.0) { title, entries in
+                        let rows = entries.filter { $0.feature.map(store.settings.isOn) ?? true }.map { ($0.keys, $0.what) }
                         VStack(alignment: .leading, spacing: 7) {
                             Text(title.uppercased()).font(.system(size: 10.5, weight: .bold)).tracking(0.8).foregroundStyle(palette.tertiary)
                             ForEach(rows, id: \.0) { keys, what in

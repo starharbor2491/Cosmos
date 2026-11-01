@@ -64,6 +64,31 @@ struct GeneralPane: View {
     }
 }
 
+// MARK: - Features
+
+/// One switch per feature (`Feature`). Off, a feature has no buttons, menu items, commands or shortcuts and does no work;
+/// what it keeps (Boosts, extensions, passwords) is there when it is switched back on. The switches that also have a
+/// place of their own (Blocking, Radial Menu, Menu Bar…) are the same settings, so the two always agree.
+struct FeaturesPane: View {
+    let store: BrowserStore
+
+    var body: some View {
+        Pane(title: "Features", subtitle: "Switch off what you don't use. It goes from menus, buttons and shortcuts, and stops running.", symbol: "switch.2") {
+            ForEach(Feature.Group.allCases) { group in
+                SettingsGroup(title: group.title) {
+                    ForEach(Array(group.features.enumerated()), id: \.element) { index, feature in
+                        if index > 0 { Hairline() }
+                        SettingRow(title: feature.title, detail: feature.detail) {
+                            SwitchControl(isOn: Binding(get: { store.settings.isOn(feature) }, set: { store.settings.set(feature, on: $0) }),
+                                          label: feature.title)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Sidebar
 
 struct SidebarPane: View {

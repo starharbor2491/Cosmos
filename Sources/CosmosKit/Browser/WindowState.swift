@@ -87,6 +87,9 @@ public final class WindowState: Identifiable {
     /// The sidebar shows the Library, the page left of the first space. The space above stays what the window is on (its
     /// sky and its selected tab); only the page the sidebar slid to changes.
     public var libraryOpen = false
+    /// How far the sidebar's strip is between two pages, for the window's sky and colours to follow it (see `SidebarLook`).
+    /// Kept by the sidebar while it is on screen; the window goes by `focusedSpaceID` while it is hidden.
+    var sidebarLook: SidebarLook?
     /// The part of the Library that is showing while it is open (and the one it opens on next time).
     public var librarySection = LibrarySection.downloads
     /// What the History section lists (⇧⌘A sets it to the archived tabs).
@@ -113,6 +116,10 @@ public final class WindowState: Identifiable {
     public var utility: Utility?
     /// The rail of utilities along the window's right edge (View ▸ Show Utilities).
     public var utilitiesVisible = true
+    /// Utilities are switched on (Settings ▸ Features); the store keeps this in step.
+    var utilitiesAllowed = true
+    /// The rail is on screen: shown in this window, with utilities switched on.
+    var railShown: Bool { utilitiesVisible && utilitiesAllowed }
     /// The radial menu that is open over the page, if any. It belongs to the page it was opened over, so a change of tab,
     /// space, overlay or Peek puts it away.
     public var radial: RadialSession?

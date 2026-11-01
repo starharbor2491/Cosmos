@@ -3,13 +3,14 @@ import AppKit
 import CosmosCore
 
 enum SettingsTab: String, CaseIterable, Identifiable {
-    case general, sidebar, blocking, extensions, privacy, passwords, engine, links, radialMenu, menuBar, about
+    case general, features, sidebar, blocking, extensions, privacy, passwords, engine, links, radialMenu, menuBar, about
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .general: "General"
+        case .features: "Features"
         case .sidebar: "Sidebar"
         case .blocking: "Blocking"
         case .extensions: "Extensions"
@@ -26,6 +27,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .general: "gearshape"
+        case .features: "switch.2"
         case .sidebar: "sidebar.left"
         case .blocking: "shield.lefthalf.filled"
         case .extensions: "puzzlepiece.extension"
@@ -38,6 +40,17 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .about: "sparkles"
         }
     }
+}
+
+extension SettingsTab {
+    /// The list down the side of Settings, in small groups so twelve panes read at a glance.
+    static let groups: [(title: String?, tabs: [SettingsTab])] = [
+        (nil, [.general, .features]),
+        ("Browsing", [.sidebar, .links, .radialMenu, .menuBar]),
+        ("Privacy and security", [.privacy, .blocking, .passwords]),
+        ("Advanced", [.extensions, .engine]),
+        (nil, [.about]),
+    ]
 }
 
 /// An in-window question, shown instead of a system alert so it looks like the rest of Settings.
@@ -144,39 +157,53 @@ struct SettingsView: View {
             .padding(.top, Metrics.Control.titleBarClearance)
             .padding(.bottom, Metrics.Space.m)
 
-            ForEach(SettingsTab.allCases) { item in
-                let selected = item == tab
-                TapTarget(label: item.title, scale: 0.97, feel: .step, traits: .isButton, action: { tab = item }) { state in
-                    HStack(spacing: Metrics.Sidebar.gap) {
-                        Image(systemName: item.symbol)
-                            .font(.system(size: 13, weight: .medium))
-                            .frame(width: Metrics.Icon.row)
-                            .foregroundStyle(selected ? palette.text : palette.secondary)
-                        Text(item.title).font(.system(size: 13.5, weight: selected ? .semibold : .medium))
-                            .foregroundStyle(selected ? palette.text : palette.secondary)
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, Metrics.Space.m)
-                    .frame(height: Metrics.Height.field)
-                    .background {
-                        let shape = RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous)
-                        if selected {
-                            shape.fill(palette.selected).shadow(color: palette.shadow.opacity(0.3), radius: 3, y: 1)
-                                .overlay(shape.strokeBorder(palette.stroke, lineWidth: 0.8))
-                                .matchedGeometryEffect(id: "settings.nav", in: navGlide)
-                        } else if state.hover {
-                            shape.fill(palette.hover)
-                        }
-                    }
-                    .focusRing(state.focused, radius: Metrics.Radius.row, palette: palette)
+            ForEach(Array(SettingsTab.groups.enumerated()), id: \.offset) { _, group in
+                if let title = group.title {
+                    Text(title.uppercased())
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .tracking(0.8)
+                        .foregroundStyle(palette.tertiary)
+                        .padding(.horizontal, Metrics.Space.m)
+                        .padding(.top, Metrics.Space.s)
+                        .accessibilityAddTraits(.isHeader)
                 }
-                .accessibilityAddTraits(selected ? .isSelected : [])
+                ForEach(group.tabs) { item in navItem(item, palette) }
             }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, Metrics.Space.s)
         .frame(width: Metrics.Control.navWidth)
         .animation(Motion.standard, value: tab)
+    }
+
+    @ViewBuilder
+    private func navItem(_ item: SettingsTab, _ palette: Palette) -> some View {
+        let selected = item == tab
+        TapTarget(label: item.title, scale: 0.97, feel: .step, traits: .isButton, action: { tab = item }) { state in
+            HStack(spacing: Metrics.Sidebar.gap) {
+                Image(systemName: item.symbol)
+                    .font(.system(size: 13, weight: .medium))
+                    .frame(width: Metrics.Icon.row)
+                    .foregroundStyle(selected ? palette.text : palette.secondary)
+                Text(item.title).font(.system(size: 13.5, weight: selected ? .semibold : .medium))
+                    .foregroundStyle(selected ? palette.text : palette.secondary)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, Metrics.Space.m)
+            .frame(height: Metrics.Height.field)
+            .background {
+                let shape = RoundedRectangle(cornerRadius: Metrics.Radius.row, style: .continuous)
+                if selected {
+                    shape.fill(palette.selected).shadow(color: palette.shadow.opacity(0.3), radius: 3, y: 1)
+                        .overlay(shape.strokeBorder(palette.stroke, lineWidth: 0.8))
+                        .matchedGeometryEffect(id: "settings.nav", in: navGlide)
+                } else if state.hover {
+                    shape.fill(palette.hover)
+                }
+            }
+            .focusRing(state.focused, radius: Metrics.Radius.row, palette: palette)
+        }
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     // MARK: Panes
@@ -200,6 +227,7 @@ struct SettingsView: View {
     private var pane: some View {
         switch tab {
         case .general: GeneralPane(store: store)
+        case .features: FeaturesPane(store: store)
         case .sidebar: SidebarPane(store: store)
         case .blocking: BlockingPane(store: store)
         case .extensions: ExtensionsPane(store: store, model: model)

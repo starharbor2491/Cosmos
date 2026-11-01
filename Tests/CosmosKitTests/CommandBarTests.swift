@@ -25,6 +25,17 @@ import Testing
         #expect(m.rows.first?.kind == .typedURL)
     }
 
+    /// With nothing typed, the list is where you could go back to: the tab already on show is not in it.
+    @Test func jumpBackInLeavesOutTheTabYouAreOn() throws {
+        let rig = Rig()
+        let first = try #require(rig.store.newTab(url: URL(string: "https://example.com/first"), in: rig.window))
+        let second = try #require(rig.store.newTab(url: URL(string: "https://example.org/second"), in: rig.window))
+        #expect(rig.window.selectedItemID == second)
+        let rows = model("", rig: rig).rows.map(\.id)
+        #expect(rows.contains("tab:\(first)"))
+        #expect(!rows.contains("tab:\(second)"))
+    }
+
     @Test func plainWordsOfferAWebSearch() {
         let rig = Rig()
         let m = model("lofi hip hop", rig: rig)
@@ -88,6 +99,7 @@ import Testing
     @Test func emptyQueryShowsRecentTabs() {
         let rig = Rig()
         rig.store.newTab(url: URL(string: "about:blank?recent"), in: rig.window)
+        rig.store.newTab(url: URL(string: "about:blank?now"), in: rig.window)   // the one on show is left out
         let m = CommandBarModel(store: rig.store, window: rig.window, mode: .newTab)
         #expect(!m.rows.isEmpty)
     }

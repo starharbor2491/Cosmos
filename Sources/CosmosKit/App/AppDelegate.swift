@@ -130,6 +130,7 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
         }
         NSApp.appearance = store.settings.appearance.nsAppearance
         NSApp.mainMenu = makeMainMenu()
+        showFeatureItems()
         installKeyChords()
         if options.demo { DemoSeed.populate(store) }
 
@@ -328,6 +329,7 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
         menuBar = browser
         store.onMenuBarChange = { [weak browser] in browser?.sync() }
         store.onHistoryCleared = { [weak browser] in browser?.forgetPage() }
+        store.onFeaturesChanged = { [weak self] in self?.showFeatureItems() }
         store.onPreferencesChanged = { [weak self] in
             guard let self else { return }
             for c in self.controllers where c.store !== self.store { c.store.inheritPreferences(from: self.store) }
@@ -451,6 +453,7 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         guard let action = item.representedObject as? MenuAction else { return true }
+        if let feature = action.feature, store?.settings.isOn(feature) == false { return false }
         if action.needsWindow {
             guard Self.windowCommandsApply(keyWindow: NSApp.keyWindow), let c = active else { return false }
             return action.enabled?(c) ?? true
@@ -460,6 +463,7 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
 
     @objc func performMenuAction(_ sender: NSMenuItem) {
         guard let action = sender.representedObject as? MenuAction else { return }
+        if let feature = action.feature, store?.settings.isOn(feature) == false { return }
         if action.needsWindow {
             guard Self.windowCommandsApply(keyWindow: NSApp.keyWindow), let c = active else { return }
             action.run(c)
@@ -473,11 +477,13 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
 @MainActor
 final class MenuAction: NSObject {
     let needsWindow: Bool
+    /// The feature the item belongs to: while that is switched off the item is hidden and does nothing.
+    let feature: Feature?
     let enabled: ((BrowserWindowController) -> Bool)?
     private let body: (BrowserWindowController?) -> Void
 
-    init(needsWindow: Bool, enabled: ((BrowserWindowController) -> Bool)?, body: @escaping (BrowserWindowController?) -> Void) {
-        self.needsWindow = needsWindow; self.enabled = enabled; self.body = body
+    init(needsWindow: Bool, feature: Feature? = nil, enabled: ((BrowserWindowController) -> Bool)?, body: @escaping (BrowserWindowController?) -> Void) {
+        self.needsWindow = needsWindow; self.feature = feature; self.enabled = enabled; self.body = body
     }
 
     func run(_ c: BrowserWindowController?) { body(c) }

@@ -102,6 +102,37 @@ final class ExtensionCenter {
 
     // MARK: Starting
 
+    /// Extensions as a whole are switched on (Settings ▸ Features). Off, none runs and none is checked for updates; each
+    /// keeps its own on or off for when they are back.
+    var isOn: Bool { store?.settings.isOn(.extensions) ?? true }
+
+    /// The switch's moves, one after another: each waits for the one before it to be done in Chromium, then brings
+    /// Chromium to what the switch says by then. Flipped quickly, it ends as the last flip says, and an extension is never
+    /// being loaded and unloaded (or loaded twice) at once.
+    private var switching: Task<Void, Never>?
+
+    /// The switch moved: every enabled extension goes, popups and all, or comes back.
+    func featureSwitched() {
+        guard started else { return }
+        if !isOn { for open in [popup].compactMap({ $0 }) + detachedPopups { open.close() } }
+        let before = switching
+        switching = Task { [weak self] in
+            await before?.value
+            await self?.followSwitch()
+        }
+        actionRevision += 1
+    }
+
+    private func followSwitch() async {
+        for item in items where item.enabled {
+            if isOn {
+                if engineIDs[item.id] == nil { _ = await loadEverywhere(item) }
+            } else {
+                await unloadEverywhere(item.id)
+            }
+        }
+    }
+
     /// Loads every enabled extension into each profile as the profile opens, and listens for their shortcuts.
     func start() {
         guard !started else { return }
@@ -131,7 +162,7 @@ final class ExtensionCenter {
             guard let self, let engine, let env else { return }
             self.toggleSidePanel(extensionID, for: page, engine: engine, environment: env)
         }
-        let enabled = items.filter(\.enabled)
+        let enabled = isOn ? items.filter(\.enabled) : []
         Task { for item in enabled { await load(item, into: env) } }
     }
 
@@ -164,6 +195,8 @@ final class ExtensionCenter {
         do {
             engineIDs[item.id] = try await engine.load(folder: folder(for: item))
             loadErrors[item.id] = nil
+            // Switched off while Chromium was loading it: the switch's own pass may have gone by before it was in.
+            if !isOn { await unloadEverywhere(item.id) }
             return true
         } catch {
             loadErrors[item.id] = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
@@ -173,6 +206,8 @@ final class ExtensionCenter {
 
     /// Into every open profile; at least the one the user is in, so a broken extension is found out now.
     private func loadEverywhere(_ item: InstalledExtension) async -> Bool {
+        // Switched off, nothing is loaded; it will be when they are back on.
+        guard isOn else { return true }
         if liveEnvironments.isEmpty, let store, let window = store.activeWindow ?? store.windows.first {
             _ = store.environment(forProfile: store.workspace.space(window.focusedSpaceID)?.profileID ?? store.workspace.profiles[0].id)
         }
@@ -217,7 +252,8 @@ final class ExtensionCenter {
         let replaced = items.filter { $0.webStoreID != nil && $0.webStoreID == webStoreID }
         items.append(item)
         save()
-        // One that stays off is not loaded, so not tried either.
+        // One that stays off is not loaded, so not tried either. A move of the switch still going on in Chromium goes first.
+        await switching?.value
         let loads = enabled ? await loadEverywhere(item) : true
         guard loads else {
             // Not loadable after all: don't leave a dead entry behind.
@@ -229,7 +265,7 @@ final class ExtensionCenter {
             updatesWaiting[old.id] = nil
             remove(old.id)
         }
-        message = "Added “\(name)”."
+        message = isOn ? "Added “\(name)”." : "Added “\(name)”. Extensions are switched off in Settings ▸ Features."
         return item
     }
 
@@ -315,7 +351,7 @@ final class ExtensionCenter {
     /// how many were updated.
     @discardableResult
     func checkForUpdates() async -> Int {
-        guard !checking else { return 0 }
+        guard !checking, isOn else { return 0 }
         checking = true
         defer { checking = false }
         let fromStore = items.filter { $0.webStoreID != nil }
@@ -451,7 +487,7 @@ final class ExtensionCenter {
     }
 
     private func item(forEngineID engineID: String) -> InstalledExtension? {
-        guard let id = engineIDs.first(where: { $0.value == engineID })?.key else { return nil }
+        guard isOn, let id = engineIDs.first(where: { $0.value == engineID })?.key else { return nil }
         return items.first { $0.id == id && $0.enabled }
     }
 

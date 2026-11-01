@@ -37,7 +37,9 @@ extension TabRuntime {
             if Self.isWebLink(link) {
                 s.append(menuItem(.openLink) { [weak self] in self?.load(link) })
                 s.append(menuItem(.openLinkInNewTab, title: "Open Link in New Tab") { [weak self] in self.map { $0.host?.tab($0, open: link, as: .newTabForeground) } })
-                s.append(menuItem(.openLinkInPeek, title: "Open Link in Peek") { [weak self] in self.map { $0.host?.tab($0, open: link, as: .peek) } })
+                if host?.settings.isOn(.peek) != false {
+                    s.append(menuItem(.openLinkInPeek, title: "Open Link in Peek") { [weak self] in self.map { $0.host?.tab($0, open: link, as: .peek) } })
+                }
                 s.append(menuItem(.openLinkInSplit, title: "Open Link in Split View") { [weak self] in self.map { $0.host?.tab($0, open: link, as: .split) } })
                 s.append(menuItem(.downloadLinkedFile) { [weak self] in self.map { $0.host?.tab($0, open: link, as: .download) } })
             }

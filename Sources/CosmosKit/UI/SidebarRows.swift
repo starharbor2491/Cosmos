@@ -278,7 +278,7 @@ struct TabRow: View {
                     .spatial(inSplit ? "split.title" : "row.title.d\(depth)")
             }
             Spacer(minLength: 2)
-            trailing(rt: rt, pinned: pinned)
+            trailing(rt: rt, pinned: pinned, asleep: asleep)
         }
         // A split group pads its panes by its own border, so they give that much back to keep icons in the column.
         .padding(.leading, Metrics.Sidebar.inset - splitBorder + CGFloat(depth) * Metrics.Sidebar.indent)
@@ -308,17 +308,28 @@ struct TabRow: View {
         .onDrop(of: SidebarDrop.types, delegate: RowDropDelegate(store: store, window: window, targetID: item.id, axis: .vertical, rowSize: Metrics.Height.row, indicator: $indicator))
     }
 
+    /// What sits at the end of the row. Under the pointer, the button that puts the tab away: × archives a Today tab, a
+    /// moon puts a pinned one (or a Favorite) to sleep, as they are different things. A pinned tab that is asleep has a
+    /// small moon of its own, so it is told from one that is awake by more than a paler icon.
     @ViewBuilder
-    private func trailing(rt: TabRuntime?, pinned: Bool) -> some View {
+    private func trailing(rt: TabRuntime?, pinned: Bool, asleep: Bool) -> some View {
+        let sleeps = pinned || store.workspace.section(of: item.id) == .favorites
         if rt?.isLoading == true && !hover {
             OrbitSpinner(size: 13, color: palette.text)
         } else if hover {
             if let rt, rt.isAudible || rt.isMuted {
                 RowIconButton(symbol: rt.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill", help: rt.isMuted ? "Unmute Tab" : "Mute Tab") { store.toggleMute(item.id, in: window) }
             }
-            RowIconButton(symbol: "xmark", help: pinned || store.workspace.section(of: item.id) == .favorites ? "Put to Sleep (⌘W)" : "Archive Tab (⌘W)") {
-                store.closeTab(item.id, in: window)
+            if !(sleeps && rt == nil) {
+                RowIconButton(symbol: sleeps ? "moon.zzz" : "xmark", help: sleeps ? "Put to Sleep (⌘W)" : "Archive Tab (⌘W)") {
+                    store.closeTab(item.id, in: window)
+                }
             }
+        } else if asleep {
+            Image(systemName: "moon.zzz")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(palette.tertiary)
+                .accessibilityLabel("Asleep")
         } else if let rt, rt.isAudible || rt.isMuted {
             Button { store.toggleMute(item.id, in: window) } label: {
                 Image(systemName: rt.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
@@ -519,15 +530,36 @@ struct SpacesBar: View {
         HStack(spacing: Metrics.Space.hair) {
             LibraryButton(store: store, window: window)
             Spacer(minLength: 0)
-            ForEach(store.workspace.spaces) { space in
-                SpaceButton(store: store, window: window, space: space)
+            // Every space at its own width while they fit, narrower when they do not, and past that a strip that scrolls,
+            // keeping the space on show in view. The Library and New Space stay at the ends whatever the count.
+            ViewThatFits(in: .horizontal) {
+                spaces(width: SpaceButton.width)
+                spaces(width: SpaceButton.narrow)
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal, showsIndicators: false) { spaces(width: SpaceButton.narrow) }
+                        // The ends fade, so a space cut by the edge reads as more to scroll to, not as a broken button.
+                        .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.08),
+                                                     .init(color: .black, location: 0.92), .init(color: .clear, location: 1)],
+                                             startPoint: .leading, endPoint: .trailing))
+                        .onAppear { proxy.scrollTo(window.focusedSpaceID, anchor: .center) }
+                        .onChange(of: window.focusedSpaceID) { _, id in withAnimation(Motion.standard) { proxy.scrollTo(id, anchor: .center) } }
+                }
             }
             Spacer(minLength: 0)
-            ToolbarButton(symbol: "plus", help: "New Space") { store.beginNewSpace(in: window) }
+            // Not the "+" of New Tab: a space is a different thing.
+            ToolbarButton(symbol: "plus.circle", help: "New Space") { store.beginNewSpace(in: window) }
         }
         .padding(.horizontal, Metrics.footerInset)
         .frame(height: Metrics.Height.bar)
         .overlay(alignment: .top) { Rectangle().fill(palette.stroke).frame(height: 0.5).padding(.horizontal, Metrics.Sidebar.gutter) }
+    }
+
+    private func spaces(width: CGFloat) -> some View {
+        HStack(spacing: Metrics.Space.hair) {
+            ForEach(store.workspace.spaces) { space in
+                SpaceButton(store: store, window: window, space: space, width: width).id(space.id)
+            }
+        }
     }
 }
 
@@ -535,6 +567,11 @@ struct SpaceButton: View {
     let store: BrowserStore
     let window: WindowState
     let space: Space
+    var width: CGFloat = Self.width
+
+    static let width: CGFloat = 30
+    /// When there are more spaces than the bar has room for at full width.
+    static let narrow: CGFloat = 24
     @Environment(\.palette) private var palette
     @Local private var hover = false
 
@@ -547,7 +584,7 @@ struct SpaceButton: View {
             SpaceIconView(icon: space.icon, size: 14)
                 .symbolBounce(value: selected)
                 .foregroundStyle(selected ? palette.text : palette.secondary)
-                .frame(width: 30, height: Metrics.Height.button)
+                .frame(width: width, height: Metrics.Height.button)
                 .background(
                     RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous)
                         .fill(selected ? palette.selected : (hover ? palette.hover : .clear))
@@ -582,7 +619,7 @@ struct LibraryButton: View {
                 .fill(selected ? palette.selected : .clear)
                 .frame(width: Metrics.Height.button, height: Metrics.Height.button)
             ToolbarButton(symbol: selected ? "books.vertical.fill" : "books.vertical", bounce: d.items.count,
-                          help: selected ? "Back to \(store.workspace.space(window.focusedSpaceID)?.title ?? "your space")" : "Library: Archive, History, Downloads, Resources") {
+                          help: selected ? "Back to \(store.workspace.space(window.focusedSpaceID)?.title ?? "your space")" : "Library: History, Downloads, Resources") {
                 store.show(selected ? .space(window.focusedSpaceID) : .library, in: window)
             }
             .spatial("footer.glyph")

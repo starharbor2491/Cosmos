@@ -104,6 +104,23 @@ final class Rig {
         #expect(rig.store.workspace.item(pinned) != nil)
     }
 
+    /// One click archives every Today tab, so the toast's Undo brings them all back, in their order, with the tab that was
+    /// showing still showing.
+    @Test func archivingAllTodayTabsCanBeUndone() throws {
+        let rig = Rig()
+        for i in 0..<4 { rig.store.newTab(url: URL(string: "https://example.com/\(i)"), in: rig.window) }
+        let before = rig.today.compactMap { $0.tab?.url }
+        let selected = rig.window.selectedItemID
+        rig.store.clearUnpinned(in: rig.window)
+        #expect(rig.today.count == 1)
+        let toast = try #require(rig.window.toast)
+        #expect(toast.actionTitle == "Undo")
+        toast.action?()
+        #expect(rig.today.compactMap { $0.tab?.url } == before, "all back, in their order")
+        #expect(rig.window.selectedItemID == selected)
+        #expect(rig.store.archive.entries.isEmpty)
+    }
+
     @Test func splitViewPairsTabsAndClosingAPaneLeavesTheOtherSelected() throws {
         let rig = Rig()
         let first = try #require(rig.store.newTab(url: URL(string: "about:blank?one"), in: rig.window))

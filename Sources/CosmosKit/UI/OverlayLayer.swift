@@ -44,7 +44,7 @@ struct OverlayLayer: View {
                 SiteControlsPanel(store: store, window: window).transition(Self.pop(from: .topLeading))
             case .shortcuts:
                 Scrim(opacity: 0.30) { window.overlay = nil }
-                ShortcutsPanel(window: window).transition(Self.pop(from: .center))
+                ShortcutsPanel(store: store, window: window).transition(Self.pop(from: .center))
             case .find, nil:
                 EmptyView()
             }

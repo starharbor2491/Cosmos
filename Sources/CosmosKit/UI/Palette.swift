@@ -43,32 +43,71 @@ struct Palette {
     let panel: Color
     let shadow: Color
 
-    init(theme: SpaceTheme) {
-        let dark = theme.prefersLightForeground
-        isDark = dark
-        let base = Color(dark ? Legibility.white : Legibility.ink)
-        text = base.opacity(Legibility.primary.alpha)
-        secondary = base.opacity(Legibility.secondary.alpha)
-        tertiary = base.opacity(Legibility.tertiary.alpha)
-        placeholder = Color(Legibility.placeholder(lightInk: dark))
-        faint = base.opacity(Legibility.faint.alpha)
-        hover = Color(Legibility.hover(lightInk: dark))
-        hoverStrong = Color(Legibility.hoverStrong(lightInk: dark))
-        selected = Color(Legibility.selected(lightInk: dark))
-        stroke = base.opacity(dark ? 0.14 : 0.12)
-        accentRaw = theme.accent
-        accent = Color(theme.accent).opacity(1)
-        let filled = Legibility.filled(theme.accent)
-        accentFill = Color(filled.fill)
-        onAccent = Color(filled.label)
-        let ground = theme.worstStop
-        accentText = Color(theme.accent(onPanelMinimum: 4.5))
-        accentGlyph = Color(theme.accent(onPanelMinimum: 3))
-        positive = Color(Legibility.foreground(RGBA(0.30, 0.85, 0.45), on: ground))
-        negative = Color(Legibility.foreground(RGBA(1, 0.42, 0.40), on: ground))
-        warning = Color(Legibility.foreground(RGBA(1, 0.62, 0.20), on: ground))
-        panel = Color(Legibility.panelTint(lightInk: dark))
-        shadow = Color.black.opacity(dark ? 0.45 : 0.18)
+    init(theme: SpaceTheme) { self.init(Inks(theme: theme)) }
+
+    /// `t` of the way from `a`'s colours to `b`'s: the window while the sidebar slides from one space to the other. The
+    /// light or dark half (`isDark`) is the nearer one's.
+    init(theme a: SpaceTheme, _ b: SpaceTheme, t: Double) {
+        self.init(Inks(theme: a).mixed(with: Inks(theme: b), t))
+    }
+
+    private init(_ inks: Inks) {
+        isDark = inks.isDark
+        text = Color(inks.text); secondary = Color(inks.secondary); tertiary = Color(inks.tertiary)
+        placeholder = Color(inks.placeholder); faint = Color(inks.faint)
+        hover = Color(inks.hover); hoverStrong = Color(inks.hoverStrong); selected = Color(inks.selected); stroke = Color(inks.stroke)
+        accentRaw = inks.accent; accent = Color(inks.accent)
+        accentFill = Color(inks.accentFill); onAccent = Color(inks.onAccent)
+        accentText = Color(inks.accentText); accentGlyph = Color(inks.accentGlyph)
+        positive = Color(inks.positive); negative = Color(inks.negative); warning = Color(inks.warning)
+        panel = Color(inks.panel); shadow = Color(inks.shadow)
+    }
+
+    /// The palette's colours as numbers, so two can be mixed.
+    struct Inks: Equatable {
+        var isDark: Bool
+        var text, secondary, tertiary, placeholder, faint, hover, hoverStrong, selected, stroke: RGBA
+        var accent, accentFill, onAccent, accentText, accentGlyph, positive, negative, warning, panel, shadow: RGBA
+
+        init(theme: SpaceTheme) {
+            let dark = theme.prefersLightForeground
+            isDark = dark
+            let base = dark ? Legibility.white : Legibility.ink
+            text = base.withAlpha(base.a * Legibility.primary.alpha)
+            secondary = base.withAlpha(base.a * Legibility.secondary.alpha)
+            tertiary = base.withAlpha(base.a * Legibility.tertiary.alpha)
+            placeholder = Legibility.placeholder(lightInk: dark)
+            faint = base.withAlpha(base.a * Legibility.faint.alpha)
+            hover = Legibility.hover(lightInk: dark)
+            hoverStrong = Legibility.hoverStrong(lightInk: dark)
+            selected = Legibility.selected(lightInk: dark)
+            stroke = base.withAlpha(base.a * (dark ? 0.14 : 0.12))
+            accent = theme.accent
+            let filled = Legibility.filled(theme.accent)
+            accentFill = filled.fill
+            onAccent = filled.label
+            let ground = theme.worstStop
+            accentText = theme.accent(onPanelMinimum: 4.5)
+            accentGlyph = theme.accent(onPanelMinimum: 3)
+            positive = Legibility.foreground(RGBA(0.30, 0.85, 0.45), on: ground)
+            negative = Legibility.foreground(RGBA(1, 0.42, 0.40), on: ground)
+            warning = Legibility.foreground(RGBA(1, 0.62, 0.20), on: ground)
+            panel = Legibility.panelTint(lightInk: dark)
+            shadow = RGBA(0, 0, 0, dark ? 0.45 : 0.18)
+        }
+
+        /// Each end is exactly that palette.
+        func mixed(with other: Inks, _ t: Double) -> Inks {
+            if !(t > 0) { return self }
+            if t >= 1 { return other }
+            var out = self
+            out.isDark = t < 0.5 ? isDark : other.isDark
+            let paths: [WritableKeyPath<Inks, RGBA>] = [\.text, \.secondary, \.tertiary, \.placeholder, \.faint, \.hover, \.hoverStrong,
+                                                       \.selected, \.stroke, \.accent, \.accentFill, \.onAccent, \.accentText, \.accentGlyph,
+                                                       \.positive, \.negative, \.warning, \.panel, \.shadow]
+            for path in paths { out[keyPath: path] = self[keyPath: path].mixed(with: other[keyPath: path], t) }
+            return out
+        }
     }
 }
 

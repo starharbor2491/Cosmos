@@ -14,7 +14,7 @@ public enum Utility: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .translate: "Translate"
         case .zoom: "Zoom"
-        case .files: "Files"
+        case .files: "Downloads"
         case .passwords: "Passwords"
         case .site: "This Site"
         }
@@ -24,7 +24,7 @@ public enum Utility: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .translate: "character.bubble"
         case .zoom: "plus.magnifyingglass"
-        case .files: "folder"
+        case .files: "arrow.down.circle"
         case .passwords: "key"
         case .site: "switch.2"
         }
@@ -41,7 +41,8 @@ struct UtilitiesRail: View {
 
     var body: some View {
         VStack(spacing: Metrics.Space.xs) {
-            ForEach(Utility.allCases) { utility in
+            // Passwords is there while saving and filling them is switched on.
+            ForEach(Utility.allCases.filter { $0 != .passwords || store.settings.isOn(.passwords) }) { utility in
                 let open = window.utility == utility
                 ToolbarButton(symbol: utility.symbol, size: 14, box: Metrics.Height.button + 6, help: utility.title) {
                     window.utility = open ? nil : utility

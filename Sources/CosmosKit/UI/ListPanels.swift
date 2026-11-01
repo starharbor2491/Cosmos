@@ -154,7 +154,7 @@ struct HistorySection: View {
     var body: some View {
         let items = Timeline.merge(visits: entries, archived: store.archive.search(query), kind: window.libraryTimeline, period: period)
         VStack(spacing: 0) {
-            LibraryHeader(title: "History", query: $query, prompt: "Search history and archived tabs") {
+            LibraryHeader(title: "History", query: $query, prompt: "Search history") {
                 TimelineFilterMenu(kind: kind, period: $period)
                 Menu {
                     ForEach(HistoryRange.allCases, id: \.self) { range in

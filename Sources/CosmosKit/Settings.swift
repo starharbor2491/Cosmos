@@ -42,6 +42,9 @@ public struct Settings: Codable, Equatable {
     public var menuBar = MenuBarSettings()
     /// The page engine's own settings (Chromium's, folded into Cosmos's Settings). They apply when a profile's engine starts.
     public var engine = EngineSettings()
+    /// The features switched off that have no setting of their own elsewhere (see `isOn`), by name, so a name this build
+    /// does not know is kept rather than failing the file.
+    public var disabledFeatures: Set<String> = []
 
     public init() {}
 
@@ -49,7 +52,7 @@ public struct Settings: Codable, Equatable {
         case searchEngineID, appearance, sidebarWidth, sidebarSide, revealSidebarOnHover, adBlockingEnabled, enabledFilterLists
         case autoPictureInPicture, restoreTabsOnLaunch, showSearchSuggestions, peekFromPinned, permissionDecisions
         case adBlockAllowlist, hasCompletedOnboarding, memorySaverMinutes, showStatusBubble, closeWindowOnLastTab, trackpadHaptics, radialMenu, menuBar
-        case engine, warnAboutDangerousSites, offerToSavePasswords
+        case engine, warnAboutDangerousSites, offerToSavePasswords, disabledFeatures
     }
 
     // Tolerant decoding: a settings file written by an older/newer build must never lock the user out.
@@ -67,6 +70,43 @@ public struct Settings: Codable, Equatable {
         get(.showStatusBubble, &showStatusBubble); get(.closeWindowOnLastTab, &closeWindowOnLastTab)
         get(.trackpadHaptics, &trackpadHaptics); get(.radialMenu, &radialMenu); get(.menuBar, &menuBar)
         get(.engine, &engine); get(.warnAboutDangerousSites, &warnAboutDangerousSites)
-        get(.offerToSavePasswords, &offerToSavePasswords)
+        get(.offerToSavePasswords, &offerToSavePasswords); get(.disabledFeatures, &disabledFeatures)
     }
+}
+
+extension Settings {
+    /// Whether a feature is on. Those that already had a switch of their own keep it, so the two places agree.
+    public func isOn(_ feature: Feature) -> Bool {
+        switch feature {
+        case .revealSidebar: revealSidebarOnHover
+        case .radialMenu: radialMenu.enabled
+        case .pictureInPicture: autoPictureInPicture
+        case .statusBubble: showStatusBubble
+        case .adBlocking: adBlockingEnabled
+        case .dangerousSites: warnAboutDangerousSites
+        case .searchSuggestions: showSearchSuggestions
+        case .menuBarBrowser: menuBar.enabled
+        case .haptics: trackpadHaptics
+        case .spaceSwipe, .peek, .boosts, .extensions, .utilities, .passwords: !disabledFeatures.contains(feature.rawValue)
+        }
+    }
+
+    public mutating func set(_ feature: Feature, on: Bool) {
+        switch feature {
+        case .revealSidebar: revealSidebarOnHover = on
+        case .radialMenu: radialMenu.enabled = on
+        case .pictureInPicture: autoPictureInPicture = on
+        case .statusBubble: showStatusBubble = on
+        case .adBlocking: adBlockingEnabled = on
+        case .dangerousSites: warnAboutDangerousSites = on
+        case .searchSuggestions: showSearchSuggestions = on
+        case .menuBarBrowser: menuBar.enabled = on
+        case .haptics: trackpadHaptics = on
+        case .spaceSwipe, .peek, .boosts, .extensions, .utilities, .passwords:
+            if on { disabledFeatures.remove(feature.rawValue) } else { disabledFeatures.insert(feature.rawValue) }
+        }
+    }
+
+    /// The features that are on, for telling when one has changed.
+    public var featuresOn: [Feature] { Feature.allCases.filter(isOn) }
 }
