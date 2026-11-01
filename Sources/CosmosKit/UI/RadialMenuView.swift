@@ -52,7 +52,10 @@ struct RadialMenuView: View {
         .background(RadialInputMonitor(session: session))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Radial menu")
-        .onAppear { withAnimation(Motion.spring) { shown = true } }
+        .onAppear {
+            withAnimation(Motion.spring) { shown = true }
+            Self.noteOpened()
+        }
     }
 
     @ViewBuilder
@@ -90,6 +93,16 @@ struct RadialMenuView: View {
                 .overlay(alignment: .topTrailing) {
                     if entry.isGroup { Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold)).foregroundStyle(lit ? palette.onAccent : palette.secondary).offset(x: -8, y: 2) }
                 }
+                // Its number: the key that chooses it.
+                .overlay(alignment: .topLeading) {
+                    if index < RadialLayout.maxSlices {
+                        Text("\(index + 1)")
+                            .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                            .foregroundStyle(lit ? palette.onAccent.opacity(0.8) : palette.tertiary)
+                            .offset(x: 4, y: -6)
+                            .accessibilityHidden(true)
+                    }
+                }
                 .offset(x: offset.x, y: offset.y)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(entry.title)
@@ -113,6 +126,10 @@ struct RadialMenuView: View {
                 } else if session.depth > 0 {
                     Image(systemName: "chevron.left").font(.system(size: 14, weight: .bold)).foregroundStyle(palette.secondary)
                     Text(session.levels.last?.title ?? "Back").font(.system(size: 10, weight: .medium)).foregroundStyle(palette.secondary).lineLimit(1)
+                } else if Self.showsMenuHint {
+                    // The first few times: the way to the standard menu, which this one stands in for.
+                    Text("Hold ⌥ for\nthe menu").font(.system(size: 9, weight: .semibold)).foregroundStyle(palette.tertiary)
+                        .multilineTextAlignment(.center).lineLimit(2).minimumScaleFactor(0.8)
                 } else {
                     Image(systemName: "xmark").font(.system(size: 11, weight: .bold)).foregroundStyle(palette.tertiary)
                 }
@@ -120,6 +137,11 @@ struct RadialMenuView: View {
             .frame(width: RadialGeometry.innerRadius * 2 - 18)
         }
     }
+
+    /// How many rings have opened with the hint in the hub; it shows for the first three.
+    static let hintKey = "RadialMenuHintShown"
+    static var showsMenuHint: Bool { UserDefaults.standard.integer(forKey: hintKey) < 3 }
+    static func noteOpened() { UserDefaults.standard.set(UserDefaults.standard.integer(forKey: hintKey) + 1, forKey: hintKey) }
 
     /// Slices are narrow: long titles fit better without their lead-in.
     static func short(_ title: String) -> String {

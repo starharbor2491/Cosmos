@@ -23,7 +23,7 @@ extension CosmosAppDelegate {
             add(m, "Extensions…", "", [], feature: .extensions, global: { $0.showSettings(tab: .extensions) })
             m.addItem(.separator())
             // Into the regular browser even when a private window is in front: a private window keeps nothing.
-            add(m, "Import from Arc or Another Browser…", "", [], global: { $0.store.present(.welcome) })
+            add(m, "Import from Arc or Another Browser…", "", [], global: { $0.store.present(.importBrowser) })
             add(m, "Set Cosmos as Default Browser", "", [], global: { d in
                 DefaultBrowser.request { ok in d.active?.state.showToast(ok ? "Cosmos is now your default browser" : "Choose Cosmos in the system prompt", symbol: ok ? "checkmark.seal.fill" : "info.circle") }
             })

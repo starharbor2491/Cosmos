@@ -2,22 +2,72 @@ import SwiftUI
 import CosmosCore
 import CosmosEngine
 
-/// Settings ▸ Engine: the Chromium Cosmos runs, and Chromium's own settings, folded into Cosmos's. They are written into
-/// Chromium's settings files as Chromium starts and as a profile opens.
+/// Settings ▸ Advanced: the Chromium Cosmos runs, its fonts and its system settings. (Its privacy settings and what sites
+/// may do are in Settings ▸ Privacy, `ChromiumPrivacyGroups`.) They are written into Chromium's settings files as Chromium
+/// starts and as a profile opens.
 struct EnginePane: View {
     let store: BrowserStore
-    /// The settings the engine started with, to say when a change is waiting for a restart.
-    @Local private var started: EngineSettings?
     @Environment(\.palette) private var palette
 
     var body: some View {
         @Bindable var store = store
         let engine = store.engine
-        Pane(title: "Engine", subtitle: "\(engine.name) draws every page. Its settings live here.", symbol: "cpu.fill") {
+        Pane(title: "Advanced", subtitle: "\(engine.name), which draws every page: its version, fonts and system settings.", symbol: "cpu.fill") {
             SettingsGroup(title: engine.name, note: "Cosmos runs Chromium's stable release, built into Cosmos through CEF (the Chromium Embedded Framework) and drawn in Cosmos's own windows. A newer Chromium comes with each Cosmos update.") {
                 SettingRow(title: "Version", detail: engine.versionDescription ?? statusText(store.engineStatus), symbol: "shippingbox") { EmptyView() }
             }
 
+            SettingsGroup(title: "Fonts") {
+                SettingRow(title: "Font size", detail: "The size of text on pages that leave it to you.", symbol: "textformat.size") {
+                    Dropdown(selection: $store.settings.engine.defaultFontSize, options: [9, 10, 12, 14, 16, 18, 20, 24, 28].map { Option(value: $0, label: "\($0) pt") }, width: 120)
+                }
+                Hairline()
+                SettingRow(title: "Smallest text", detail: "Pages can't make text smaller than this.", symbol: "textformat.size.smaller") {
+                    Dropdown(selection: $store.settings.engine.minimumFontSize, options: [0, 9, 10, 11, 12, 14, 16, 18, 20, 24].map { Option(value: $0, label: $0 == 0 ? "Any" : "\($0) pt") }, width: 120)
+                }
+                Hairline()
+                SettingRow(title: "Standard font", detail: "Empty: Chromium's own choice.", symbol: "textformat") {
+                    FieldInput(text: $store.settings.engine.standardFont, placeholder: "Times", width: 180)
+                }
+                Hairline()
+                SettingRow(title: "Fixed-width font", symbol: "chevron.left.forwardslash.chevron.right") {
+                    FieldInput(text: $store.settings.engine.fixedFont, placeholder: "Menlo", width: 180)
+                }
+            }
+
+            SettingsGroup(title: "System") {
+                SettingRow(title: "Languages", detail: "What pages are asked for, in order, separated by commas. Empty: your Mac's languages.", symbol: "globe") {
+                    FieldInput(text: Binding(get: { store.settings.engine.languages.joined(separator: ", ") },
+                                             set: { store.settings.engine.languages = $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }),
+                               placeholder: "en-US, fr", width: 180)
+                }
+                Hairline()
+                SettingRow(title: "Use the graphics processor", detail: "Draws pages with the GPU. Turn off only if pages draw wrongly.", symbol: "cpu") {
+                    SwitchControl(isOn: $store.settings.engine.hardwareAcceleration)
+                }
+            }
+
+            EngineRestartNotice(store: store)
+        }
+        .animation(Motion.standard, value: store.settings.engine)
+    }
+
+
+    private func statusText(_ status: EngineStatus) -> String {
+        switch status {
+        case .preparing(let what, let progress): progress.map { "\(what) (\(Int($0 * 100))%)" } ?? what
+        case .ready(let version): version
+        case .failed(let why): why
+        }
+    }
+}
+
+/// Chromium's privacy settings and what sites may do before they ask: in Settings ▸ Privacy, beside what Cosmos keeps.
+struct ChromiumPrivacyGroups: View {
+    let store: BrowserStore
+
+    var body: some View {
+        @Bindable var store = store
             SettingsGroup(title: "Privacy and security") {
                 SettingRow(title: "Cookies", detail: "Third-party cookies let sites follow you from one site to the next.", symbol: "lock.shield") {
                     Dropdown(selection: $store.settings.engine.cookies, options: [
@@ -81,51 +131,6 @@ struct EnginePane: View {
                     }
                 }
             }
-
-            SettingsGroup(title: "Fonts") {
-                SettingRow(title: "Font size", detail: "The size of text on pages that leave it to you.", symbol: "textformat.size") {
-                    Dropdown(selection: $store.settings.engine.defaultFontSize, options: [9, 10, 12, 14, 16, 18, 20, 24, 28].map { Option(value: $0, label: "\($0) pt") }, width: 120)
-                }
-                Hairline()
-                SettingRow(title: "Smallest text", detail: "Pages can't make text smaller than this.", symbol: "textformat.size.smaller") {
-                    Dropdown(selection: $store.settings.engine.minimumFontSize, options: [0, 9, 10, 11, 12, 14, 16, 18, 20, 24].map { Option(value: $0, label: $0 == 0 ? "Any" : "\($0) pt") }, width: 120)
-                }
-                Hairline()
-                SettingRow(title: "Standard font", detail: "Empty: Chromium's own choice.", symbol: "textformat") {
-                    FieldInput(text: $store.settings.engine.standardFont, placeholder: "Times", width: 180)
-                }
-                Hairline()
-                SettingRow(title: "Fixed-width font", symbol: "chevron.left.forwardslash.chevron.right") {
-                    FieldInput(text: $store.settings.engine.fixedFont, placeholder: "Menlo", width: 180)
-                }
-            }
-
-            SettingsGroup(title: "System") {
-                SettingRow(title: "Languages", detail: "What pages are asked for, in order, separated by commas. Empty: your Mac's languages.", symbol: "globe") {
-                    FieldInput(text: Binding(get: { store.settings.engine.languages.joined(separator: ", ") },
-                                             set: { store.settings.engine.languages = $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }),
-                               placeholder: "en-US, fr", width: 180)
-                }
-                Hairline()
-                SettingRow(title: "Use the graphics processor", detail: "Draws pages with the GPU. Turn off only if pages draw wrongly.", symbol: "cpu") {
-                    SwitchControl(isOn: $store.settings.engine.hardwareAcceleration)
-                }
-            }
-
-            if let started, started != store.settings.engine {
-                SettingsGroup {
-                    SettingRow(title: "Restart the engine to use these settings", detail: "Open tabs reload.", symbol: "arrow.clockwise") {
-                        ActionButton(title: "Restart Engine", kind: .primary) {
-                            store.restartEngine()
-                            self.started = store.settings.engine
-                        }
-                    }
-                }
-                .transition(.opacity)
-            }
-        }
-        .onAppear { if started == nil { started = store.settings.engine } }
-        .animation(Motion.standard, value: store.settings.engine)
     }
 
     private struct AskRow { let title: String; let symbol: String; let binding: Binding<EngineSettings.Ask> }
@@ -141,12 +146,20 @@ struct EnginePane: View {
             AskRow(title: "Clipboard", symbol: "doc.on.clipboard", binding: $store.settings.engine.clipboard),
         ]
     }
+}
 
-    private func statusText(_ status: EngineStatus) -> String {
-        switch status {
-        case .preparing(let what, let progress): progress.map { "\(what) (\(Int($0 * 100))%)" } ?? what
-        case .ready(let version): version
-        case .failed(let why): why
+/// Shown while the engine settings in use are not the ones set: Chromium takes them when it restarts.
+struct EngineRestartNotice: View {
+    let store: BrowserStore
+
+    var body: some View {
+        if store.engineSettingsInUse != store.settings.engine {
+            SettingsGroup {
+                SettingRow(title: "Restart the engine to use these settings", detail: "Open tabs reload.", symbol: "arrow.clockwise") {
+                    ActionButton(title: "Restart Engine", kind: .primary) { store.restartEngine() }
+                }
+            }
+            .transition(.opacity)
         }
     }
 }

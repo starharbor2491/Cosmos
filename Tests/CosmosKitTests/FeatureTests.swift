@@ -39,6 +39,14 @@ import CosmosEngine
         #expect(s.isOn(.menuBarBrowser))
     }
 
+    /// A new install starts quieter (right-click and the window's edge as macOS has them); everything else is on.
+    @Test func aNewInstallStartsWithTheRadialMenuAndTheRailOff() {
+        var s = Settings()
+        s.useNewInstallDefaults()
+        #expect(!s.isOn(.radialMenu) && !s.isOn(.utilities))
+        #expect(s.featuresOn == Feature.allCases.filter { ![.radialMenu, .utilities, .menuBarBrowser].contains($0) })
+    }
+
     @Test func theSwitchesAreSavedAndAFeatureNameFromAnotherBuildIsKept() throws {
         var s = Settings()
         s.set(.boosts, on: false)

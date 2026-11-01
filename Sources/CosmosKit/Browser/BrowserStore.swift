@@ -166,6 +166,7 @@ public final class BrowserStore: TabHost {
             favicons = FaviconStore(directory: nil)
         }
         haptics.isEnabled = settings.trackpadHaptics
+        engineSettingsInUse = settings.engine
         startTimers()
     }
 
@@ -362,6 +363,17 @@ public final class BrowserStore: TabHost {
 
     /// Shows `overlay` in a browser window. Settings uses it: it has no overlays of its own, so the app brings a browser
     /// window forward to show it in. Without the app (in tests) the active window just gets it.
+    /// Whether the welcome opens at launch. A first launch starts it (with the defaults a new install gets), and it stays
+    /// due, across quits, until it is finished; a demo never shows it.
+    func welcomeIsDue(demo: Bool) -> Bool {
+        guard !demo else { return false }
+        if isFirstLaunch && !settings.hasCompletedOnboarding && !settings.welcomePending {
+            settings.useNewInstallDefaults()
+            settings.welcomePending = true
+        }
+        return settings.welcomePending
+    }
+
     func present(_ overlay: Overlay) {
         if let onPresent { onPresent(overlay) } else { activeWindow?.overlay = overlay }
     }
@@ -431,7 +443,12 @@ public final class BrowserStore: TabHost {
     /// Starts every profile's engine again, so changed engine settings apply. Open tabs reload.
     func restartEngine() {
         for profile in engineProfiles { profile.restart() }
+        engineSettingsInUse = settings.engine
     }
+
+    /// The engine settings Chromium is running with: those at launch, then those of the last restart. Settings says when
+    /// the ones set differ (`EngineRestartNotice`).
+    private(set) var engineSettingsInUse = EngineSettings()
 
     /// The engine has a Chromium now, after a time without one: every page asked for meanwhile is made again.
     func engineBecameReady() {
@@ -473,6 +490,7 @@ public final class BrowserStore: TabHost {
             blocker?.settingsDidChange()
         }
         if old.appearance != settings.appearance { NSApp?.appearance = settings.appearance.nsAppearance }
+        if old.appIcon != settings.appIcon { NSApp?.applicationIconImage = AppIcon.image(settings.appIcon) }
         if old.engine != settings.engine { onEngineSettingsChanged?() }
         if old.permissionDecisions != settings.permissionDecisions {
             for profile in engineProfiles { profile.setPermissionDecisions(permissionDecisionList) }

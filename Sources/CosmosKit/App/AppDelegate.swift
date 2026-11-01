@@ -91,13 +91,13 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Views read this while they are built, so it has to be set before the first window exists.
         SpatialProbe.isRecording = options.automationScript != nil
-        NSApp.applicationIconImage = AppIcon.image
         engine = ChromiumEngine()
         let throwaway = options.usesThrowawayKeys
         let demoKey = SymmetricKey(size: .bits256)
         store = BrowserStore(directory: options.resolvedDataDirectory, engine: engine,
                              passwordKey: throwaway ? { demoKey } : PasswordManager.keychainKey)
         engine.settings = store.settings.engine
+        NSApp.applicationIconImage = AppIcon.image(store.settings.appIcon)
         // Every profile's data is in the data folder's `Engine Profiles`; the first profile's is the one extensions run in.
         let first = store.workspace.profiles[0].id
         if let folder = store.engineFolder(forProfile: first) {
@@ -128,6 +128,8 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
             store.blocker = blocker
             blocker.start()
         }
+        // A new install starts with the quieter set; the welcome offers the rest. (Demos keep everything on to show it.)
+        let welcomeDue = store.welcomeIsDue(demo: options.demo)
         NSApp.appearance = store.settings.appearance.nsAppearance
         NSApp.mainMenu = makeMainMenu()
         showFeatureItems()
@@ -137,9 +139,7 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
         let saved = store.savedSession?.windows.count ?? 0
         let count = (store.settings.restoreTabsOnLaunch && !options.demo) ? max(1, saved) : 1
         for i in 0..<count { openWindow(state: store.makeWindowState(restoring: i), restoreSelection: true) }
-        if store.isFirstLaunch && !store.settings.hasCompletedOnboarding, let first = controllers.first {
-            first.state.overlay = .welcome
-        }
+        if welcomeDue, let first = controllers.first { first.state.overlay = .welcome }
         installMenuBarBrowser()
         launched = true
         NSApp.activate(ignoringOtherApps: true)
@@ -207,6 +207,8 @@ final class CosmosAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValida
     private func installKeyChords() {
         chordMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, let c = self.active, (event.window ?? NSApp.keyWindow) === c.window else { return event }
+            // The welcome takes its own keys (its practice window answers ⌥⌘→); the browser behind it waits.
+            guard c.state.overlay != .welcome, c.state.overlay != .importBrowser else { return event }
             let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
             let state = c.state, store = c.store
             switch (event.keyCode, flags) {

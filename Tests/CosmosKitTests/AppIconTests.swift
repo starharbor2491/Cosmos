@@ -2,16 +2,18 @@ import AppKit
 import Testing
 @testable import CosmosKit
 
-@Suite struct AppIconTests {
-    private var bitmap: NSBitmapImageRep? { AppIcon.image.representations.compactMap { $0 as? NSBitmapImageRep }.first }
+@MainActor @Suite struct AppIconTests {
+    private func bitmap(_ style: Settings.AppIconStyle) -> NSBitmapImageRep? {
+        AppIcon.image(style).representations.compactMap { $0 as? NSBitmapImageRep }.first
+    }
 
-    @Test func theIconShipsInsideTheApp() throws {
-        let rep = try #require(bitmap, "AppIcon.png is missing from the resources")
+    @Test(arguments: Settings.AppIconStyle.allCases) func eachIconShipsInsideTheApp(_ style: Settings.AppIconStyle) throws {
+        let rep = try #require(bitmap(style), "AppIcon-\(style.rawValue).png is missing from the resources")
         #expect(rep.pixelsWide == 512 && rep.pixelsHigh == 512)
     }
 
-    @Test func theTileFillsTheCentreAndTheMarginIsClear() throws {
-        let rep = try #require(bitmap)
+    @Test(arguments: Settings.AppIconStyle.allCases) func theTileFillsTheCentreAndTheMarginIsClear(_ style: Settings.AppIconStyle) throws {
+        let rep = try #require(bitmap(style))
         func alpha(_ x: Double, _ y: Double) -> Double { rep.colorAt(x: Int(x * Double(rep.pixelsWide)), y: Int(y * Double(rep.pixelsHigh))).map { Double($0.alphaComponent) } ?? -1 }
         #expect(alpha(0.5, 0.5) > 0.99, "the artwork is opaque in the middle")
         #expect(alpha(0.01, 0.01) == 0 && alpha(0.99, 0.99) == 0, "the corners of the canvas are transparent")
@@ -19,6 +21,53 @@ import Testing
         let margin = (AppIcon.canvas - AppIcon.tile) / 2 / AppIcon.canvas
         #expect(alpha(margin + 0.02, 0.5) > 0.99)
         #expect(alpha(margin - 0.04, 0.5) < 0.2)
+    }
+
+    /// The icons differ, so picking one changes something.
+    @Test func theFourIconsAreFourPictures() throws {
+        let middles = try Settings.AppIconStyle.allCases.map { style in
+            let rep = try #require(bitmap(style))
+            let c = try #require(rep.colorAt(x: rep.pixelsWide / 2 + 60, y: rep.pixelsHigh / 2 + 60))
+            return [c.redComponent, c.greenComponent, c.blueComponent].map { Int($0 * 20) }
+        }
+        #expect(Set(middles).count == 4)
+    }
+
+    /// The pick is saved, and a file from before the choice existed (or naming an icon this build does not have) gets
+    /// Nebula, the icon the app is built with.
+    @Test func thePickIsSavedAndAnUnknownOneFallsBackToNebula() throws {
+        var s = Settings()
+        s.appIcon = .deepField
+        #expect(try JSONDecoder().decode(Settings.self, from: JSONEncoder().encode(s)).appIcon == .deepField)
+        #expect(try JSONDecoder().decode(Settings.self, from: Data(#"{"appIcon": "quasar"}"#.utf8)).appIcon == .nebula)
+        #expect(try JSONDecoder().decode(Settings.self, from: Data("{}".utf8)).appIcon == .nebula)
+    }
+
+    @Test func pickingAnIconPutsItInTheDock() throws {
+        _ = NSApplication.shared
+        let rig = Rig()
+        // The Dock keeps its own (colour-matched) copy of the picture, so it is told apart by which of the four it looks
+        // most like.
+        func look(_ image: NSImage) -> [Double] {
+            let rep = NSBitmapImageRep(cgImage: image.cgImage(forProposedRect: nil, context: nil, hints: nil)!)
+            let c = rep.colorAt(x: rep.pixelsWide / 2 + rep.pixelsWide / 8, y: rep.pixelsHigh / 2 + rep.pixelsHigh / 8)!
+            return [c.redComponent, c.greenComponent, c.blueComponent]
+        }
+        func inTheDock() -> Settings.AppIconStyle? {
+            let dock = look(NSApp.applicationIconImage)
+            var best: (style: Settings.AppIconStyle, distance: Double)?
+            for style in Settings.AppIconStyle.allCases {
+                let own = look(AppIcon.image(style))
+                var distance = 0.0
+                for i in 0..<3 { distance += (own[i] - dock[i]) * (own[i] - dock[i]) }
+                if distance < best?.distance ?? .infinity { best = (style, distance) }
+            }
+            return best?.style
+        }
+        rig.store.settings.appIcon = .supernova
+        #expect(inTheDock() == .supernova)
+        rig.store.settings.appIcon = .aurora
+        #expect(inTheDock() == .aurora)
     }
 
     /// The menu bar shows the one-colour mark as a template, so the system draws it in the menu bar's own ink in light

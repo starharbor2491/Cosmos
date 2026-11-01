@@ -49,6 +49,9 @@ struct BrowserRootView: View {
                     UtilitiesRail(store: store, window: window)
                 }
             }
+            // Under the welcome's light as it ends, the window waits a little large and soft, then settles into place.
+            .scaleEffect(window.arriving ? 1.035 : 1)
+            .blur(radius: window.arriving ? 10 : 0)
 
             if !window.sidebarVisible { SidebarRevealLayer(store: store, window: window) }
 
@@ -63,6 +66,7 @@ struct BrowserRootView: View {
         }
         .modifier(Colours(from: theme(look?.space ?? space.id), to: look?.other.map(theme), mix: Double(look?.mix ?? 0)))
         .environment(\.haptics, store.haptics)
+        .environment(\.appIconStyle, store.settings.appIcon)
         .animation(Motion.standard, value: window.sidebarVisible)
         .animation(Motion.standard, value: window.sidePanel?.extensionID)
         .animation(Motion.standard, value: window.utility)
@@ -390,6 +394,8 @@ struct EngineStatusCard: View {
 struct EmptyStateView: View {
     let store: BrowserStore
     let window: WindowState
+    /// The welcome's preview of this page leaves out the import button, which is gone once the welcome is done.
+    var offersImport = true
     @Environment(\.palette) private var palette
 
     var body: some View {
@@ -397,25 +403,43 @@ struct EmptyStateView: View {
             RoundedRectangle(cornerRadius: WebContentHostView.corner, style: .continuous)
                 .fill(palette.isDark ? Color.black.opacity(0.22) : Color.white.opacity(0.35))
                 .overlay(RoundedRectangle(cornerRadius: WebContentHostView.corner, style: .continuous).strokeBorder(palette.stroke, lineWidth: 0.5))
-            VStack(spacing: 18) {
-                CosmosLogo(size: 84)
-                Text("Cosmos")
-                    .font(.system(size: 34, weight: .bold, design: .rounded))
+            VStack(spacing: 0) {
+                CosmosLogo(size: 60)
+                    .padding(.bottom, Metrics.Space.l)
+                Text(Self.greeting(at: Date()))
+                    .font(.system(size: 28, weight: .semibold))
+                    .kerning(-0.5)
                     .foregroundStyle(palette.text)
-                Text("A calm place to explore the web.")
-                    .font(.system(size: 14))
+                    .padding(.bottom, Metrics.Space.l)
+                // The page starts where the welcome's practice did: the Command Bar.
+                TapTarget(label: "Search or enter address", scale: 0.99, action: openCommandBar) { state in
+                    HStack(spacing: 10) {
+                        Image(systemName: "magnifyingglass").font(.system(size: 14, weight: .semibold))
+                        Text("Search or enter address").font(.system(size: 15))
+                        Spacer(minLength: Metrics.Space.m)
+                        Text("⌘T")
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .padding(.horizontal, 7).padding(.vertical, 3)
+                            .background(RoundedRectangle(cornerRadius: Metrics.Radius.chip, style: .continuous).fill(palette.hoverStrong))
+                    }
                     .foregroundStyle(palette.secondary)
-                VStack(alignment: .leading, spacing: 9) {
-                    Tip(keys: "⌘T", text: "Open the Command Bar")
-                    Tip(keys: "⌘L", text: "Search or enter an address")
-                    Tip(keys: "⌥⌘←  ⌥⌘→", text: "Travel between spaces")
-                    Tip(keys: "⌘D", text: "Pin a tab")
-                    Tip(keys: "⌃⇧=", text: "Split the view")
-                    if store.settings.isOn(.spaceSwipe) { Tip(keys: "Two fingers", text: "Swipe the sidebar to the next space") }
+                    .padding(.horizontal, 16)
+                    .frame(maxWidth: 440)
+                    .frame(height: 48)
+                    .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(palette.hover.opacity(state.hover ? 1.4 : 1)))
+                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(palette.stroke, lineWidth: 0.7))
+                    .shadow(color: palette.shadow.opacity(state.hover ? 0.3 : 0.15), radius: state.hover ? 14 : 8, y: 3)
+                    .animation(Motion.quick, value: state.hover)
                 }
-                .padding(.top, 6)
-                if store.isFirstLaunch || !store.settings.hasCompletedOnboarding {
-                    Button { window.overlay = .welcome } label: {
+                .padding(.horizontal, 24)
+                HStack(spacing: 18) {
+                    Tip(keys: "⌥⌘→", text: "Next space")
+                    Tip(keys: "⌘D", text: "Pin a tab")
+                    Tip(keys: "⌃⇧=", text: "Split view")
+                }
+                .padding(.top, 18)
+                if offersImport, !store.settings.hasCompletedOnboarding {
+                    Button { window.overlay = .importBrowser } label: {
                         Label("Import from Arc…", systemImage: "arrow.down.doc")
                             .font(.system(size: 13, weight: .semibold))
                             .padding(.horizontal, 16).padding(.vertical, 8)
@@ -423,9 +447,23 @@ struct EmptyStateView: View {
                             .foregroundStyle(palette.onAccent)
                     }
                     .buttonStyle(.plain)
-                    .padding(.top, 6)
+                    .padding(.top, 22)
                 }
             }
+        }
+    }
+
+    private func openCommandBar() {
+        window.overlay = .commandBar(.newTab)
+        window.commandBarFocusToken += 1
+    }
+
+    /// Good morning, afternoon or evening, by the clock.
+    static func greeting(at date: Date, calendar: Calendar = .current) -> String {
+        switch calendar.component(.hour, from: date) {
+        case 5..<12: "Good morning"
+        case 12..<18: "Good afternoon"
+        default: "Good evening"
         }
     }
 
@@ -434,14 +472,13 @@ struct EmptyStateView: View {
         let text: String
         @Environment(\.palette) private var palette
         var body: some View {
-            HStack(spacing: 12) {
+            HStack(spacing: 7) {
                 Text(keys)
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .foregroundStyle(palette.text)
-                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
                     .background(RoundedRectangle(cornerRadius: Metrics.Radius.chip, style: .continuous).fill(palette.hoverStrong))
-                    .frame(minWidth: 96, alignment: .trailing)
-                Text(text).font(.system(size: 13)).foregroundStyle(palette.secondary)
+                Text(text).font(.system(size: 12.5)).foregroundStyle(palette.secondary)
             }
         }
     }
@@ -450,9 +487,10 @@ struct EmptyStateView: View {
 /// The Cosmos mark: the app icon, cropped to its tile so `size` is the tile's size.
 struct CosmosLogo: View {
     var size: CGFloat = 80
+    @Environment(\.appIconStyle) private var style
 
     var body: some View {
-        Image(nsImage: AppIcon.image)
+        Image(nsImage: AppIcon.image(style))
             .resizable()
             .interpolation(.high)
             .scaleEffect(AppIcon.canvas / AppIcon.tile)

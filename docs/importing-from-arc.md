@@ -4,7 +4,7 @@ Cosmos can bring your Arc sidebar with you: your spaces, Favorites, pinned tabs 
 
 ## How to import
 
-**In the app.** Choose *Import from Arc or Another Browser…* from the Cosmos menu, then Arc. Cosmos looks in `~/Library/Application Support/Arc`, shows what it found, and asks before replacing anything you already have. When it finishes you see a short report of what came across and what did not.
+**In the app.** The welcome on first launch offers it, and *Import from Arc or Another Browser…* in the Cosmos menu opens the same screen later. Choose Import beside Arc. Cosmos looks in `~/Library/Application Support/Arc`; if you already have spaces, the card asks whether Arc's go alongside them or in their place. When it finishes the card says what came across, and offers Arc's saved passwords and site sign-ins as a second step (macOS asks first whether Cosmos may read Arc's key).
 
 **From the terminal.**
 
@@ -58,7 +58,7 @@ The command writes `workspace.json`, `archive.json`, `boosts.json` and, if you h
 - **Easels.** Cosmos has no Easels. Each one is counted in the report as skipped.
 - **Notes** and **Captures.**
 - **Arc accounts and sync.** Your Arc sign-in, sync state and recovery card are not read.
-- **Passwords, cookies, history, bookmarks and extensions.** These live in Arc's Chromium profile, not in the files above. Bring history and bookmarks across with Cosmos's browser-data importer ([importing-from-other-browsers.md](importing-from-other-browsers.md)). Passwords and cookies do not come across: sign in to your sites again.
+- **History, bookmarks and extensions.** These live in Arc's Chromium profile, not in the files above. Bring history and bookmarks across with Cosmos's browser-data importer ([importing-from-other-browsers.md](importing-from-other-browsers.md)), and extensions from Settings ▸ Extensions. Passwords and site sign-ins come across in the app's second step (above), not from the terminal.
 - **Boosts.** The importer notices a Boosts file and tells you it was left alone; reading Arc's Boost format is not done yet.
 - **Custom keyboard shortcuts, Live folders, download records and the command bar's learned rankings.**
 

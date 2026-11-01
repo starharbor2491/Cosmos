@@ -265,7 +265,8 @@ extension BrowserStore {
         case .showPasswords: onShowSettingsTab?(.passwords)
         case .toggleUtilities: window.utilitiesVisible.toggle()
         case .showShortcuts: window.overlay = .shortcuts
-        case .showWelcome, .importFromArc: window.overlay = .welcome
+        case .showWelcome: window.overlay = .welcome
+        case .importFromArc: window.overlay = .importBrowser
         case .newWindow: onNewWindow?()
         case .newIncognito: onOpenIncognito?()
         case .newProbe: onOpenProbe?(URL(string: "about:blank")!)

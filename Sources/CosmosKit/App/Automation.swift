@@ -75,6 +75,7 @@ final class Automation {
                 else if let s = store, let section = LibrarySection(rawValue: name) { s.openLibrary(section, in: st) }
             case "boosts": st.overlay = .boosts
             case "welcome": st.overlay = .welcome
+            case "import": st.overlay = .importBrowser
             case "shortcuts": st.overlay = .shortcuts
             case "siteControls": st.overlay = .siteControls
             case "find": st.overlay = .find

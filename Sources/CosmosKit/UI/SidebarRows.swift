@@ -99,6 +99,16 @@ struct PinnedSection: View {
                         .strokeBorder(palette.faint, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
                         .overlay(Text("Drop here to pin").font(.system(size: 11, weight: .medium)).foregroundStyle(palette.tertiary))
                         .frame(height: Metrics.Height.row)
+                } else if !store.workspace.hasPinnedAnything {
+                    // Until the first pin anywhere: where pinned tabs go, and how they get there.
+                    HStack(spacing: Metrics.Sidebar.gap) {
+                        Image(systemName: "pin").font(.system(size: 11, weight: .medium)).frame(width: Metrics.Icon.row)
+                        Text("Pin a tab with ⌘D, or drag one here").font(.system(size: 11.5, weight: .medium)).lineLimit(1)
+                    }
+                    .foregroundStyle(palette.tertiary)
+                    .padding(.horizontal, Metrics.Sidebar.inset)
+                    .frame(maxWidth: .infinity, minHeight: Metrics.Height.row, alignment: .leading)
+                    .accessibilityElement(children: .combine)
                 }
             } else {
                 ForEach(rows) { row in

@@ -3,19 +3,29 @@ import CosmosCore
 import CosmosEngine
 import CosmosImport
 
-/// One place a user can bring their browsing life from. The Welcome screen lists these.
+/// One place a user can bring their browsing life from. The welcome lists these.
 struct ImportSource: Identifiable {
     let id: String
     let name: String
     let symbol: String
+    /// The browser's own icon, when it is installed.
+    var icon: NSImage?
     let detail: String
     /// Whether the source's data was found on this Mac.
     var isAvailable: Bool
-    let run: @MainActor (BrowserStore, WindowState) async throws -> ImportOutcome
+    /// Arc's spaces can go in alongside the ones already here or in their place (`run`'s last argument: replacing).
+    var bringsSpaces = false
+    let run: @MainActor (BrowserStore, WindowState, Bool) async throws -> ImportOutcome
 }
 
 struct ImportOutcome {
     var summary: String
+    /// Arc has saved passwords or site sign-ins that can come too, as a second step (macOS asks first).
+    var offersSignIns = false
+    /// Arc's extensions, which Settings ▸ Extensions can bring over.
+    var extensions = 0
+    /// The Arc folder the spaces came from, where the passwords and sign-ins are too.
+    var arcFolder: URL?
 }
 
 /// Collects the importers: Arc first, then every other browser profile found on this Mac.
@@ -28,17 +38,17 @@ enum ImportCoordinator {
         let arcDir = ArcImporter.defaultDirectory
         let arcFound = ArcImporter.hasProfile(at: arcDir)
         out.append(ImportSource(
-            id: "arc", name: "Arc", symbol: "arrow.down.doc",
-            detail: arcFound ? "Spaces, Favorites, pinned tabs, folders, split views, archive and link rules."
+            id: "arc", name: "Arc", symbol: "arrow.down.doc", icon: appIcon(for: .arc),
+            detail: arcFound ? "Spaces, Favorites, pinned tabs, folders, split views and the archive."
                              : "Arc's data wasn't found on this Mac. Choose its folder to import from.",
-            isAvailable: arcFound
-        ) { store, window in
+            isAvailable: arcFound, bringsSpaces: true
+        ) { store, window, replacing in
             var directory = arcDir
             if !arcFound {
                 guard let chosen = Self.chooseFolder(message: "Choose Arc's data folder (it contains StorableSidebar.json)") else { throw CancellationError() }
                 directory = chosen
             }
-            return try await Self.importArc(from: directory, into: store, window: window)
+            return try await Self.importArc(from: directory, into: store, window: window, replacing: replacing)
         })
 
         // Discovery copies and opens databases to count rows: keep it off the main thread.
@@ -55,7 +65,7 @@ enum ImportCoordinator {
             if profile.accessDenied { detail = "Needs Full Disk Access (System Settings → Privacy & Security)." }
             else { detail = "History (\(histCount.formatted())) and bookmarks (\(markCount.formatted()))." }
             out.append(ImportSource(id: "browser:\(profile.id)", name: browser.displayName, symbol: Self.symbol(for: browser),
-                                    detail: detail, isAvailable: true) { store, window in
+                                    icon: appIcon(for: browser), detail: detail, isAvailable: true) { store, window, _ in
                 try await Self.importBrowser(profile, into: store, window: window)
             })
         }
@@ -66,34 +76,48 @@ enum ImportCoordinator {
         browser.family == .safari ? "safari" : (browser.family == .firefox ? "flame" : "globe")
     }
 
+    /// The icon macOS shows for the browser, found by its bundle identifier (nil when it is not installed).
+    static func appIcon(for browser: BrowserKind) -> NSImage? {
+        let id = switch browser {
+        case .arc: "company.thebrowser.Browser"
+        case .chrome: "com.google.Chrome"
+        case .brave: "com.brave.Browser"
+        case .edge: "com.microsoft.edgemac"
+        case .vivaldi: "com.vivaldi.Vivaldi"
+        case .opera: "com.operasoftware.Opera"
+        case .chromium: "org.chromium.Chromium"
+        case .firefox: "org.mozilla.firefox"
+        case .safari: "com.apple.Safari"
+        }
+        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: id).map { NSWorkspace.shared.icon(forFile: $0.path) }
+    }
+
     // MARK: Arc
 
-    private static func importArc(from directory: URL, into store: BrowserStore, window: WindowState) async throws -> ImportOutcome {
+    /// Arc's spaces and tabs into the browser: in place of what is here when asked to (or when nothing is here yet),
+    /// alongside it otherwise.
+    private static func importArc(from directory: URL, into store: BrowserStore, window: WindowState, replacing: Bool) async throws -> ImportOutcome {
         let result = try await Task.detached(priority: .userInitiated) { try ArcImporter.importProfile(at: directory) }.value
-        var replace = store.workspace.isPristine
-        if !replace {
-            switch Self.askMergeOrReplace(spaces: result.report.spaces, tabs: result.report.tabs) {
-            case .merge: replace = false
-            case .replace: replace = true
-            case .cancel: throw CancellationError()
-            }
-        }
-        store.applyArcImport(result, replacing: replace, in: window)
-        var summary = result.report.summary
+        store.applyArcImport(result, replacing: replacing || store.workspace.isPristine, in: window)
         let profile = ArcImporter.defaultChromiumProfile(in: directory)
         let hasSignIns = (ChromiumSecrets.loginFiles + ["Cookies", "Network/Cookies"]).contains {
             FileManager.default.fileExists(atPath: profile.appendingPathComponent($0).path)
         }
-        if hasSignIns, Self.askToImportSignIns() {
-            summary += "\n\n" + (await Self.importArcSignIns(into: store, from: directory))
-        }
+        var extensions = 0
         if store.extensionCenter != nil {
-            let extensions = await Task.detached(priority: .utility) { ChromiumExtensionScanner.scanAll(browsers: [.arc]).count }.value
-            if extensions > 0 {
-                summary += "\n\nArc also has \(extensions) extension\(extensions == 1 ? "" : "s"). To bring them over, open Settings ▸ Extensions and choose Find in Arc and Other Browsers."
-            }
+            extensions = await Task.detached(priority: .utility) { ChromiumExtensionScanner.scanAll(browsers: [.arc]).count }.value
         }
-        return ImportOutcome(summary: summary)
+        return ImportOutcome(summary: summary(of: result.report), offersSignIns: hasSignIns, extensions: extensions, arcFolder: directory)
+    }
+
+    /// What an Arc import brought, in a line: "4 spaces, 63 tabs and 210 archived tabs".
+    static func summary(of report: ImportReport) -> String {
+        func count(_ n: Int, _ one: String, _ many: String) -> String { "\(n.formatted()) \(n == 1 ? one : many)" }
+        var parts = [count(report.spaces, "space", "spaces"), count(report.tabs, "tab", "tabs")]
+        if report.archivedItems > 0 { parts.append(count(report.archivedItems, "archived tab", "archived tabs")) }
+        if report.boosts > 0 { parts.append(count(report.boosts, "Boost", "Boosts")) }
+        let list = parts.count > 1 ? parts.dropLast().joined(separator: ", ") + " and " + parts[parts.count - 1] : parts[0]
+        return "Brought \(list)."
     }
 
     // MARK: Arc's passwords and sign-ins
@@ -133,32 +157,6 @@ enum ImportCoordinator {
         return "Imported " + parts.joined(separator: " and ") + " from Arc."
     }
 
-    private enum Choice { case merge, replace, cancel }
-
-    /// Whether to bring over Arc's passwords and sign-ins too: macOS then asks whether Cosmos may read Arc's key.
-    private static func askToImportSignIns() -> Bool {
-        let alert = NSAlert()
-        alert.messageText = "Bring over Arc's passwords and sign-ins too?"
-        alert.informativeText = "Cosmos keeps Arc's saved passwords and stays signed in to the sites you use. macOS asks you first to let Cosmos read Arc's key (“Arc Safe Storage”): choose Allow."
-        alert.addButton(withTitle: "Import Passwords and Sign-ins")
-        alert.addButton(withTitle: "Not Now")
-        return alert.runModal() == .alertFirstButtonReturn
-    }
-
-    private static func askMergeOrReplace(spaces: Int, tabs: Int) -> Choice {
-        let alert = NSAlert()
-        alert.messageText = "Add Arc's \(spaces) space\(spaces == 1 ? "" : "s") to your current ones?"
-        alert.informativeText = "Cosmos already has spaces and tabs. Adding keeps them and brings Arc's alongside. Replacing swaps everything for what Arc had (\(tabs) tabs); Cosmos keeps a backup of the old file."
-        alert.addButton(withTitle: "Add to Current")
-        alert.addButton(withTitle: "Replace Everything")
-        alert.addButton(withTitle: "Cancel")
-        switch alert.runModal() {
-        case .alertFirstButtonReturn: return .merge
-        case .alertSecondButtonReturn: return .replace
-        default: return .cancel
-        }
-    }
-
     // MARK: Other browsers
 
     private static func importBrowser(_ profile: BrowserProfile, into store: BrowserStore, window: WindowState) async throws -> ImportOutcome {
@@ -167,7 +165,7 @@ enum ImportCoordinator {
         }.value
         if !data.history.isEmpty { try store.history.importEntries(data.history) }
         var parts: [String] = []
-        if !data.history.isEmpty { parts.append("\(data.history.count.formatted()) history entries") }
+        if !data.history.isEmpty { parts.append("\(data.history.count.formatted()) pages of history") }
         if !data.bookmarks.isEmpty {
             let summary = store.edit { ws in
                 BookmarkImporter.populateWithSummary(&ws, with: data.bookmarks, intoSpaceTitled: "From \(profile.browser.displayName)")
@@ -175,7 +173,7 @@ enum ImportCoordinator {
             parts.append("\(summary.tabsAdded.formatted()) bookmarks in a space called “From \(profile.browser.displayName)”")
         }
         if parts.isEmpty { return ImportOutcome(summary: "Nothing to import from \(profile.browser.displayName).") }
-        return ImportOutcome(summary: "Imported " + parts.joined(separator: " and ") + ".")
+        return ImportOutcome(summary: "Brought " + parts.joined(separator: " and ") + ".")
     }
 
     private static func chooseFolder(message: String) -> URL? {

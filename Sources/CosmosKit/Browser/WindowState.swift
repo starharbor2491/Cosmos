@@ -15,6 +15,8 @@ public enum Overlay: Equatable {
     case themeEditor(UUID)
     case boosts
     case welcome
+    /// The welcome's Bring step on its own (File ▸ Import).
+    case importBrowser
     case siteControls
     case shortcuts
 }
@@ -109,6 +111,8 @@ public final class WindowState: Identifiable {
     /// True while the hidden sidebar is slid over the page because the pointer touched the window edge.
     public var sidebarPeeking = false
     public var overlay: Overlay? { didSet { radial = nil } }
+    /// The welcome is ending: the window waits under its light, a little large and out of focus, then settles.
+    public var arriving = false
     public var peek: PeekSession? { didSet { radial = nil } }
     /// An extension's side panel, beside the page.
     public var sidePanel: SidePanel?

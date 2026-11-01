@@ -54,7 +54,7 @@ extension SidebarView {
         swipe.maxTravel = window.sidebarWidth
         swipe.canGoPrevious = index > 0
         swipe.canGoNext = slide.neighbour(direction: 1, in: pages) != nil
-        if swipe.update(delta: delta) != .none { store.haptics.alignment() }
+        if swipe.update(delta: delta, at: ProcessInfo.processInfo.systemUptime) != .none { store.haptics.alignment() }
         slide.drag(to: swipe.offset, in: pages)
         publish()
     }
@@ -63,7 +63,7 @@ extension SidebarView {
     /// page springs back.
     func swipeEnded() {
         guard !slide.isSettling, !slide.isPending else { swipe.reset(); return }
-        if let direction = swipe.finish(), let page = slide.neighbour(direction: direction, in: pages) {
+        if let direction = swipe.finish(at: ProcessInfo.processInfo.systemUptime), let page = slide.neighbour(direction: direction, in: pages) {
             store.show(page, in: window)
         } else {
             settle()

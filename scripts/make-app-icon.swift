@@ -1,7 +1,8 @@
-// Makes the app icon from the galaxy artwork: the square art cut to a macOS icon tile (824 pt on a 1024 pt canvas, so
-// the Dock and Finder have room for their shadow), with a soft shadow and a hairline edge.
+// Makes an app icon tile from artwork: the art set as an 824 pt tile on a 1024 pt canvas (so the Dock and Finder have
+// room for their shadow), with a soft shadow and a hairline edge. Square art is cut to the macOS tile shape; art that
+// already has its own rounded corners (clear in the corner) keeps its shape.
 //
-//   swift scripts/make-app-icon.swift "cosmos icon/logos/app-icon/cosmos-app-icon-1024.png" "cosmos icon/cosmos-app-icon-tile.png"
+//   swift scripts/make-app-icon.swift "cosmos icon/logos/app-icon/cosmos-icon-nebula.png" "cosmos icon/cosmos-app-icon-nebula-tile.png"
 import AppKit
 
 let arguments = CommandLine.arguments
@@ -36,7 +37,14 @@ NSGraphicsContext.current = graphics
 let context = graphics.cgContext
 context.interpolationQuality = .high
 
-let path = tilePath(in: rect)
+/// Art drawn with its own corners: those are clear. Its shape is then a rounded rectangle with the art's radius
+/// (230 of 1024), set to the tile's size.
+let shaped: Bool = {
+    guard let rep = art.representations.compactMap({ $0 as? NSBitmapImageRep }).first ?? NSBitmapImageRep(data: art.tiffRepresentation ?? Data())
+    else { return false }
+    return (rep.colorAt(x: 2, y: 2)?.alphaComponent ?? 1) < 0.05
+}()
+let path = shaped ? CGPath(roundedRect: rect, cornerWidth: tile * 230 / 1024, cornerHeight: tile * 230 / 1024, transform: nil) : tilePath(in: rect)
 
 context.saveGState()
 context.setShadow(offset: CGSize(width: 0, height: -10), blur: 22, color: CGColor(gray: 0, alpha: 0.4))
@@ -52,7 +60,8 @@ art.draw(in: rect, from: .zero, operation: .copy, fraction: 1)
 context.restoreGState()
 
 // A fine light edge, so a dark tile still reads against a dark Dock.
-context.addPath(tilePath(in: rect.insetBy(dx: 1, dy: 1)))
+context.addPath(shaped ? CGPath(roundedRect: rect.insetBy(dx: 1, dy: 1), cornerWidth: tile * 230 / 1024 - 1, cornerHeight: tile * 230 / 1024 - 1, transform: nil)
+                       : tilePath(in: rect.insetBy(dx: 1, dy: 1)))
 context.setStrokeColor(CGColor(gray: 1, alpha: 0.16))
 context.setLineWidth(2)
 context.strokePath()

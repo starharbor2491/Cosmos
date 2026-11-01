@@ -579,7 +579,7 @@ extension TabRuntime: EnginePageDelegate {
         let site = request.host
         let key = "\(site)|\(request.kind.rawValue)"
         if !site.isEmpty, let known = host?.settings.permissionDecisions[key] { return known }
-        // Settings ▸ Engine blocks it for every site the user has not decided about.
+        // Settings ▸ Privacy blocks it for every site the user has not decided about.
         if let engine = host?.settings.engine, Self.blocks(engine, request.kind) { return false }
         guard await waitUntilShown() else { return false }
         let alert = NSAlert()

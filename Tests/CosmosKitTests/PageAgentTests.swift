@@ -241,7 +241,7 @@ struct PageAgentTests {
         #expect(await runtime.evaluate(returning: "Notification.permission") as? String == "default")
     }
 
-    /// Settings ▸ Engine blocks a kind: a site the user has not decided about is refused, and nobody is asked (a question
+    /// Settings ▸ Privacy blocks a kind: a site the user has not decided about is refused, and nobody is asked (a question
     /// would never be answered here, so the page would wait).
     @Test func whatSettingsBlockIsRefused() async throws {
         defer { stop() }

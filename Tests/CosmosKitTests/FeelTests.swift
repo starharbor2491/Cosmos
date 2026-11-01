@@ -168,6 +168,40 @@ import Testing
         #expect(far.finish() == 1)
     }
 
+    /// A quick flick counts though it is short of the commit distance; a slow, short one springs back, and so does a
+    /// flick back the other way at the end of a long swipe. A lift after the fingers came to rest is no flick.
+    @Test func aFlickCountsAndAFlickBackCancels() {
+        var flick = tracker()
+        _ = flick.update(delta: -10, at: 0)
+        _ = flick.update(delta: -20, at: 0.02)
+        _ = flick.update(delta: -20, at: 0.04)
+        #expect(flick.finish(at: 0.05) == 1, "40 points in 40 ms, toward the next page")
+
+        var slow = tracker()
+        for i in 0..<5 { _ = slow.update(delta: -8, at: Double(i) * 0.05) }
+        #expect(slow.finish(at: 0.21) == nil, "the same distance at walking pace")
+
+        var back = tracker()
+        for i in 0..<10 { _ = back.update(delta: -12, at: Double(i) * 0.02) }
+        _ = back.update(delta: 20, at: 0.20)
+        _ = back.update(delta: 20, at: 0.22)
+        #expect(back.finish(at: 0.23) == nil, "armed, then flicked back: it springs back")
+
+        var rested = tracker()
+        _ = rested.update(delta: -20, at: 0)
+        _ = rested.update(delta: -20, at: 0.02)
+        #expect(rested.finish(at: 0.5) == nil, "the fingers stopped before they lifted")
+
+        var blocked = tracker(next: false)
+        _ = blocked.update(delta: -20, at: 0)
+        _ = blocked.update(delta: -20, at: 0.02)
+        #expect(blocked.finish(at: 0.03) == nil, "no page that way")
+
+        var untimed = tracker()
+        _ = untimed.update(delta: -30)
+        #expect(untimed.finish() == nil, "with no times there is no telling a flick")
+    }
+
     @Test func aFinishedSwipeStartsFromZeroNextTime() {
         var t = tracker()
         _ = t.update(delta: -100)

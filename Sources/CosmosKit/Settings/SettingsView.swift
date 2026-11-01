@@ -16,7 +16,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .extensions: "Extensions"
         case .privacy: "Privacy"
         case .passwords: "Passwords"
-        case .engine: "Engine"
+        case .engine: "Advanced"
         case .links: "Links"
         case .radialMenu: "Radial Menu"
         case .menuBar: "Menu Bar"
@@ -137,6 +137,7 @@ struct SettingsView: View {
         .environment(\.palette, palette)
         .environment(\.haptics, store.haptics)
         .environment(\.dropdownHost, dropdowns)
+        .environment(\.appIconStyle, store.settings.appIcon)
         .preferredColorScheme(palette.isDark ? .dark : .light)
         .frame(width: Self.size.width, height: Self.size.height)
         .ignoresSafeArea()

@@ -7,7 +7,7 @@ import CosmosBlocking
 @testable import CosmosCore
 
 /// A site asking for the camera, microphone, location or notifications. The engine asks Cosmos; Cosmos answers from what
-/// the user decided, and what Settings ▸ Engine blocks is refused without a question.
+/// the user decided, and what Settings ▸ Privacy blocks is refused without a question.
 @MainActor
 @Suite struct PermissionTests {
     private func runtime(_ rig: Rig) throws -> TabRuntime {

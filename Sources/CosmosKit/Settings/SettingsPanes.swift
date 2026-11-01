@@ -30,6 +30,10 @@ struct GeneralPane: View {
                 }
             }
             SettingsGroup(title: "Appearance") {
+                SettingRow(title: "App icon", detail: "In the Dock while Cosmos is open.") {
+                    AppIconPicker(selection: $store.settings.appIcon)
+                }
+                Hairline()
                 SettingRow(title: "Window appearance", detail: "Menus and dialogs. Each space keeps its own sky.") {
                     SegmentedControl(selection: $store.settings.appearance, options: [
                         Option(value: .system, label: "Auto", symbol: "circle.lefthalf.filled"),
@@ -61,6 +65,53 @@ struct GeneralPane: View {
                 }
             }
         }
+    }
+}
+
+/// The four app icons side by side, the one in use ringed in the accent colour.
+struct AppIconPicker: View {
+    @Binding var selection: Settings.AppIconStyle
+    @Namespace private var ring
+    @Environment(\.palette) private var palette
+
+    /// Each picture is the whole icon canvas, its tile `AppIcon.tile` of `AppIcon.canvas` with corners of 185 of 1024.
+    private let side: CGFloat = 60
+    private var inset: CGFloat { side * (AppIcon.canvas - AppIcon.tile) / 2 / AppIcon.canvas }
+    private var corner: CGFloat { side * 185 / AppIcon.canvas }
+
+    var body: some View {
+        HStack(spacing: Metrics.Space.s) {
+            ForEach(Settings.AppIconStyle.allCases) { style in
+                let selected = style == selection
+                TapTarget(label: style.name, scale: 0.94, feel: .step, traits: .isButton, action: { selection = style }) { state in
+                    VStack(spacing: Metrics.Space.hair) {
+                        Image(nsImage: AppIcon.image(style))
+                            .resizable()
+                            .interpolation(.high)
+                            .frame(width: side, height: side)
+                            .scaleEffect(state.hover && !selected ? 1.05 : 1)
+                            .animation(Motion.quick, value: state.hover)
+                            .background {
+                                if selected {
+                                    RoundedRectangle(cornerRadius: corner + 3.5, style: .continuous)
+                                        .strokeBorder(palette.accent, lineWidth: 2)
+                                        .padding(inset - 3.5)
+                                        .matchedGeometryEffect(id: "ring", in: ring)
+                                }
+                            }
+                            .focusRing(state.focused, radius: corner + 2, palette: palette)
+                        Text(style.name)
+                            .font(.system(size: 11, weight: selected ? .semibold : .medium))
+                            .foregroundStyle(selected ? palette.text : palette.secondary)
+                            .lineLimit(1)
+                            .fixedSize()
+                    }
+                    .frame(width: side + 20)
+                }
+                .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+        }
+        .animation(Motion.standard, value: selection)
     }
 }
 
@@ -161,6 +212,8 @@ struct PrivacyPane: View {
             }
             .animation(Motion.standard, value: note)
 
+            ChromiumPrivacyGroups(store: store)
+
             SettingsGroup(title: "Site permissions", note: "Camera, microphone and location answers Cosmos has remembered. A site asks again after you reset it.") {
                 if permissions.isEmpty {
                     SettingRow(title: "Nothing remembered yet", detail: "Sites you allow or block appear here.", symbol: "checkmark.shield") { EmptyView() }
@@ -186,7 +239,10 @@ struct PrivacyPane: View {
                 }
             }
             .animation(Motion.standard, value: permissions.map(\.key))
+
+            EngineRestartNotice(store: store)
         }
+        .animation(Motion.standard, value: store.settings.engine)
     }
 
     private func clearHistory() {

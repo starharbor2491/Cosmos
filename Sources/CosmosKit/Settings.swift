@@ -9,14 +9,30 @@ public struct Settings: Codable, Equatable {
 
     public enum SidebarSide: String, Codable { case left, right }
 
+    /// The app icon, one of four skies (`cosmos icon/`).
+    public enum AppIconStyle: String, Codable, CaseIterable, Identifiable {
+        case nebula, aurora, supernova, deepField = "deep-field"
+
+        public var id: String { rawValue }
+        public var name: String {
+            switch self {
+            case .nebula: "Nebula"
+            case .aurora: "Aurora"
+            case .supernova: "Supernova"
+            case .deepField: "Deep Field"
+            }
+        }
+    }
+
     public var searchEngineID: String = SearchCatalog.bundled.defaultEngine
     public var appearance: AppearanceMode = .system
+    public var appIcon: AppIconStyle = .nebula
     public var sidebarWidth: Double = 248
     public var sidebarSide: SidebarSide = .left
     /// Slide the sidebar over the page when the pointer touches the window edge while it is hidden.
     public var revealSidebarOnHover = true
     public var adBlockingEnabled = true
-    /// Warn before opening a page from a site on a public malware or phishing list (Settings ▸ Engine).
+    /// Warn before opening a page from a site on a public malware or phishing list (Settings ▸ Privacy).
     public var warnAboutDangerousSites = true
     /// Cosmos asks whether to keep a password typed into a site's sign-in form (Settings ▸ Passwords).
     public var offerToSavePasswords = true
@@ -31,6 +47,8 @@ public struct Settings: Codable, Equatable {
     /// Hosts where blocking is turned off from the Site Control Center.
     public var adBlockAllowlist: [String] = []
     public var hasCompletedOnboarding = false
+    /// The welcome was started on a first launch and not finished yet: it opens again next launch.
+    public var welcomePending = false
     public var memorySaverMinutes: Int = 30
     public var showStatusBubble = true
     public var closeWindowOnLastTab = false
@@ -52,7 +70,7 @@ public struct Settings: Codable, Equatable {
         case searchEngineID, appearance, sidebarWidth, sidebarSide, revealSidebarOnHover, adBlockingEnabled, enabledFilterLists
         case autoPictureInPicture, restoreTabsOnLaunch, showSearchSuggestions, peekFromPinned, permissionDecisions
         case adBlockAllowlist, hasCompletedOnboarding, memorySaverMinutes, showStatusBubble, closeWindowOnLastTab, trackpadHaptics, radialMenu, menuBar
-        case engine, warnAboutDangerousSites, offerToSavePasswords, disabledFeatures
+        case engine, warnAboutDangerousSites, offerToSavePasswords, disabledFeatures, appIcon, welcomePending
     }
 
     // Tolerant decoding: a settings file written by an older/newer build must never lock the user out.
@@ -71,6 +89,7 @@ public struct Settings: Codable, Equatable {
         get(.trackpadHaptics, &trackpadHaptics); get(.radialMenu, &radialMenu); get(.menuBar, &menuBar)
         get(.engine, &engine); get(.warnAboutDangerousSites, &warnAboutDangerousSites)
         get(.offerToSavePasswords, &offerToSavePasswords); get(.disabledFeatures, &disabledFeatures)
+        get(.appIcon, &appIcon); get(.welcomePending, &welcomePending)
     }
 }
 
@@ -105,6 +124,14 @@ extension Settings {
         case .spaceSwipe, .peek, .boosts, .extensions, .utilities, .passwords:
             if on { disabledFeatures.remove(feature.rawValue) } else { disabledFeatures.insert(feature.rawValue) }
         }
+    }
+
+    /// What a new install starts with: the radial menu and the utilities rail are off, as they change what right-click
+    /// and the window's edge do; the welcome offers them. Settings files from before keep what they had.
+    public static let offOnNewInstall: [Feature] = [.radialMenu, .utilities]
+
+    public mutating func useNewInstallDefaults() {
+        for feature in Self.offOnNewInstall { set(feature, on: false) }
     }
 
     /// The features that are on, for telling when one has changed.

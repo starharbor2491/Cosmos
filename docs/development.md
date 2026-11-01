@@ -15,7 +15,7 @@ Chromium comes from CEF: `scripts/fetch-cef.sh` (which the build and test script
 
 The script runs `swift build`, then assembles the bundle by hand: it copies the executables and SwiftPM's resource bundles into `Contents/Resources`, puts the Chromium Embedded Framework and the five helper apps made from `CosmosHelper` into `Contents/Frameworks` (with CEF's license and Chromium's credits in `Contents/Resources`), makes the icon from `cosmos icon/cosmos-app-icon-tile.png` (`sips` and `iconutil`), writes `Info.plist` (http and https URL types, usage strings) from `VERSION`, and signs ad hoc, the framework and helpers first. There is no Xcode project.
 
-The icon artwork lives in `cosmos icon/`: `logos/app-icon/` (the galaxy, square) and `logos/single-color/` (the one-colour swirl). `scripts/make-app-icon.swift` cuts the galaxy to an icon tile (`swift scripts/make-app-icon.swift "cosmos icon/logos/app-icon/cosmos-app-icon-1024.png" "cosmos icon/cosmos-app-icon-tile.png"`); `Sources/CosmosKit/Resources/AppIcon.png` is a 512 px copy of the tile (`sips -z 512 512 "cosmos icon/cosmos-app-icon-tile.png" --out Sources/CosmosKit/Resources/AppIcon.png`) for the Dock, the in-app logo and the start page, and `MenuBarMark-18/36/54.png` are copies of `logos/single-color/cosmos-mark-black-*.png` for the menu-bar icon (a template image, so the system inks it).
+The icon artwork lives in `cosmos icon/`: `logos/app-icon/` has the four app icons (Nebula, Aurora, Supernova, Deep Field; square, 1024 px) and `logos/single-color/cosmos-menubar-glyph.svg` the one-colour crescent. `scripts/make-app-icon.swift` cuts each icon to an icon tile (`swift scripts/make-app-icon.swift "cosmos icon/logos/app-icon/cosmos-icon-nebula.png" "cosmos icon/cosmos-app-icon-nebula-tile.png"`); `scripts/build-app.sh` makes the .icns from Nebula's tile. `Sources/CosmosKit/Resources/AppIcon-<name>.png` are 512 px copies of the four tiles (`sips -z 512 512 "cosmos icon/cosmos-app-icon-nebula-tile.png" --out Sources/CosmosKit/Resources/AppIcon-nebula.png`) for the Dock (Settings ▸ General ▸ App icon) and the in-app logo. `MenuBarMark-18/36/54.png` are the menu-bar icon (a template image, so the system inks it), drawn from the glyph's geometry by `swift scripts/make-menubar-mark.swift Sources/CosmosKit/Resources`.
 
 ## Test
 
@@ -93,6 +93,12 @@ Without launching the app at all: `UISnapshotTests` draws the browser window (si
 COSMOS_UI_SNAPSHOTS=/tmp/cosmos-ui scripts/test.sh --filter UISnapshotTests
 ```
 
+`OnboardingFrameTests` does the same for the welcome. It draws chosen moments: the opening, every step and sky, narrow and short windows, an import landing and the way in. The browsers it offers to import from are made up. It also writes `frame-times.txt`, which gives what a galaxy frame costs the main thread, and what picking a sky costs SwiftUI.
+
+```bash
+COSMOS_UI_SNAPSHOTS=/tmp/cosmos-ui scripts/test.sh --filter OnboardingFrameTests
+```
+
 The app can also photograph itself, pages included:
 
 Granting a tool permission to record the screen is a lot to ask for a build script. Run the app with a script:
@@ -118,7 +124,7 @@ The script is a JSON array of steps; the log goes to `script.json.log`. A snapsh
 |---|---|
 | `wait` `waitLoaded` | pause; wait for the current page |
 | `open` `navigate` `reload` `select` | new tab, same tab, reload, select the nth tab |
-| `overlay` `closeOverlay` `type` `key` `chord` | open a panel (`commandBar`, `boosts`, `welcome`, `shortcuts`, `siteControls`, `find`, `theme`; `archive` (History narrowed to archived tabs), `history`, `downloads` and `resources` open the Library on that section), type into the focused field, press keys |
+| `overlay` `closeOverlay` `type` `key` `chord` | open a panel (`commandBar`, `boosts`, `welcome`, `import` (the welcome's import step on its own), `shortcuts`, `siteControls`, `find`, `theme`; `archive` (History narrowed to archived tabs), `history`, `downloads` and `resources` open the Library on that section), type into the focused field, press keys |
 | `library` `swipe` | slide the sidebar to the Library (`"section"` picks Downloads, History, Resources, or `archive`, which is History narrowed to the archived tabs; `"back": true` returns to the space); `swipe` feeds two-finger scroll samples (`dx` in all, `steps`, `pause`) to the sidebar's swipe view the way a trackpad's would arrive, past the part that reads system events |
 | `utility` | open a quick utility's panel at the window's right (`"name"`: `translate`, `zoom`, `files`, `passwords` or `site`; no name closes it) |
 | `space` `sidebar` `split` `peek` `closePeek` `menu` `resize` | switch space, toggle sidebar, add a split, open Peek, run a menu item, set window size |

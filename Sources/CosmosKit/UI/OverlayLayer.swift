@@ -37,8 +37,9 @@ struct OverlayLayer: View {
                 Scrim(opacity: 0.30) { window.overlay = nil }
                 BoostsPanel(store: store, window: window).transition(Self.pop(from: .center))
             case .welcome:
-                Scrim(opacity: 0.45) { window.overlay = nil }
-                WelcomeView(store: store, window: window).transition(Self.pop(from: .center))
+                OnboardingView(store: store, window: window).transition(.opacity)
+            case .importBrowser:
+                OnboardingView(store: store, window: window, start: .bring).transition(.opacity)
             case .siteControls:
                 Scrim(opacity: 0.0) { window.overlay = nil }
                 SiteControlsPanel(store: store, window: window).transition(Self.pop(from: .topLeading))
@@ -60,6 +61,7 @@ struct OverlayLayer: View {
     private var shouldCatchEscape: Bool {
         switch window.overlay {
         case .find, .commandBar: return false   // find and the command bar handle Esc in their own fields
+        case .welcome, .importBrowser: return false   // the welcome takes its own keys (see `OnboardingModel.handleKey`)
         case nil: return window.libraryOpen && window.peek == nil   // Esc leaves the Library (see `BrowserStore.dismiss`); a Peek closes first
         default: return true
         }

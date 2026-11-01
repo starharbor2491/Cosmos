@@ -70,7 +70,7 @@ PLIST
 done
 
 echo "==> icon"
-ICON_SOURCE="cosmos icon/cosmos-app-icon-tile.png"
+ICON_SOURCE="cosmos icon/cosmos-app-icon-nebula-tile.png"
 [[ -f $ICON_SOURCE ]] || { echo "missing $ICON_SOURCE"; exit 1 }
 ICONSET=build/Cosmos.iconset
 rm -rf $ICONSET && mkdir -p $ICONSET

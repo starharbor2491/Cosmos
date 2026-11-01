@@ -52,6 +52,8 @@ public struct Workspace: Codable, Equatable, Sendable {
     public var favorites: [SidebarItem] { children(of: favoritesRootID) }
 
     public func pinned(in space: Space) -> [SidebarItem] { children(of: space.pinnedRootID) }
+    /// Some space has something pinned: the sidebar stops explaining where pinned tabs go.
+    public var hasPinnedAnything: Bool { spaces.contains { !pinned(in: $0).isEmpty } }
     public func unpinned(in space: Space) -> [SidebarItem] { children(of: space.unpinnedRootID) }
 
     public enum Section: Hashable, Sendable {

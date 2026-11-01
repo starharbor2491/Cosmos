@@ -133,7 +133,8 @@ private struct CommandRow: View {
                     .font(.system(size: 13.5, weight: .medium))
                     .foregroundStyle(palette.text)
                     .lineLimit(1).truncationMode(.tail)
-                if let sub = row.subtitle, !sub.isEmpty {
+                // A command's subtitle is its shortcut, drawn as keys at the end of the row instead.
+                if let sub = row.subtitle, !sub.isEmpty, !isCommand {
                     Text(sub)
                         .font(.system(size: 11.5))
                         .foregroundStyle(palette.secondary)
@@ -141,12 +142,18 @@ private struct CommandRow: View {
                 }
             }
             Spacer(minLength: 8)
-            if let hint {
+            if isCommand, let keys = row.subtitle, !keys.isEmpty {
+                Text(keys)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(palette.secondary)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(RoundedRectangle(cornerRadius: Metrics.Radius.chip, style: .continuous).fill(palette.hoverStrong))
+            }
+            // What Enter does, said once, on the row it would do it to.
+            if selected, let hint {
                 Text(hint)
                     .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(selected ? palette.text : palette.tertiary)
-            }
-            if selected {
+                    .foregroundStyle(palette.text)
                 Image(systemName: "return").font(.system(size: 11, weight: .semibold)).foregroundStyle(palette.secondary)
             }
         }
@@ -173,16 +180,18 @@ private struct CommandRow: View {
         }
     }
 
+    private var isCommand: Bool { if case .command = row.kind { return true }; return false }
+
+    /// What Enter does to this row: always a verb.
     private var hint: String? {
         switch row.kind {
         case .openTab: return "Switch to Tab"
-        case .sidebarItem: return "Open"
+        case .sidebarItem, .history, .topDomain, .typedURL: return "Open"
         case .archived: return "Restore"
-        case .command: return "Command"
-        case .space: return "Space"
-        case .calculation: return "Copy"
-        case .typedURL: return "Go"
-        default: return nil
+        case .command: return "Run"
+        case .space: return "Go to Space"
+        case .calculation: return "Copy Result"
+        case .webSearch, .suggestion, .siteSearch: return "Search"
         }
     }
 }
